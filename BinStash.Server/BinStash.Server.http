@@ -1,0 +1,6 @@
+@BinStash.Server_HostAddress = http://localhost:5190
+
+GET {{BinStash.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
