@@ -147,14 +147,14 @@ public class ChunkFileHandler
             Directory.CreateDirectory(directoryPath);
         _IndexFilePath = Path.Combine(directoryPath, $"index{prefix}.idx");
         _DataFilePrefix = Path.Combine(directoryPath, $"chunks{prefix}");
-        LoadIndexAsync();
+        LoadIndex();
     }
 
-    private async Task LoadIndexAsync()
+    private void LoadIndex()
     {
         if (!File.Exists(_IndexFilePath)) return;
 
-        await _IndexFileLock.WaitAsync();
+        _IndexFileLock.Wait();
 
         try
         {
