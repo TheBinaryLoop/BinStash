@@ -218,22 +218,33 @@ public class BinStashApiClient
     
     public async Task CreateReleaseAsync(string repositoryId, ReleasePackage release)
     {
-        using var client = new HttpClient(); // or inject IHttpClientFactory
+        using var client = new HttpClient(); // ideally use IHttpClientFactory
         using var msgpackStream = new MemoryStream();
 
         // Compress MessagePack-serialized release into GZip stream
-        await using (var gzip = new GZipStream(msgpackStream, CompressionMode.Compress, leaveOpen: true))
+        await using (var gzip = new GZipStream(msgpackStream, CompressionMode.Compress, true))
         {
             await MessagePackSerializer.SerializeAsync(gzip, release, MessagePack.Resolvers.ContractlessStandardResolver.Options);
         }
 
         msgpackStream.Position = 0;
 
-        var content = new StreamContent(msgpackStream);
-        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-msgpack+gzip");
+        // Create multipart form data
+        using var form = new MultipartFormDataContent();
 
-        var url = new Uri(new Uri(_rootUrl), $"api/repositories/{repositoryId}/releases");
-        var response = await client.PostAsync(url, content);
+        // Add repositoryId as form field
+        form.Add(new StringContent(repositoryId), "repositoryId");
+
+        // Add the releaseDefinition file
+        var fileContent = new StreamContent(msgpackStream);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-msgpack+gzip");
+
+        // This name MUST match what the server expects: "releaseDefinition"
+        form.Add(fileContent, "releaseDefinition", "release.msgpack.gz");
+
+        // Updated URL — now posts to /api/releases (not /api/repositories/{id}/releases)
+        var url = new Uri(new Uri(_rootUrl), "api/releases");
+        var response = await client.PostAsync(url, form);
 
         if (!response.IsSuccessStatusCode || response.StatusCode != HttpStatusCode.Created)
         {
@@ -241,6 +252,7 @@ public class BinStashApiClient
             throw new InvalidOperationException($"Failed to create release: {response.StatusCode} - {body}");
         }
     }
+
     
     public async Task<bool> DownloadReleaseAsync(Guid repositoryId, Guid releaseId, string downloadPath)
     {

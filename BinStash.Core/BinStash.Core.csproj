@@ -10,8 +10,4 @@
       <PackageReference Include="SlidingWindow" Version="1.0.7.1" />
     </ItemGroup>
 
-    <ItemGroup>
-      <Folder Include="Extensions\" />
-    </ItemGroup>
-
 </Project>

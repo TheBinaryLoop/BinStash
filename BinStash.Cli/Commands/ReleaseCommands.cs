@@ -122,7 +122,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
             Chunks = new(),
             Stats = new()
         };
-        var fileEntries = new ConcurrentBag<(ReleaseFile File, List<ChunkMapEntry> Entries, string ComponentFolder)>();
+        var fileEntries = new ConcurrentBag<(ReleaseFile File, List<ChunkMapEntry> Entries, Component Component)>();
         var allChunkChecksums = new ConcurrentBag<string>();
         var chunkMaps = new ConcurrentBag<List<ChunkMapEntry>>();
         
@@ -195,54 +195,60 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 var componentMap = LoadComponentMap(ansiConsole, releasePackage, ComponentMapFile, RootFolder);
                 
                 WriteLogMessage(ansiConsole, $"Component map contains [bold blue]{componentMap.Count}[/] components");
+                
+                if (componentMap.Count == 0)
+                {
+                    WriteLogMessage(ansiConsole, "No components found in the specified folder. Please check the folder path and try again.");
+                    return;
+                }
 
                 ctx.Status("Processing files...");
                 
-                Parallel.ForEach(Directory.EnumerateFiles(RootFolder, "*.*", SearchOption.AllDirectories), file =>
+                foreach (var componentMapEntry in componentMap)
                 {
-                    // TODO: Make this configurable
-                    if (file.Contains(".git") || file.Contains(".svn") || file.Contains(".hg"))
+                    WriteLogMessage(ansiConsole, $"Processing component: [purple]{componentMapEntry.Value.Name}[/] in folder [bold blue]{Path.Combine(RootFolder, componentMapEntry.Key)}[/]...");
+#if xDEBUG
+                    foreach (var file in Directory.EnumerateFiles(Path.Combine(RootFolder, componentMapEntry.Key), "*.*",
+                                 SearchOption.AllDirectories))
+#else
+                    Parallel.ForEach(Directory.EnumerateFiles(Path.Combine(RootFolder, componentMapEntry.Key), "*.*", SearchOption.AllDirectories), file =>
+#endif
                     {
-                        // Skip files in version control directories
-                        return;
-                    }
-                    
-                    var chunkMap = chunker.GenerateChunkMap(file).ToList();
-                    if (chunkMap.Count == 0)
-                    {
-                        WriteLogMessage(ansiConsole, $"No chunks generated for file: [red]{file}[/]");
-                        return;
-                    }
-                    
-                    // If a component map is provided, add the file to the corresponding component by checking if the file's directory exists in the component map.
-                    var componentMapEntry = componentMap.FirstOrDefault(x => file.StartsWith(x.Key, StringComparison.OrdinalIgnoreCase));
-                    var componentDefinition = componentMapEntry.Value;
-                    if (componentDefinition != null)
-                    {
-                        var relativePath = file.Replace(componentMapEntry.Key, string.Empty).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                        var fileHash = XxHash3.Hash(File.ReadAllBytes(file));
+                        // TODO: Make this configurable
+                        if (file.Contains(".git") || file.Contains(".svn") || file.Contains(".hg"))
+                        {
+                            // Skip files in version control directories
+                            return;
+                        }
 
+                        var chunkMap = chunker.GenerateChunkMap(file).ToList();
+                        if (chunkMap.Count == 0)
+                        {
+                            WriteLogMessage(ansiConsole, $"No chunks generated for file: [red]{file}[/]");
+                            return;
+                        }
+
+                        var fileHash = XxHash3.Hash(File.ReadAllBytes(file));
                         var releaseFile = new ReleaseFile
                         {
-                            Name = relativePath,
+                            Name = file.Replace(RootFolder, string.Empty).Replace(componentMapEntry.Key, string.Empty).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
                             Hash = fileHash,
                             Chunks = new()
                         };
-                        
-                        fileEntries.Add((releaseFile, chunkMap, componentMapEntry.Key));
+
+                        fileEntries.Add((releaseFile, chunkMap, componentMapEntry.Value));
                         chunkMaps.Add(chunkMap);
 
                         foreach (var entry in chunkMap)
                         {
                             allChunkChecksums.Add(entry.Checksum);
                         }
+#if xDEBUG
                     }
-                    else
-                    {
-                        // If no component is found, add the file to the virtual root component.
-                        // TODO: Implement
-                    }
-                });
+#else
+                    });
+#endif
+                }
                 
                 WriteLogMessage(ansiConsole, $"Processed [bold blue]{chunkMaps.Sum(x => x.Count)}[/] chunks from [bold blue]{chunkMaps.Count}[/] files in the specified folder");
                 
@@ -257,9 +263,9 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 var checksumToIndex = uniqueChecksums.Select((checksum, index) => new { checksum, index })
                     .ToDictionary(x => x.checksum, x => x.index);
 
-                foreach (var group in fileEntries.GroupBy(x => x.ComponentFolder))
+                foreach (var group in fileEntries.GroupBy(x => x.Component))
                 {
-                    var component = componentMap[group.Key];
+                    var component = group.Key;
                     foreach (var (file, entries, _) in group)
                     {
                         file.Chunks = entries.Select(entry => new ChunkRef
@@ -502,7 +508,7 @@ public class ReleaseDownloadCommand : AuthenticatedCommandBase
         if (!Directory.Exists(TargetFolder)) Directory.CreateDirectory(TargetFolder);
         
         // Download the release package
-        await console.Output.WriteLineAsync($"Downloading release '{release.Version}' (ID: {release.Id}) to '{TargetFolder}'...");
+        await console.Output.WriteLineAsync($"Downloading release '{release!.Version}' (ID: {release.Id}) to '{TargetFolder}'...");
         
         var downloadPath = Path.Combine(TargetFolder, $"{release.Version}.tar.zst");
 

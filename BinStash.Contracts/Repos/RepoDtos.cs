@@ -29,3 +29,18 @@ public class RepositorySummaryDto
     public string? Description { get; set; }
     public required Guid ChunkStoreId { get; set; }
 }
+
+public class RepositoryConfigDto
+{
+    public required RepositoryDedupeConfigDto DedupeConfig { get; set; }
+}
+
+public class RepositoryDedupeConfigDto
+{
+    public required string Chunker { get; set; }
+    public int? MinChunkSize { get; set; }
+    public int? AvgChunkSize { get; set; }
+    public int? MaxChunkSize { get; set; }
+    public int? ShiftCount { get; set; }
+    public int? BoundaryCheckBytes { get; set; }
+}
