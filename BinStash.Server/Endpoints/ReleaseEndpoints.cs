@@ -252,6 +252,8 @@ public static class ReleaseEndpoints
                         await outputStream.WriteAsync(chunkData, 0, chunkData.Length);
                     }
                 }, totalSize, release.CreatedAt.UtcDateTime);
+                
+                await tarWriter.WriteFileAsync($"{relativePath}.xxhash3", componentFile.Hash);
             }
         }
 
