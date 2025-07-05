@@ -30,7 +30,7 @@ public class ChunkStoreDetailDto : ChunkStoreSummaryDto
 
 public class ChunkStoreChunkerDto
 {
-    public string Type { get; set; }
+    public string Type { get; set; } = string.Empty;
     public int? MinChunkSize { get; set; }
     public int? AvgChunkSize { get; set; }
     public int? MaxChunkSize { get; set; }

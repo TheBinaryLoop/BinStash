@@ -90,7 +90,7 @@ public class FastCdcChunker : IChunker
 
                 chunks.Add(new ChunkMapEntry
                 {
-                    FilePath = null, // Not applicable for Stream
+                    FilePath = null!, // Not applicable for Stream
                     Offset = offset,
                     Length = length,
                     Checksum = checksum
@@ -112,7 +112,7 @@ public class FastCdcChunker : IChunker
 
             chunks.Add(new ChunkMapEntry
             {
-                FilePath = null, // Not applicable for Stream
+                FilePath = null!, // Not applicable for Stream
                 Offset = chunkStart,
                 Length = length,
                 Checksum = checksum
