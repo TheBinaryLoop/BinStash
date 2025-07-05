@@ -233,7 +233,8 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                         {
                             Name = file.Replace(RootFolder, string.Empty).Replace(componentMapEntry.Key, string.Empty).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
                             Hash = fileHash,
-                            Chunks = new()
+                            Chunks = new(),
+                            Component = componentMapEntry.Value.Name
                         };
 
                         fileEntries.Add((releaseFile, chunkMap, componentMapEntry.Value));
@@ -303,8 +304,29 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 else
                 {
                     WriteLogMessage(ansiConsole, $"Found [bold blue]{missingChunks.Count}[/] missing chunks that need to be uploaded to the chunk store");
+                    
+                    ctx.Status("Calculating chunk map entries for upload...");
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    var missingSet = new HashSet<string>(missingChunks, StringComparer.Ordinal);
+                    var selectedEntries = new ConcurrentDictionary<string, ChunkMapEntry>(StringComparer.Ordinal);
+
+                    Parallel.ForEach(chunkMaps, chunkMap =>
+                    {
+                        foreach (var entry in chunkMap)
+                        {
+                            if (missingSet.Contains(entry.Checksum))
+                            {
+                                selectedEntries.TryAdd(entry.Checksum, entry); // keep first-seen
+                            }
+                        }
+                    });
+
+                    var missingChunkEntries = selectedEntries.Values.ToList();
+                    WriteLogMessage(ansiConsole, $"Calculated [bold blue]{missingChunkEntries.Count}[/] chunk map entries for upload in {sw.Elapsed}");
+                    sw.Stop();
+                    
                     ctx.Status("Uploading missing chunks to chunk store...");
-                    await client.UploadChunksAsync(chunker, chunkStore.Id, MergeChunkMapsDeduplicated(chunkMaps).Where(x => missingChunks.Contains(x.Checksum)), progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing chunks to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
+                    await client.UploadChunksAsync(chunker, chunkStore.Id, missingChunkEntries, progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing chunks to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
                 }
                 
                 WriteLogMessage(ansiConsole, "All missing chunks uploaded to the chunk store");
