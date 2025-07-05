@@ -244,16 +244,17 @@ public static class ChunkStoreEndpoints
             var missingChecksums = checksums.Except(knownChecksums).ToList();
 
             var tasks = new List<Task<bool>>();
-            await Parallel.ForEachAsync(uniqueChunks.Where(x => missingChecksums.Contains(x.Checksum)), new ParallelOptions { MaxDegreeOfParallelism = 4 }, async (chunk, _) => {
+            foreach (var chunk in uniqueChunks.Where(x => missingChecksums.Contains(x.Checksum)))
+            {
                 var hash = Convert.ToHexString(SHA256.HashData(chunk.Data));
                 if (!hash.Equals(chunk.Checksum, StringComparison.OrdinalIgnoreCase))
-                    return; // TODO: Handle checksum mismatch
+                    continue; // TODO: Handle checksum mismatch
 
                 // Store to filesystem asynchronously
                 if (!await store.StoreChunkAsync(chunk.Checksum, chunk.Data))
                     throw new Exception($"Failed to store chunk {chunk.Checksum} in store {store.Name}");
-            });
-
+            }
+        
             // Add unique chunks to DbContext ensuring no duplicates
             var chunksToAdd = uniqueChunks
                 .Where(x => missingChecksums.Contains(x.Checksum))

@@ -47,8 +47,7 @@ public class ObjectStore
         if (string.IsNullOrEmpty(basePath))
             throw new ArgumentException("Storage directory cannot be null or empty.", nameof(basePath));
         
-        if (!Directory.Exists(basePath))
-            Directory.CreateDirectory(basePath);
+        Directory.CreateDirectory(basePath);
 
         _BasePath = basePath;
         InitializeFileHandlers();
@@ -80,8 +79,7 @@ public class ObjectStore
     {
         var hash = ComputeSha256Hash(releasePackageData);
         var folder = Path.Join(_BasePath, "Releases", hash[..3]);
-        if (!Directory.Exists(folder))
-            Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(folder);
         var filePath = Path.Join(folder, hash);
         await File.WriteAllBytesAsync(filePath, releasePackageData);
     }
@@ -143,8 +141,7 @@ public class ChunkFileHandler
     public ChunkFileHandler(string directoryPath, string prefix, long maxPackFileSize)
     {
         _MaxPackFileSize = maxPackFileSize;
-        if (!Directory.Exists(directoryPath))
-            Directory.CreateDirectory(directoryPath);
+        Directory.CreateDirectory(directoryPath);
         _IndexFilePath = Path.Combine(directoryPath, $"index{prefix}.idx");
         _DataFilePrefix = Path.Combine(directoryPath, $"chunks{prefix}");
         LoadIndex();
@@ -244,7 +241,8 @@ public class ChunkFileHandler
         await _PackFileLock.WaitAsync();
         try
         {
-            if (_Index.ContainsKey(hash)) return;
+            if (_Index.ContainsKey(hash))
+                return;
 
             await using var dataStream = GetWritableDataFile(out var fileNo);
             var (offset, length) = await PackFileEntry.WriteAsync(dataStream, chunkData);
