@@ -100,6 +100,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
+        var swTotal = System.Diagnostics.Stopwatch.StartNew();
         // Input validation
         if (!Directory.Exists(RootFolder))
             throw new CommandException($"The specified folder '{RootFolder}' does not exist or is not a directory.");
@@ -204,9 +205,10 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
 
                 ctx.Status("Processing files...");
                 
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 foreach (var componentMapEntry in componentMap)
                 {
-                    WriteLogMessage(ansiConsole, $"Processing component: [purple]{componentMapEntry.Value.Name}[/] in folder [bold blue]{Path.Combine(RootFolder, componentMapEntry.Key)}[/]...");
+                    WriteLogMessage(ansiConsole, $"Processing component: [purple]{componentMapEntry.Value.Name}[/] in folder [bold blue]{Path.Combine(RootFolder, componentMapEntry.Key)}[/]");
 #if xDEBUG
                     foreach (var file in Directory.EnumerateFiles(Path.Combine(RootFolder, componentMapEntry.Key), "*.*",
                                  SearchOption.AllDirectories))
@@ -227,8 +229,16 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                             WriteLogMessage(ansiConsole, $"No chunks generated for file: [red]{file}[/]");
                             return;
                         }
-
-                        var fileHash = XxHash3.Hash(File.ReadAllBytes(file));
+                        
+                        using var fsIn = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.SequentialScan); // 64 KB buffer
+                        var hasher = new XxHash3();
+                        Span<byte> buffer = stackalloc byte[65536]; // 64 KB, fits L1/L2 cache well, maybe need to adjust based on the system
+                        int bytesRead;
+                        while ((bytesRead = fsIn.Read(buffer)) > 0)
+                        {
+                            hasher.Append(buffer[..bytesRead]);
+                        }
+                        var fileHash = hasher.GetCurrentHash();
                         var releaseFile = new ReleaseFile
                         {
                             Name = file.Replace(RootFolder, string.Empty).Replace(componentMapEntry.Key, string.Empty).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
@@ -244,6 +254,9 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                         {
                             allChunkChecksums.Add(entry.Checksum);
                         }
+                        
+                        // TODO: Implement log levels and print this on debug level only
+                        //WriteLogMessage(ansiConsole, $"Processed file [bold blue]{releaseFile.Component}[/]:[purple]{releaseFile.Name}[/](Chunks: [bold blue]{chunkMap.Count}[/])");
 #if xDEBUG
                     }
 #else
@@ -251,7 +264,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
 #endif
                 }
                 
-                WriteLogMessage(ansiConsole, $"Processed [bold blue]{chunkMaps.Sum(x => x.Count)}[/] chunks from [bold blue]{chunkMaps.Count}[/] files in the specified folder");
+                WriteLogMessage(ansiConsole, $"Processed [bold blue]{chunkMaps.Sum(x => x.Count)}[/] chunks from [bold blue]{chunkMaps.Count}[/] files from the specified folder in [darkorange]{sw.Elapsed}[/]");
                 
                 ctx.Status($"Building chunk map for release definition with {chunkMaps.Sum(x => x.Count)} chunks...");
                 if (chunkMaps.Count == 0)
@@ -306,7 +319,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                     WriteLogMessage(ansiConsole, $"Found [bold blue]{missingChunks.Count}[/] missing chunks that need to be uploaded to the chunk store");
                     
                     ctx.Status("Calculating chunk map entries for upload...");
-                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    sw.Restart();
                     var missingSet = new HashSet<string>(missingChunks, StringComparer.Ordinal);
                     var selectedEntries = new ConcurrentDictionary<string, ChunkMapEntry>(StringComparer.Ordinal);
 
@@ -339,7 +352,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                     ansiConsole.MarkupLine("[red]Failed to create release. Please check the provided parameters.[/]");
                     return;
                 }*/
-                ansiConsole.MarkupLine("[green]Release created successfully![/]");
+                ansiConsole.MarkupLine($"[green]Release created successfully! Took {swTotal.Elapsed}...[/]");
             });
     }
 
@@ -348,15 +361,6 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
         // This method can be used to write log messages to the console
         // For now, we just write it directly to the output
         console.MarkupLine($"[grey]LOG:[/] {message}[grey]...[/]");
-    }
-    
-    private IReadOnlyList<ChunkMapEntry> MergeChunkMapsDeduplicated(IEnumerable<IEnumerable<ChunkMapEntry>> chunkMaps)
-    {
-        return chunkMaps
-            .SelectMany(map => map)
-            .GroupBy(c => c.Checksum)
-            .Select(g => g.First()) // or add custom priority logic
-            .ToList();
     }
     
     private Dictionary<string, Component> LoadComponentMap(IAnsiConsole console, ReleasePackage release, string? mapFile, string rootFolder)
