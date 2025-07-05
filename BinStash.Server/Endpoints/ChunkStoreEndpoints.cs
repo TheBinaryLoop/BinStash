@@ -218,56 +218,57 @@ public static class ChunkStoreEndpoints
 
     private static async Task<IResult> UploadChunksBatchAsync(Guid id, List<ChunkUploadDto> chunks, BinStashDbContext db)
     {
-        var store = await db.ChunkStores.FindAsync(id);
-            if (store == null)
-                return Results.NotFound();
+        var storeMeta = await db.ChunkStores.FindAsync(id);
+        if (storeMeta == null)
+            return Results.NotFound();
 
-            store = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
+        var store = new ChunkStore(storeMeta.Name, storeMeta.Type, storeMeta.LocalPath, new LocalFolderObjectStorage(storeMeta.LocalPath));
 
-            if (!chunks.Any())
-                return Results.BadRequest("No chunks provided.");
+        if (chunks.Count == 0)
+            return Results.BadRequest("No chunks provided.");
 
-            // Deduplicate the chunks based on checksum
-            var uniqueChunks = chunks
-                .GroupBy(c => c.Checksum)
-                .Select(g => g.First()) // Take the first occurrence of each checksum
-                .ToList();
-            
+        // Deduplicate
+        var uniqueChunks = chunks
+            .GroupBy(c => c.Checksum)
+            .Select(g => g.First())
+            .ToList();
 
-            var checksums = uniqueChunks.Select(c => c.Checksum).ToList();
+        var checksums = uniqueChunks.Select(c => c.Checksum).ToList();
 
-            var knownChecksums = await db.Chunks
-                .Where(c => c.ChunkStoreId == id && checksums.Contains(c.Checksum))
-                .Select(c => c.Checksum)
-                .ToListAsync();
+        var knownChecksums = await db.Chunks
+            .Where(c => c.ChunkStoreId == id && checksums.Contains(c.Checksum))
+            .Select(c => c.Checksum)
+            .ToListAsync();
 
-            var missingChecksums = checksums.Except(knownChecksums).ToList();
+        var missingChunks = uniqueChunks
+            .Where(c => !knownChecksums.Contains(c.Checksum))
+            .ToList();
 
-            var tasks = new List<Task<bool>>();
-            foreach (var chunk in uniqueChunks.Where(x => missingChecksums.Contains(x.Checksum)))
-            {
-                var hash = Convert.ToHexString(SHA256.HashData(chunk.Data));
-                if (!hash.Equals(chunk.Checksum, StringComparison.OrdinalIgnoreCase))
-                    continue; // TODO: Handle checksum mismatch
+        var writeTasks = missingChunks.Select(async chunk =>
+        {
+            var hash = Convert.ToHexString(SHA256.HashData(chunk.Data));
+            if (!hash.Equals(chunk.Checksum, StringComparison.OrdinalIgnoreCase))
+                return false; // Consider logging this
 
-                // Store to filesystem asynchronously
-                if (!await store.StoreChunkAsync(chunk.Checksum, chunk.Data))
-                    throw new Exception($"Failed to store chunk {chunk.Checksum} in store {store.Name}");
-            }
-        
-            // Add unique chunks to DbContext ensuring no duplicates
-            var chunksToAdd = uniqueChunks
-                .Where(x => missingChecksums.Contains(x.Checksum))
-                .Select(chunk => new Chunk
-                {
-                    Checksum = chunk.Checksum,
-                    ChunkStoreId = id,
-                    Length = chunk.Data.Length
-                });
+            return await store.StoreChunkAsync(chunk.Checksum, chunk.Data);
+        });
 
-            db.Chunks.AddRange(chunksToAdd);
-            await db.SaveChangesAsync();
+        var results = await Task.WhenAll(writeTasks);
 
-            return Results.Ok();
+        if (results.Any(r => r == false))
+            return Results.Problem("Some chunks failed checksum or storage.");
+
+        var chunksToAdd = missingChunks.Select(chunk => new Chunk
+        {
+            Checksum = chunk.Checksum,
+            ChunkStoreId = id,
+            Length = chunk.Data.Length
+        });
+
+        db.Chunks.AddRange(chunksToAdd);
+        await db.SaveChangesAsync();
+
+        return Results.Ok();
     }
+
 }
