@@ -238,7 +238,8 @@ public static class ReleaseEndpoints
             foreach (var (componentName, componentFile) in files)
             {
                 var totalSize = componentFile.Chunks.Sum(c => (long)c.Length);
-                var relativePath = (string.IsNullOrEmpty(component) ? Path.Combine(componentName, componentFile.Name) : componentFile.Name).Replace('\\', '/');
+                // TODO: Remove component name from the path if component is set
+                var relativePath = componentFile.Name.Replace('\\', '/');
                 
                 await tarWriter.WriteFileAsync(relativePath, async (outputStream) =>
                 {
