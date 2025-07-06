@@ -36,4 +36,9 @@ public interface IChunker
     /// Loads the actual chunk data for one or more chunk map entries from a stream.
     /// </summary>
     Task<ChunkData> LoadChunkDataAsync(Stream stream, ChunkMapEntry chunkInfo, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Recommends chunker settings based on the target folder's content.
+    /// </summary>
+    Task<RecommendationResult> RecommendChunkerSettingsForTargetAsync(string folderPath, ChunkAnalysisTarget target, Action<string>? log = null, CancellationToken cancellationToken = default);
 }
