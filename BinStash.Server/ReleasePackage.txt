@@ -1,0 +1,52 @@
+[Header]
+  - Magic bytes
+  - Version
+  - Flags
+  
+[Section]
+  - Section ID / Type (e.g. byte)
+  - Compressed size (uint32)
+  - Uncompressed size (uint32)
+  - Compressed bytes...
+
+[Section: Release Metadata]
+  - UFT-8 string version
+  - UFT-8 string ReleaseId
+  - UFT-8 string RepoId
+  - optional UFT-8 string Notes
+  - DateTimeOffset ReleaseDate
+
+[Section: Chunk Table]
+  - uint32 Count
+  - [Count × 32-byte SHA256 Hash]
+
+[Section: String Table]
+  - uint32 EntryCount
+  - For each entry:
+      - uint16 Length
+      - [UTF-8 Bytes]
+
+[Section: Component Table]
+  - uint16 Count
+  - For each component:
+    - Length-prefixed UTF-8 string (name)
+    - uint32 FileCount
+    - [File entries...]
+
+[File Entry]
+  - Length-prefixed UTF-8 string (file name)
+  - 32-byte file hash
+  - Length-prefixed UTF-8 string (component name) (or skip if redundant)
+  - uint32 ChunkRefCount
+  - [ChunkRefCount × DeltaChunkRef]
+
+[DeltaChunkRef]
+  - uint32 DeltaIndex (can be changed to varint if sparse)
+  - uint32 Offset
+  - uint32 Length
+
+[Stats] (Optional)
+  - uint32 FileCount
+  - uint32 ChunkCount
+  - uint64 UncompressedSize
+  - uint64 CompressedSize

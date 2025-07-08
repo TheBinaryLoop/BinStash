@@ -15,6 +15,7 @@
 
 using BinStash.Contracts.Delta;
 using BinStash.Contracts.Release;
+using DeltaChunkRef = BinStash.Contracts.Delta.DeltaChunkRef;
 
 namespace BinStash.Server.Helpers;
 
@@ -23,8 +24,13 @@ public static class DeltaCalculator
     public static (DeltaManifest manifest, List<string> newChunkChecksums) ComputeChunkDeltaManifest(ReleasePackage oldRelease, ReleasePackage newRelease, string? singleComponent)
     {
         // Map: index → checksum
-        var oldChunkMap = oldRelease.Chunks.ToDictionary(c => c.Index, c => Convert.ToHexStringLower(c.Checksum));
-        var newChunkMap = newRelease.Chunks.ToDictionary(c => c.Index, c => Convert.ToHexStringLower(c.Checksum));
+        var oldChunkMap = oldRelease.Chunks
+            .Select((c, i) => new { Index = i, Checksum = Convert.ToHexStringLower(c.Checksum) })
+            .ToDictionary(x => x.Index, x => x.Checksum);
+
+        var newChunkMap = newRelease.Chunks
+            .Select((c, i) => new { Index = i, Checksum = Convert.ToHexStringLower(c.Checksum) })
+            .ToDictionary(x => x.Index, x => x.Checksum);
 
         var oldChecksumSet = oldChunkMap.Values.ToHashSet();
         var newChunks = new HashSet<string>();
@@ -45,7 +51,7 @@ public static class DeltaCalculator
                 var chunkRefs = new List<DeltaChunkRef>();
                 long totalSize = 0;
 
-                foreach (var chunk in file.Chunks)
+                foreach (var chunk in ChunkRefHelper.ConvertDeltaToChunkRefs(file.Chunks))
                 {
                     var checksum = newChunkMap[chunk.Index];
                     var source = oldChecksumSet.Contains(checksum) ? "existing" : "new";

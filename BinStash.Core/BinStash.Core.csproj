@@ -8,6 +8,12 @@
 
     <ItemGroup>
       <PackageReference Include="SlidingWindow" Version="1.0.7.1" />
+      <PackageReference Include="System.IO.Hashing" Version="9.0.6" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\BinStash.Contracts\BinStash.Contracts.csproj" />
+      <ProjectReference Include="..\Externals\ZstdNet\ZstdNet\ZstdNet.csproj" />
     </ItemGroup>
 
 </Project>

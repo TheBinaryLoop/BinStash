@@ -26,8 +26,3 @@ public class ReleaseSummaryDto
     
     public RepositorySummaryDto Repository { get; set; } = null!;
 }
-
-public class CreateReleaseDto : ReleaseSummaryDto
-{
-    public required byte[] ReleaseDefinition { get; set; }
-}

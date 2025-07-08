@@ -20,6 +20,7 @@ using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
+using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using BinStash.Server.Helpers;
@@ -79,7 +80,7 @@ public static class ReleaseEndpoints
             return Results.BadRequest("Missing or empty release definition file.");
         
         var contentType = file.ContentType;
-        if (contentType is not "application/x-msgpack" and not "application/x-msgpack+gzip" and not "application/x-msgpack+zst")
+        if (contentType is not "application/x-bs-rdef" )
             return Results.BadRequest("Unsupported Content-Type.");
         
         var repo = await db.Repositories.FindAsync(repoId);
@@ -93,7 +94,7 @@ public static class ReleaseEndpoints
         var releaseId = Guid.CreateVersion7();
         await using var stream = file.OpenReadStream();
 
-        var releasePackage = await AdvancedMessagePackSerializer.DeserializeAsync<ReleasePackage>(contentType, stream);
+        var releasePackage = await ReleasePackageSerializer.DeserializeAsync(stream);
         
         if (db.Releases.Any(r => r.RepoId == repo.Id && r.Version == releasePackage.Version))
             return Results.Conflict($"A release with version '{releasePackage.Version}' already exists for this repository.");
@@ -101,8 +102,10 @@ public static class ReleaseEndpoints
         releasePackage.ReleaseId = releaseId.ToString();
         releasePackage.RepoId = repo.Id.ToString();
 
-        var zstData = new Compressor().Wrap(MessagePackSerializer.Serialize(releasePackage));
-        var hash = Convert.ToHexString(SHA256.HashData(zstData));
+        await using var releasePackageStream = new MemoryStream();
+        await ReleasePackageSerializer.SerializeAsync(releasePackageStream, releasePackage);
+        var releasePackageData = releasePackageStream.ToArray();
+        var hash = Convert.ToHexString(SHA256.HashData(releasePackageData));
 
         await db.Releases.AddAsync(new Release
         {
@@ -116,7 +119,7 @@ public static class ReleaseEndpoints
         });
 
         var chunkStore = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
-        await chunkStore.StoreReleasePackageAsync(zstData);
+        await chunkStore.StoreReleasePackageAsync(releasePackageData);
 
         await db.SaveChangesAsync();
 
@@ -170,10 +173,9 @@ public static class ReleaseEndpoints
         if (packageData == null)
             return Results.NotFound("Release package not found in the chunk store.");
 
-        var decompressedData = new Decompressor().Unwrap(packageData);
-        var releasePackage = MessagePackSerializer.Deserialize<ReleasePackage>(decompressedData);
+        var releasePackage = await ReleasePackageSerializer.DeserializeAsync(packageData);
         
-        var chunksByIndex = releasePackage.Chunks.ToDictionary(c => c.Index, c => c.Checksum);
+        var chunksByIndex = releasePackage.Chunks.Select((c, i) => new { Index = i, c.Checksum }).ToDictionary(x => x.Index, x => x.Checksum);
         var files = (component == null
             ? releasePackage.Components.SelectMany(c => c.Files.Select(f => (Component: c.Name, File: f)))
             : releasePackage.Components
@@ -212,8 +214,7 @@ public static class ReleaseEndpoints
             if (diffPackageData == null)
                 return Results.NotFound("Diff release package not found in the chunk store.");
             
-            var diffDecompressedData = new Decompressor().Unwrap(diffPackageData);
-            var diffReleasePackage = MessagePackSerializer.Deserialize<ReleasePackage>(diffDecompressedData);
+            var diffReleasePackage = await ReleasePackageSerializer.DeserializeAsync(diffPackageData);
             
             releasePackage.ReleaseId = release.Id.ToString();
             diffReleasePackage.ReleaseId = diffRelease.Id.ToString();
@@ -243,7 +244,7 @@ public static class ReleaseEndpoints
                 
                 await tarWriter.WriteFileAsync(relativePath, async (outputStream) =>
                 {
-                    foreach (var chunkRef in componentFile.Chunks)
+                    foreach (var chunkRef in ChunkRefHelper.ConvertDeltaToChunkRefs(componentFile.Chunks))
                     {
                         var checksum = chunksByIndex[chunkRef.Index];
                         var chunkData = await store.RetrieveChunkAsync(Convert.ToHexStringLower(checksum));

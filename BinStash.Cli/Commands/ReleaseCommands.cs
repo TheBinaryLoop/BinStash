@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -19,11 +19,13 @@ using BinStash.Cli.Infrastructure;
 using BinStash.Contracts.Release;
 using BinStash.Core.Chunking;
 using BinStash.Core.Entities;
+using BinStash.Core.Serialization;
 using CliFx;
 using CliFx.Attributes;
 using CliFx.Exceptions;
 using CliFx.Infrastructure;
 using Spectre.Console;
+using ZstdNet;
 
 namespace BinStash.Cli.Commands;
 
@@ -243,8 +245,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                         {
                             Name = file.Replace(RootFolder, string.Empty).Replace(componentMapEntry.Key, string.Empty).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
                             Hash = fileHash,
-                            Chunks = new(),
-                            Component = componentMapEntry.Value.Name
+                            Chunks = new()
                         };
 
                         fileEntries.Add((releaseFile, chunkMap, componentMapEntry.Value));
@@ -275,35 +276,49 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 
                 var uniqueChecksums = allChunkChecksums.Distinct().OrderBy(x => x).ToList();
                 var checksumToIndex = uniqueChecksums.Select((checksum, index) => new { checksum, index })
-                    .ToDictionary(x => x.checksum, x => x.index);
+                    .ToDictionary(x => x.checksum, x => (uint)x.index);
 
                 foreach (var group in fileEntries.GroupBy(x => x.Component))
                 {
                     var component = group.Key;
                     foreach (var (file, entries, _) in group)
                     {
-                        file.Chunks = entries.Select(entry => new ChunkRef
+                        var lastIndex = 0u;
+                        var first = true;
+
+                        file.Chunks = entries.OrderBy(e => checksumToIndex[e.Checksum]).Select(entry =>
                         {
-                            Index = checksumToIndex[entry.Checksum],
-                            Offset = entry.Offset,
-                            Length = entry.Length
+                            var currentIndex = checksumToIndex[entry.Checksum];
+                            uint deltaIndex;
+
+                            if (first)
+                            {
+                                deltaIndex = currentIndex;
+                                first = false;
+                            }
+                            else
+                            {
+                                deltaIndex = currentIndex - lastIndex;
+                            }
+
+                            lastIndex = currentIndex;
+
+                            return new DeltaChunkRef(deltaIndex, (ulong)entry.Offset, (ulong)entry.Length);
                         }).ToList();
+
+
                         component.Files.Add(file);
                     }
                 }
 
-                releasePackage.Chunks = uniqueChecksums.Select((checksum, i) => new ChunkInfo
-                {
-                    Index = i,
-                    Checksum = Convert.FromHexString(checksum)
-                }).ToList();
+                releasePackage.Chunks = uniqueChecksums.Select((checksum) => new ChunkInfo(Convert.FromHexString(checksum))).ToList();
                 
                 releasePackage.Stats = new ReleaseStats
                 {
-                    FileCount = releasePackage.Components.SelectMany(c => c.Files).Count(),
-                    ChunkCount = releasePackage.Chunks.Count,
-                    UncompressedSize = chunkMaps.SelectMany(x => x).Sum(x => (long)x.Length),
-                    CompressedSize = releasePackage.Components.SelectMany(x => x.Files.SelectMany(f => f.Chunks)).Sum(x => (long)x.Length) // fake estimate
+                    FileCount = (uint)releasePackage.Components.SelectMany(c => c.Files).Count(),
+                    ChunkCount = (uint)releasePackage.Chunks.Count,
+                    UncompressedSize = (ulong)chunkMaps.SelectMany(x => x).Sum(x => (long)x.Length),
+                    CompressedSize = (ulong)releasePackage.Components.SelectMany(x => x.Files.SelectMany(f => f.Chunks)).Sum(x => (long)x.Length) // fake estimate
                 };
                 
                 WriteLogMessage(ansiConsole, $"Release definition contains [bold blue]{uniqueChecksums.Count}[/] unique chunks");

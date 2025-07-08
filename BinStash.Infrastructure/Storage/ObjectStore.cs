@@ -80,7 +80,7 @@ public class ObjectStore
         var hash = ComputeSha256Hash(releasePackageData);
         var folder = Path.Join(_BasePath, "Releases", hash[..3]);
         Directory.CreateDirectory(folder);
-        var filePath = Path.Join(folder, hash);
+        var filePath = Path.Join(folder, $"{hash}.rdef");
         await File.WriteAllBytesAsync(filePath, releasePackageData);
     }
 

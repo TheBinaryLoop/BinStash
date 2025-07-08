@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -19,6 +19,7 @@ using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
 using BinStash.Core.Chunking;
+using BinStash.Core.Serialization;
 using MessagePack;
 using RestSharp;
 
@@ -219,15 +220,13 @@ public class BinStashApiClient
     public async Task CreateReleaseAsync(string repositoryId, ReleasePackage release)
     {
         using var client = new HttpClient(); // ideally use IHttpClientFactory
-        using var msgpackStream = new MemoryStream();
-
-        // Compress MessagePack-serialized release into GZip stream
-        await using (var gzip = new GZipStream(msgpackStream, CompressionMode.Compress, true))
+        using var uploadStream = new MemoryStream();
+        await ReleasePackageSerializer.SerializeAsync(uploadStream, release, new ReleasePackageSerializerOptions
         {
-            await MessagePackSerializer.SerializeAsync(gzip, release, MessagePack.Resolvers.ContractlessStandardResolver.Options);
-        }
+            CompressionLevel = 15
+        });
 
-        msgpackStream.Position = 0;
+        uploadStream.Position = 0;
 
         // Create multipart form data
         using var form = new MultipartFormDataContent();
@@ -236,11 +235,11 @@ public class BinStashApiClient
         form.Add(new StringContent(repositoryId), "repositoryId");
 
         // Add the releaseDefinition file
-        var fileContent = new StreamContent(msgpackStream);
-        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-msgpack+gzip");
+        var fileContent = new StreamContent(uploadStream);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-bs-rdef");
 
         // This name MUST match what the server expects: "releaseDefinition"
-        form.Add(fileContent, "releaseDefinition", "release.msgpack.gz");
+        form.Add(fileContent, "releaseDefinition", "release.rdef");
 
         // Updated URL — now posts to /api/releases (not /api/repositories/{id}/releases)
         var url = new Uri(new Uri(_rootUrl), "api/releases");
