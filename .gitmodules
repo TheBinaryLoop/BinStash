@@ -1,0 +1,3 @@
+[submodule "Externals/ZstdNet"]
+	path = Externals/ZstdNet
+	url = https://github.com/TheBinaryLoop/ZstdNet.git
