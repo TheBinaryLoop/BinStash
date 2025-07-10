@@ -221,11 +221,8 @@ public class BinStashApiClient
     {
         using var client = new HttpClient(); // ideally use IHttpClientFactory
         using var uploadStream = new MemoryStream();
-        await ReleasePackageSerializer.SerializeAsync(uploadStream, release, new ReleasePackageSerializerOptions
-        {
-            CompressionLevel = 15
-        });
-
+        await ReleasePackageSerializer.SerializeAsync(uploadStream, release);
+        
         uploadStream.Position = 0;
 
         // Create multipart form data

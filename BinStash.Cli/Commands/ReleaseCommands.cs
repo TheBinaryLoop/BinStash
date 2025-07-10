@@ -344,7 +344,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                         {
                             if (missingSet.Contains(entry.Checksum))
                             {
-                                selectedEntries.TryAdd(entry.Checksum, entry); // keep first-seen
+                                selectedEntries.TryAdd(entry.Checksum, entry);
                             }
                         }
                     });
