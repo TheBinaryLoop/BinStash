@@ -89,7 +89,7 @@ public class ObjectStore
         var folder = Path.Join(_BasePath, "Releases", hash[..3]);
         if (!Directory.Exists(folder))
             throw new DirectoryNotFoundException(folder);
-        var filePath = Path.Join(folder, hash);
+        var filePath = Path.Join(folder, $"{hash}.rdef");
         if (!File.Exists(filePath))
             throw new FileNotFoundException(filePath);
         return await File.ReadAllBytesAsync(filePath);

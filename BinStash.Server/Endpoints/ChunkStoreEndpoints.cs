@@ -172,9 +172,11 @@ public static class ChunkStoreEndpoints
         // Return a list of all chunks that are in the dto but not in the database with the store id
         if (!dto.ChunkChecksums.Any())
             return Results.BadRequest("No chunk checksums provided.");
+        
+        var chunkChecksumArray = dto.ChunkChecksums.ToArray();
             
         var knownChecksums = await db.Chunks
-            .Where(c => c.ChunkStoreId == id && dto.ChunkChecksums.Contains(c.Checksum))
+            .Where(c => c.ChunkStoreId == id && chunkChecksumArray.Contains(c.Checksum))
             .Select(c => c.Checksum)
             .ToListAsync();
             
@@ -233,13 +235,13 @@ public static class ChunkStoreEndpoints
             .Select(g => g.First())
             .ToList();
 
-        var checksums = uniqueChunks.Select(c => c.Checksum).ToList();
-
+        var checksums = uniqueChunks.Select(c => c.Checksum).ToArray();
+        
         var knownChecksums = await db.Chunks
             .Where(c => c.ChunkStoreId == id && checksums.Contains(c.Checksum))
             .Select(c => c.Checksum)
             .ToListAsync();
-
+        
         var missingChunks = uniqueChunks
             .Where(c => !knownChecksums.Contains(c.Checksum))
             .ToList();

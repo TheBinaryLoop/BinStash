@@ -184,6 +184,7 @@ public static class ReleasePackageSerializer
         while (stream.Position < stream.Length)
         {
             var sectionId = reader.ReadByte();
+            var sectionFlags = reader.ReadByte(); // Currently unused, reserved for future use
             var sectionSize = VarIntUtils.ReadVarInt<uint>(reader);
 
             using var compressed = new MemoryStream(reader.ReadBytes((int)sectionSize));
@@ -277,9 +278,6 @@ public static class ReleasePackageSerializer
         return package;
     }
     
-    
-    
-    
     private static async Task WriteSectionAsync(Stream baseStream, byte id, Action<BinaryWriter> write, ReleasePackageSerializerOptions options, CancellationToken ct)
     {
         using var ms = new MemoryStream();
@@ -298,6 +296,7 @@ public static class ReleasePackageSerializer
             compressed.Position = 0;
             var writer = new BinaryWriter(baseStream, Encoding.UTF8, true);
             writer.Write(id);
+            writer.Write((byte)0); // FLAG: Currently unused, reserved for future use
             VarIntUtils.WriteVarInt(writer, (ulong)compressed.Length);
             await compressed.CopyToAsync(baseStream, ct);
         }
@@ -306,6 +305,7 @@ public static class ReleasePackageSerializer
             // Write uncompressed section data
             var writer = new BinaryWriter(baseStream, Encoding.UTF8, true);
             writer.Write(id);
+            writer.Write((byte)0); // FLAG: Currently unused, reserved for future use
             VarIntUtils.WriteVarInt(writer, (ulong)ms.Length);
             await ms.CopyToAsync(baseStream, ct);
         }

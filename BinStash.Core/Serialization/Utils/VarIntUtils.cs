@@ -17,6 +17,10 @@ namespace BinStash.Core.Serialization.Utils;
 
 internal class VarIntUtils
 {
+    #region Write Methods
+    
+    #region BinaryWriter Overloads
+    
     internal static void WriteVarInt<T>(BinaryWriter w, T value) where T : struct
     {
         switch (value)
@@ -48,29 +52,84 @@ internal class VarIntUtils
     
     private static void WriteSignedVarInt(BinaryWriter w, long value)
     {
-        var zigZag = (ulong)((value << 1) ^ (value >> 63)); // ZigZag encoding
-        WriteUnsignedVarInt(w, zigZag);
+        Span<byte> buffer = stackalloc byte[10];
+        var len = EncodeSignedVarInt(value, buffer);
+        w.Write(buffer[..len]);
     }
 
     private static void WriteUnsignedVarInt(BinaryWriter w, ulong value)
     {
-        while ((value & ~0x7FUL) != 0)
-        {
-            w.Write((byte)((value & 0x7F) | 0x80));
-            value >>= 7;
-        }
-        w.Write((byte)value);
+        Span<byte> buffer = stackalloc byte[10];
+        var len = EncodeUnsignedVarInt(value, buffer);
+        w.Write(buffer[..len]);
     }
 
     private static void WriteUnsignedVarInt(BinaryWriter w, uint value)
     {
-        while ((value & ~0x7FU) != 0)
-        {
-            w.Write((byte)((value & 0x7F) | 0x80));
-            value >>= 7;
-        }
-        w.Write((byte)value);
+        Span<byte> buffer = stackalloc byte[5];
+        var len = EncodeUnsignedVarInt(value, buffer);
+        w.Write(buffer[..len]);
     }
+    
+    #endregion
+    
+    #region Stream Overloads
+    
+    internal static void WriteVarInt<T>(Stream output, T value) where T : struct
+    {
+        switch (value)
+        {
+            case int i:
+                WriteSignedVarInt(output, i);
+                break;
+
+            case long l:
+                WriteSignedVarInt(output, l);
+                break;
+
+            case uint ui:
+                WriteUnsignedVarInt(output, ui);
+                break;
+
+            case ulong ul:
+                WriteUnsignedVarInt(output, ul);
+                break;
+
+            case ushort us:
+                WriteUnsignedVarInt(output, us);
+                break;
+
+            default:
+                throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.");
+        }
+    }
+    
+    private static void WriteSignedVarInt(Stream stream, long value)
+    {
+        Span<byte> buffer = stackalloc byte[10];
+        var len = EncodeSignedVarInt(value, buffer);
+        stream.Write(buffer[..len]);
+    }
+
+    private static void WriteUnsignedVarInt(Stream stream, ulong value)
+    {
+        Span<byte> buffer = stackalloc byte[10];
+        var len = EncodeUnsignedVarInt(value, buffer);
+        stream.Write(buffer[..len]);
+    }
+
+    private static void WriteUnsignedVarInt(Stream stream, uint value)
+    {
+        Span<byte> buffer = stackalloc byte[5];
+        var len = EncodeUnsignedVarInt(value, buffer);
+        stream.Write(buffer[..len]);
+    }
+    
+    #endregion
+    
+    #endregion
+    
+    #region Read Methods
     
     internal static T ReadVarInt<T>(BinaryReader r) where T : struct
     {
@@ -133,6 +192,44 @@ internal class VarIntUtils
         var raw = ReadUnsignedVarInt64(r);
         return (long)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
     }
+
+    
+    #endregion
+    
+    #region Helper Methods
+    
+    private static int EncodeUnsignedVarInt(ulong value, Span<byte> buffer)
+    {
+        var index = 0;
+        while ((value & ~0x7FUL) != 0)
+        {
+            buffer[index++] = (byte)((value & 0x7F) | 0x80);
+            value >>= 7;
+        }
+        buffer[index++] = (byte)value;
+        return index;
+    }
+
+    private static int EncodeUnsignedVarInt(uint value, Span<byte> buffer)
+    {
+        var index = 0;
+        while ((value & ~0x7FU) != 0)
+        {
+            buffer[index++] = (byte)((value & 0x7F) | 0x80);
+            value >>= 7;
+        }
+        buffer[index++] = (byte)value;
+        return index;
+    }
+
+    private static int EncodeSignedVarInt(long value, Span<byte> buffer)
+    {
+        var zigZag = (ulong)((value << 1) ^ (value >> 63));
+        return EncodeUnsignedVarInt(zigZag, buffer);
+    }
+
+    
+    #endregion
     
     internal static int VarIntSize(ulong value)
     {

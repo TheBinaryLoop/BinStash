@@ -14,12 +14,12 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Collections.Concurrent;
+using System.Formats.Tar;
 using System.IO.Hashing;
 using BinStash.Cli.Infrastructure;
 using BinStash.Contracts.Release;
 using BinStash.Core.Chunking;
 using BinStash.Core.Entities;
-using BinStash.Core.Serialization;
 using CliFx;
 using CliFx.Attributes;
 using CliFx.Exceptions;
@@ -470,6 +470,10 @@ public class ReleaseDownloadCommand : AuthenticatedCommandBase
     [CommandOption("version", 'v', Description = "The version/name of the release", IsRequired = false)]
     public string Version { get; init; } = string.Empty;
     
+    [CommandOption("component", 'c', Description = "The component to install", IsRequired = false)]
+    public string Component { get; init; } = string.Empty;
+
+    
     [CommandOption("target-folder", 't', Description = "The target folder to install the release to", IsRequired = true)]
     public string TargetFolder { get; init; } = string.Empty;
 
@@ -553,9 +557,28 @@ public class ReleaseDownloadCommand : AuthenticatedCommandBase
         
         var downloadPath = Path.Combine(TargetFolder, $"{release.Version}.tar.zst");
 
-        if (!await client.DownloadReleaseAsync(release.Repository.Id, release.Id, downloadPath))
+        if (!await client.DownloadReleaseAsync(release.Id, downloadPath, Component))
         {
             throw new CommandException($"Failed to download release '{release.Version}' (ID: {release.Id}) from repository '{release.Repository.Name}'.");
         }
+        
+        await File.WriteAllTextAsync(Path.Combine(TargetFolder, "release-id.txt"), release.Id.ToString());
+        
+        // Extract the downloaded release package
+        await console.Output.WriteLineAsync($"Extracting release package to '{TargetFolder}'...");
+        await using (var fsIn = File.OpenRead(downloadPath))
+        await using (var decompressor = new DecompressionStream(fsIn))
+            await TarFile.ExtractToDirectoryAsync(decompressor, TargetFolder, true);
+        
+        try
+        {
+            File.Delete(downloadPath);
+            await console.Output.WriteLineAsync($"Temporary file '{downloadPath}' deleted.");
+        }
+        catch (Exception ex)
+        {
+            await console.Output.WriteLineAsync($"Failed to delete temporary file '{downloadPath}': {ex.Message}");
+        }
+        await console.Output.WriteLineAsync($"Release '{release.Version}' (ID: {release.Id}) installed successfully to '{TargetFolder}'.");
     }
 }

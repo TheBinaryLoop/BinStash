@@ -13,14 +13,12 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.IO.Compression;
 using System.Net;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
 using BinStash.Core.Chunking;
 using BinStash.Core.Serialization;
-using MessagePack;
 using RestSharp;
 
 namespace BinStash.Cli.Infrastructure;
@@ -96,6 +94,7 @@ public class BinStashApiClient
     
     public async Task<List<string>> GetMissingChunkChecksumAsync(Guid id,  List<string> chunkChecksums)
     {
+        // TODO: Switch to a Transpose-based approach for better performance
         using var client = new RestClient(_restClientOptions);
         var request = new RestRequest($"api/chunkstores/{id}/chunks/missing", Method.Post);
         request.AddJsonBody(new ChunkStoreMissingChunkSyncInfoDto
@@ -130,8 +129,7 @@ public class BinStashApiClient
     }
     
     // TODO: Implement gRPC-based upload method to support smoother chunk uploads
-    public async Task UploadChunksAsync(IChunker chunker, Guid chunkStoreId,  IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100,
-        Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
+    public async Task UploadChunksAsync(IChunker chunker, Guid chunkStoreId, IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
     {
         using var client = new RestClient(_restClientOptions);
         var allChunks = chunksToUpload.ToList();
@@ -250,10 +248,12 @@ public class BinStashApiClient
     }
 
     
-    public async Task<bool> DownloadReleaseAsync(Guid repositoryId, Guid releaseId, string downloadPath)
+    public async Task<bool> DownloadReleaseAsync(Guid releaseId, string downloadPath, string? component = null)
     {
         using var client = new RestClient(_restClientOptions);
-        var request = new RestRequest($"api/repositories/{repositoryId}/releases/{releaseId}/download");
+        var request = new RestRequest($"api/releases/{releaseId}/download");
+        if (!string.IsNullOrWhiteSpace(component))
+            request.AddQueryParameter("component", component);
 
         var response = await client.DownloadStreamAsync(request);
         

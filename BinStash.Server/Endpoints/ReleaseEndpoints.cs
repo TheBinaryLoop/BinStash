@@ -244,15 +244,27 @@ public static class ReleaseEndpoints
                 
                 await tarWriter.WriteFileAsync(relativePath, async (outputStream) =>
                 {
-                    foreach (var chunkRef in ChunkRefHelper.ConvertDeltaToChunkRefs(componentFile.Chunks))
+                    var chunkRefs = ChunkRefHelper.ConvertDeltaToChunkRefs(componentFile.Chunks).ToList();
+                    var loadedChunks = new byte[chunkRefs.Count][];
+                    var throttler = new SemaphoreSlim(64); // Limit parallel reads
+
+                    await Task.WhenAll(chunkRefs.Select(async (chunkRef, i) =>
                     {
-                        var checksum = chunksByIndex[chunkRef.Index];
-                        var chunkData = await store.RetrieveChunkAsync(Convert.ToHexStringLower(checksum));
-                        if (chunkData == null)
-                            throw new FileNotFoundException($"Chunk {checksum} not found in the chunk store.");
-                        
-                        await outputStream.WriteAsync(chunkData, 0, chunkData.Length);
-                    }
+                        await throttler.WaitAsync();
+                        try
+                        {
+                            var checksum = chunksByIndex[chunkRef.Index];
+                            var chunkData = await store.RetrieveChunkAsync(Convert.ToHexStringLower(checksum));
+                            loadedChunks[i] = chunkData ?? throw new FileNotFoundException($"Chunk {checksum} not found in the chunk store.");
+                        }
+                        finally
+                        {
+                            throttler.Release();
+                        }
+                    }));
+
+                    foreach (var chunk in loadedChunks)
+                        await outputStream.WriteAsync(chunk, 0, chunk.Length);
                 }, totalSize, release.CreatedAt.UtcDateTime);
                 
                 await tarWriter.WriteFileAsync($"{relativePath}.xxhash3", componentFile.Hash);
