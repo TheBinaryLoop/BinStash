@@ -153,10 +153,11 @@ public static class ReleasePackageSerializer
         // Section: 0x06 - Package statistics
         await WriteSectionAsync(stream, 0x06, w =>
         {
+            VarIntUtils.WriteVarInt(w , package.Stats.ComponentCount);
             VarIntUtils.WriteVarInt(w , package.Stats.FileCount);
             VarIntUtils.WriteVarInt(w, package.Stats.ChunkCount);
-            VarIntUtils.WriteVarInt(w, package.Stats.UncompressedSize);
-            VarIntUtils.WriteVarInt(w, package.Stats.CompressedSize);
+            VarIntUtils.WriteVarInt(w, package.Stats.RawSize);
+            VarIntUtils.WriteVarInt(w, package.Stats.DedupedSize);
         }, options, cancellationToken);
     }
 
@@ -165,7 +166,7 @@ public static class ReleasePackageSerializer
         await using var stream = new MemoryStream(data);
         return await DeserializeAsync(stream, cancellationToken);
     }
-    public static async Task<ReleasePackage> DeserializeAsync(Stream stream, CancellationToken cancellationToken = default)
+    public static Task<ReleasePackage> DeserializeAsync(Stream stream, CancellationToken cancellationToken = default)
     {
         var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
         
@@ -268,14 +269,15 @@ public static class ReleasePackageSerializer
                     }
                     break;
                 case 0x06: // Section: 0x05 - Package statistics
+                    package.Stats.ComponentCount = VarIntUtils.ReadVarInt<uint>(r);
                     package.Stats.FileCount = VarIntUtils.ReadVarInt<uint>(r);
                     package.Stats.ChunkCount = VarIntUtils.ReadVarInt<uint>(r);
-                    package.Stats.UncompressedSize = VarIntUtils.ReadVarInt<ulong>(r);
-                    package.Stats.CompressedSize = VarIntUtils.ReadVarInt<ulong>(r);
+                    package.Stats.RawSize = VarIntUtils.ReadVarInt<ulong>(r);
+                    package.Stats.DedupedSize = VarIntUtils.ReadVarInt<ulong>(r);
                     break;
             }
         }
-        return package;
+        return Task.FromResult(package);
     }
     
     private static async Task WriteSectionAsync(Stream baseStream, byte id, Action<BinaryWriter> write, ReleasePackageSerializerOptions options, CancellationToken ct)

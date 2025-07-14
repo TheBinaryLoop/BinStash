@@ -39,10 +39,11 @@ public readonly struct ChunkInfo
 
 public class ReleaseStats
 {
+    public uint ComponentCount { get; set; }
     public uint FileCount { get; set; }
     public uint ChunkCount { get; set; }
-    public ulong UncompressedSize { get; set; }
-    public ulong CompressedSize { get; set; }
+    public ulong RawSize { get; set; }
+    public ulong DedupedSize { get; set; }
 }
 
 public class ReleaseFile

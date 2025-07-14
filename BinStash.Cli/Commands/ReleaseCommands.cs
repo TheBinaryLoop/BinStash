@@ -310,15 +310,30 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                         component.Files.Add(file);
                     }
                 }
+                
+                // Build map from checksum to its length
+                var checksumLengthMap = new Dictionary<string, ulong>(StringComparer.Ordinal);
+                foreach (var chunkMap in chunkMaps)
+                {
+                    foreach (var entry in chunkMap)
+                    {
+                        if (!checksumLengthMap.ContainsKey(entry.Checksum))
+                            checksumLengthMap[entry.Checksum] = Convert.ToUInt64(entry.Length);
+                    }
+                }
+
+                // Sum length of only unique checksums
+                var dedupedSize = (ulong)uniqueChecksums.Sum(c => (long)(checksumLengthMap.TryGetValue(c, out var len) ? len : 0));
 
                 releasePackage.Chunks = uniqueChecksums.Select((checksum) => new ChunkInfo(Convert.FromHexString(checksum))).ToList();
                 
                 releasePackage.Stats = new ReleaseStats
                 {
+                    ComponentCount = (uint)releasePackage.Components.Count,
                     FileCount = (uint)releasePackage.Components.SelectMany(c => c.Files).Count(),
                     ChunkCount = (uint)releasePackage.Chunks.Count,
-                    UncompressedSize = (ulong)chunkMaps.SelectMany(x => x).Sum(x => (long)x.Length),
-                    CompressedSize = (ulong)releasePackage.Components.SelectMany(x => x.Files.SelectMany(f => f.Chunks)).Sum(x => (long)x.Length) // fake estimate
+                    RawSize = (ulong)chunkMaps.SelectMany(x => x).Sum(x => (long)x.Length),
+                    DedupedSize = dedupedSize
                 };
                 
                 WriteLogMessage(ansiConsole, $"Release definition contains [bold blue]{uniqueChecksums.Count}[/] unique chunks");
