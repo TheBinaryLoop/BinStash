@@ -36,6 +36,14 @@ public static class Program
         builder.Services.AddOpenApi();
 
         var app = builder.Build();
+        
+        // Configure the ef core migration process
+        app.Lifetime.ApplicationStarted.Register(() =>
+        {
+            using var scope = app.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<BinStashDbContext>();
+            db.Database.Migrate(); // applies any pending migrations
+        });
 
         // Configure the HTTP request pipeline.
         if (app.Environment.IsDevelopment())
