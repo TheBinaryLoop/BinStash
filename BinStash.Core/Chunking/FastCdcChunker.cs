@@ -14,12 +14,14 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
+using System.IO.MemoryMappedFiles;
 
 namespace BinStash.Core.Chunking;
 
 public class FastCdcChunker : IChunker
 {
+    private const int MMF_THRESHOLD = 16 * 1024 * 1024; // 16MB
+    
     private readonly int _MinSize;
     private readonly int _AvgSize;
     private readonly int _MaxSize;
@@ -54,51 +56,49 @@ public class FastCdcChunker : IChunker
     {
         using var stream = File.OpenRead(filePath);
         if (!stream.CanRead) throw new ArgumentException("File stream must be readable.", nameof(filePath));
-        return GenerateChunkMap(stream, cancellationToken).Select(x => 
-            new ChunkMapEntry
-            {
-                FilePath = filePath,
-                Offset = x.Offset,
-                Length = x.Length,
-                Checksum = x.Checksum
-            }).ToList();
+        if (!stream.CanSeek) throw new ArgumentException("Stream must be seekable.", nameof(filePath));
+        return GenerateChunkMapInternal(stream, filePath, cancellationToken);
     }
 
     public IReadOnlyList<ChunkMapEntry> GenerateChunkMap(Stream stream, CancellationToken cancellationToken = default)
     {
         if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
-        
-        var chunks = new List<ChunkMapEntry>();
+        if (!stream.CanSeek) throw new ArgumentException("Stream must be seekable.", nameof(stream));
+        return GenerateChunkMapInternal(stream, null, cancellationToken);
+    }
+    
+    private IReadOnlyList<ChunkMapEntry> GenerateChunkMapInternal(Stream input, string? filePath = null, CancellationToken cancellationToken = default)
+    {
+        return input.Length > MMF_THRESHOLD && input is FileStream fs
+            ? ChunkUsingMemoryMappedFile(fs, filePath, cancellationToken)
+            : ChunkUsingBuffer(input, filePath, cancellationToken);
+    }
+    
+    private IReadOnlyList<ChunkMapEntry> ChunkUsingBuffer(Stream stream, string? filePath, CancellationToken ct)
+    {
+        var chunks = new List<(long Offset, byte[] Data)>();
         int b;
         uint hash = 0;
         var chunkStart = 0L;
+        var detectionPos = 0L;
 
         while ((b = stream.ReadByte()) != -1)
         {
             hash = (hash << 1) + GearTable[b & 0xFF];
-            var currentLength = (int)(stream.Position - chunkStart);
+            detectionPos++;
+
+            var currentLength = (int)(detectionPos - chunkStart);
 
             if ((currentLength >= _MinSize && (hash & _MaskS) == 0) ||
                 (currentLength >= _AvgSize && (hash & _MaskL) == 0) ||
                 currentLength >= _MaxSize)
             {
-                var length = currentLength;
-                var offset = chunkStart;
                 stream.Seek(chunkStart, SeekOrigin.Begin);
-                var data = new byte[length];
-                stream.ReadExactly(data, 0, length);
-                var checksum = Convert.ToHexString(SHA256.HashData(data));
-
-                chunks.Add(new ChunkMapEntry
-                {
-                    FilePath = null!, // Not applicable for Stream
-                    Offset = offset,
-                    Length = length,
-                    Checksum = checksum
-                });
-
-                stream.Seek(chunkStart + length, SeekOrigin.Begin);
-                chunkStart += length;
+                var buffer = new byte[currentLength];
+                stream.ReadExactly(buffer);
+                chunks.Add((chunkStart, buffer));
+                chunkStart = detectionPos;
+                stream.Position = detectionPos;
                 hash = 0;
             }
         }
@@ -107,20 +107,70 @@ public class FastCdcChunker : IChunker
         {
             var length = (int)(stream.Length - chunkStart);
             stream.Seek(chunkStart, SeekOrigin.Begin);
-            var data = new byte[length];
-            stream.ReadExactly(data, 0, length);
-            var checksum = Convert.ToHexString(SHA256.HashData(data));
-
-            chunks.Add(new ChunkMapEntry
-            {
-                FilePath = null!, // Not applicable for Stream
-                Offset = chunkStart,
-                Length = length,
-                Checksum = checksum
-            });
+            var buffer = new byte[length];
+            stream.ReadExactly(buffer);
+            chunks.Add((chunkStart, buffer));
         }
 
-        return chunks;
+        return HashChunksParallel(chunks, filePath, ct);
+    }
+    
+    private IReadOnlyList<ChunkMapEntry> ChunkUsingMemoryMappedFile(FileStream stream, string? filePath, CancellationToken ct)
+    {
+        var chunks = new List<(long Offset, byte[] Data)>();
+
+        using var mmf = MemoryMappedFile.CreateFromFile(stream, null, 0, MemoryMappedFileAccess.Read, HandleInheritability.Inheritable, true);
+        using var view = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+
+        var fileLength = stream.Length;
+        var hash = 0u;
+        long chunkStart = 0;
+
+        for (long pos = 0; pos < fileLength; pos++)
+        {
+            byte b = view.ReadByte(pos);
+            hash = (hash << 1) + GearTable[b & 0xFF];
+            var currentLength = (int)(pos + 1 - chunkStart);
+
+            if ((currentLength >= _MinSize && (hash & _MaskS) == 0) ||
+                (currentLength >= _AvgSize && (hash & _MaskL) == 0) ||
+                currentLength >= _MaxSize)
+            {
+                var buffer = new byte[currentLength];
+                view.ReadArray(chunkStart, buffer, 0, currentLength);
+                chunks.Add((chunkStart, buffer));
+                chunkStart = pos + 1;
+                hash = 0;
+            }
+        }
+
+        if (chunkStart < fileLength)
+        {
+            var length = (int)(fileLength - chunkStart);
+            var buffer = new byte[length];
+            view.ReadArray(chunkStart, buffer, 0, length);
+            chunks.Add((chunkStart, buffer));
+        }
+
+        return HashChunksParallel(chunks, filePath, ct);
+    }
+
+    private static IReadOnlyList<ChunkMapEntry> HashChunksParallel(List<(long Offset, byte[] Data)> chunks, string? filePath, CancellationToken ct)
+    {
+        var results = new ChunkMapEntry[chunks.Count];
+        Parallel.For(0, chunks.Count, new ParallelOptions { CancellationToken = ct }, i =>
+        {
+            var (offset, data) = chunks[i];
+            results[i] = new ChunkMapEntry
+            {
+                FilePath = filePath ?? string.Empty,
+                Offset = offset,
+                Length = data.Length,
+                Checksum = Convert.ToHexString(Blake3.Hasher.Hash(data).AsSpan())
+            };
+        });
+
+        return results;
     }
     
     public async Task<ChunkData> LoadChunkDataAsync(ChunkMapEntry chunkInfo, CancellationToken cancellationToken = default)

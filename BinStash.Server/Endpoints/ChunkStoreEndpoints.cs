@@ -248,7 +248,7 @@ public static class ChunkStoreEndpoints
 
         var writeTasks = missingChunks.Select(async chunk =>
         {
-            var hash = Convert.ToHexString(SHA256.HashData(chunk.Data));
+            var hash = Convert.ToHexString(Blake3.Hasher.Hash(chunk.Data).AsSpan());
             if (!hash.Equals(chunk.Checksum, StringComparison.OrdinalIgnoreCase))
                 return false; // Consider logging this
 

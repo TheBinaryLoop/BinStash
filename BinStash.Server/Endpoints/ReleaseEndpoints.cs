@@ -13,7 +13,6 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BinStash.Contracts.Release;
@@ -24,7 +23,6 @@ using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using BinStash.Server.Helpers;
-using MessagePack;
 using Microsoft.EntityFrameworkCore;
 using ZstdNet;
 
@@ -105,7 +103,7 @@ public static class ReleaseEndpoints
         await using var releasePackageStream = new MemoryStream();
         await ReleasePackageSerializer.SerializeAsync(releasePackageStream, releasePackage);
         var releasePackageData = releasePackageStream.ToArray();
-        var hash = Convert.ToHexString(SHA256.HashData(releasePackageData));
+        var hash = Convert.ToHexString(Blake3.Hasher.Hash(releasePackageData).AsSpan());
 
         await db.Releases.AddAsync(new Release
         {
@@ -241,6 +239,8 @@ public static class ReleaseEndpoints
                 var totalSize = componentFile.Chunks.Sum(c => (long)c.Length);
                 // TODO: Remove component name from the path if component is set
                 var relativePath = componentFile.Name.Replace('\\', '/');
+                if (component != null)
+                    relativePath = relativePath.Replace($"{componentName}/", string.Empty);
                 
                 await tarWriter.WriteFileAsync(relativePath, async (outputStream) =>
                 {

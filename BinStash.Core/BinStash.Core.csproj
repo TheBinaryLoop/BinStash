@@ -7,6 +7,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <PackageReference Include="Blake3" Version="2.0.0" />
       <PackageReference Include="SlidingWindow" Version="1.0.7.1" />
       <PackageReference Include="System.IO.Hashing" Version="9.0.6" />
     </ItemGroup>
