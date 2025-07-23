@@ -69,7 +69,7 @@ See [`docs/cli-reference.md`](docs/cli-reference.md) for details.
 
 ### 📂 Chunk Storage
 
-- Chunks are stored in `.pack` files grouped by SHA-256 prefix
+- Chunks are stored in `.pack` files grouped by BLAKE3 prefix
 - Each `.pack` entry includes:
     - Magic header (`BSCK`)
     - Compressed + uncompressed length
