@@ -129,7 +129,7 @@ public class ObjectStore
     }
 }
 
-public class ChunkFileHandler
+internal class ChunkFileHandler
 {
     private readonly long _MaxPackFileSize;
     private readonly string _IndexFilePath;
@@ -313,7 +313,7 @@ public class ChunkFileHandler
     }
 }
 
-public static class PackFileEntry
+internal static class PackFileEntry
 {
     private const int HeaderSize = 21;
     private const uint Magic = 0x4B435342; // ASCII "BSCK" => "BinStash Chunk" / Little-endian encoded

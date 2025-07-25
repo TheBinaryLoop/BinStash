@@ -71,12 +71,20 @@ public static class ReleasePackageSerializer
         // Create the string table and tokenize components and files
         var substringBuilder = new SubstringTableBuilder();
         var tokenizedComponents = new List<(List<(ushort id, Separator sep)>, List<List<(ushort id, Separator sep)>>)>();
+        var tokenizedProperties = new List<(List<(ushort id, Separator sep)>, List<(ushort id, Separator sep)> value)>();
 
         foreach (var comp in package.Components)
         {
             var compTokens = substringBuilder.Tokenize(comp.Name);
             var fileTokens = comp.Files.Select(f => substringBuilder.Tokenize(f.Name)).ToList();
             tokenizedComponents.Add((compTokens, fileTokens));
+        }
+        
+        foreach (var kvp in package.CustomProperties)
+        {
+            var keyTokens = substringBuilder.Tokenize(kvp.Key);
+            var valueTokens = substringBuilder.Tokenize(kvp.Value?.ToString() ?? string.Empty);
+            tokenizedProperties.Add((keyTokens, valueTokens));
         }
 
         package.StringTable = substringBuilder.Table;
@@ -93,6 +101,18 @@ public static class ReleasePackageSerializer
             }
         }, options, cancellationToken);
         
+        // Section: 0x04 - Custom properties
+        await WriteSectionAsync(stream, 0x04, w =>
+        {
+            VarIntUtils.WriteVarInt(w, (uint)package.CustomProperties.Count);
+            for (var i = 0; i < package.CustomProperties.Count; i++)
+            {
+                var (keyTokens, valueTokens) = tokenizedProperties[i];
+                WriteTokenSequence(w, keyTokens);
+                WriteTokenSequence(w, valueTokens);
+            }
+        }, options, cancellationToken);
+        
         // Generate the contentIds and fileContentId mappings
         var contentIds = GroupChunkListsByContentId(package);
         var fileContentIds = MapFilesToContentIds(package);
@@ -105,7 +125,7 @@ public static class ReleasePackageSerializer
             .ToDictionary(x => x.cid, x => (uint)x.index);
         
         // Section: 0x04 - ContentId mapping
-        await WriteSectionAsync(stream, 0x04, w =>
+        await WriteSectionAsync(stream, 0x05, w =>
         {
             VarIntUtils.WriteVarInt(w, (uint)dedupeContentIds.Count);
             
@@ -117,7 +137,7 @@ public static class ReleasePackageSerializer
         }, options, cancellationToken);
         
         // Section: 0x05 - Components and files
-        await WriteSectionAsync(stream, 0x05, w =>
+        await WriteSectionAsync(stream, 0x06, w =>
         {
             VarIntUtils.WriteVarInt(w, (uint)tokenizedComponents.Count);
             for (var i = 0; i < tokenizedComponents.Count; i++)
@@ -151,7 +171,7 @@ public static class ReleasePackageSerializer
         }, options, cancellationToken);
 
         // Section: 0x06 - Package statistics
-        await WriteSectionAsync(stream, 0x06, w =>
+        await WriteSectionAsync(stream, 0x07, w =>
         {
             VarIntUtils.WriteVarInt(w , package.Stats.ComponentCount);
             VarIntUtils.WriteVarInt(w , package.Stats.FileCount);
@@ -222,14 +242,23 @@ public static class ReleasePackageSerializer
                         package.StringTable.Add(Encoding.UTF8.GetString(r.ReadBytes(len)));
                     }
                     break;
-                case 0x04: // Section: 0x04 - ContentId mapping
+                case 0x04: // Section: 0x04 - Custom properties
+                    var propCount = VarIntUtils.ReadVarInt<uint>(r);
+                    for (var i = 0; i < propCount; i++)
+                    {
+                        var key = ReadTokenizedString(r, package.StringTable);
+                        var value = ReadTokenizedString(r, package.StringTable);
+                        package.CustomProperties[key] = value;
+                    }
+                    break;
+                case 0x05: // Section: 0x04 - ContentId mapping
                     var contentIdCount = VarIntUtils.ReadVarInt<uint>(r);
                     for (var i = 0; i < contentIdCount; i++)
                     {
                         contentIds.Add(ReadChunkRefs(r));
                     }
                     break;
-                case 0x05: // Section: 0x05 - Components and files
+                case 0x06: // Section: 0x05 - Components and files
                     var compCount = VarIntUtils.ReadVarInt<uint>(r);
                     for (var i = 0; i < compCount; i++)
                     {
@@ -268,7 +297,7 @@ public static class ReleasePackageSerializer
                         package.Components.Add(comp);
                     }
                     break;
-                case 0x06: // Section: 0x05 - Package statistics
+                case 0x07: // Section: 0x05 - Package statistics
                     package.Stats.ComponentCount = VarIntUtils.ReadVarInt<uint>(r);
                     package.Stats.FileCount = VarIntUtils.ReadVarInt<uint>(r);
                     package.Stats.ChunkCount = VarIntUtils.ReadVarInt<uint>(r);

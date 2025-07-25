@@ -64,6 +64,7 @@ internal class SubstringTableBuilder
         '.' => Separator.Dot,
         '/' => Separator.Slash,
         '\\' => Separator.Backslash,
+        ':' => Separator.Colon,
         _ => Separator.None
     };
 }
@@ -74,4 +75,5 @@ internal enum Separator : byte
     Dot = (byte)'.',
     Slash = (byte)'/',
     Backslash = (byte)'\\',
+    Colon = (byte)':',
 }

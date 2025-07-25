@@ -16,6 +16,7 @@
 using System.Collections.Concurrent;
 using System.Formats.Tar;
 using System.IO.Hashing;
+using BinStash.Cli.Converters;
 using BinStash.Cli.Infrastructure;
 using BinStash.Contracts.Release;
 using BinStash.Core.Chunking;
@@ -99,6 +100,9 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
 
     [CommandOption("component-map", 'c', Description = "The path to the component map file.", IsRequired = false)]
     public string ComponentMapFile { get; init; } = string.Empty;
+    
+    [CommandOption("custom-property", 'p', Description = "Custom property to add to the release. Can be specified multiple times.", IsRequired = false, Converter = typeof(KeyValuePairConverter<string, string>))]
+    public Dictionary<string, string> CustomProperties { get; set; } = new();
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -121,6 +125,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
         {
             Version = Version,
             Notes = noteContent,
+            CustomProperties = CustomProperties,
             Components = new(),
             Chunks = new(),
             Stats = new()

@@ -65,6 +65,7 @@ public class ReleasePackage
     public string ReleaseId { get; set; } = string.Empty;
     public string RepoId { get; set; } = string.Empty;
     public string? Notes { get; set; }
+    public Dictionary<string, string> CustomProperties { get; set; } = new();
     public DateTimeOffset CreatedAt { get; set; }
 
     public List<ChunkInfo> Chunks { get; set; } = [];
