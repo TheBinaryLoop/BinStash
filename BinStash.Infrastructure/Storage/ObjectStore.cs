@@ -17,8 +17,8 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO.Hashing;
 using System.IO.MemoryMappedFiles;
-using System.Security.Cryptography;
 using BinStash.Infrastructure.Helper;
+using Blake3;
 using ZstdNet;
 
 namespace BinStash.Infrastructure.Storage;
@@ -64,7 +64,7 @@ public class ObjectStore
 
     public async Task WriteChunkAsync(byte[] chunkData)
     {
-        var hash = ComputeSha256Hash(chunkData);
+        var hash = ComputeHash(chunkData);
         var prefix = hash[..3];
         await _FileHandlers[prefix].WriteChunkAsync(hash, chunkData);
     }
@@ -77,7 +77,7 @@ public class ObjectStore
 
     public async Task WriteReleasePackageAsync(byte[] releasePackageData)
     {
-        var hash = ComputeSha256Hash(releasePackageData);
+        var hash = ComputeHash(releasePackageData);
         var folder = Path.Join(_BasePath, "Releases", hash[..3]);
         Directory.CreateDirectory(folder);
         var filePath = Path.Join(folder, $"{hash}.rdef");
@@ -95,10 +95,10 @@ public class ObjectStore
         return await File.ReadAllBytesAsync(filePath);
     }
     
-    private static string ComputeSha256Hash(byte[] data)
+    private static string ComputeHash(byte[] data)
     {
-        var hash = SHA256.HashData(data);
-        return Convert.ToHexStringLower(hash);
+        var hash = Hasher.Hash(data);
+        return Convert.ToHexStringLower(hash.AsSpan());
     }
     
     public StorageStatistics GetStatistics()
