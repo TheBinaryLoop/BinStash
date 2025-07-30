@@ -27,4 +27,5 @@ public class Release
     public string? Notes { get; set; }
     
     public string ReleaseDefinitionChecksum { get; set; } = null!;
+    public string? CustomProperties { get; set; } = null;
 }

@@ -31,6 +31,7 @@ public class ReleaseEntityTypeConfiguration : IEntityTypeConfiguration<Release>
         builder.Property(r => r.Version).IsRequired().HasMaxLength(256);
         builder.Property(r => r.CreatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.Property(r => r.ReleaseDefinitionChecksum).HasColumnType("char(64)").IsRequired();
+        builder.Property(r => r.CustomProperties).HasColumnType("jsonb").IsRequired(false);
 
         builder.HasOne(r => r.Repository)
             .WithMany(repo => repo.Releases)

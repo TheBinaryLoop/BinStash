@@ -19,6 +19,7 @@ using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
+using BinStash.Core.Extensions;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
@@ -49,7 +50,13 @@ public static class ReleaseEndpoints
             .WithSummary("Get Release")
             .Produces<ReleaseSummaryDto>()
             .Produces(StatusCodes.Status404NotFound);
-            
+
+        group.MapGet("/{id:guid}/properties", GetReleaseCustomPropertiesAsync)
+            .WithDescription("Get custom properties of a release.")
+            .WithSummary("Get Release Custom Properties")
+            .Produces<string>()
+            .Produces(StatusCodes.Status404NotFound);
+        
         group.MapGet("/{id:guid}/download", GetReleaseDownloadAsync)
             .WithDescription("Download a release package.")
             .WithSummary("Download Release")
@@ -113,7 +120,8 @@ public static class ReleaseEndpoints
             Notes = releasePackage.Notes,
             RepoId = repo.Id,
             Repository = repo,
-            ReleaseDefinitionChecksum = hash
+            ReleaseDefinitionChecksum = hash,
+            CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null
         });
 
         var chunkStore = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
@@ -144,6 +152,12 @@ public static class ReleaseEndpoints
                 ChunkStoreId = release.Repository.ChunkStoreId
             }
         });
+    }
+    
+    private static async Task<IResult> GetReleaseCustomPropertiesAsync(Guid id, BinStashDbContext db)
+    {
+        var customProperties = await db.Releases.AsNoTracking().Where(r => r.Id == id).Select(x => x.CustomProperties).FirstOrDefaultAsync();
+        return Results.Text(customProperties ?? "{}", "application/json");
     }
     
     private static async Task<IResult> GetReleaseDownloadAsync(Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db)

@@ -27,6 +27,7 @@ public static class Program
         var builder = WebApplication.CreateBuilder(args);
 
         // Add services to the container.
+        builder.Services.AddResponseCompression();
         builder.Services.AddProblemDetails();
         builder.Services.AddAuthorization();
 
@@ -53,6 +54,7 @@ public static class Program
         }
 
         app.UseHttpsRedirection();
+        app.UseResponseCompression();
         app.UseAuthorization();
         app.MapAllEndpoints();
         
