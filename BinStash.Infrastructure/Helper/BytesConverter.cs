@@ -44,8 +44,6 @@ public static class BytesConverter
         if (size < pb) return FloatForm((double)size / tb) + " Tb";
         if (size < eb) return FloatForm((double)size / pb) + " Pb";
         return FloatForm((double)size / eb) + " Eb";
-
-        return size.ToString();
     }
 
     public static string FloatForm(double d)
