@@ -17,6 +17,7 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO.Hashing;
 using System.IO.MemoryMappedFiles;
+using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Helper;
 using Blake3;
 using ZstdNet;
@@ -58,6 +59,11 @@ public class ObjectStore
         for (var i = 0; i < 4096; i++)
         {
             var prefix = i.ToString("x3");
+            // The folder structure will look like:
+            // basePath/
+            //   Chunks/
+            //     00/
+            //       index00x.idx
             _FileHandlers[prefix] = new ChunkFileHandler(Path.Combine(_BasePath, "Chunks", prefix[..2]), prefix, _MaxPackSize);
         }
     }
@@ -165,11 +171,11 @@ internal class ChunkFileHandler
                 accessor.ReadArray(position, hash, 0, 32);
                 position += 32;
 
-                var fileNo = accessor.ReadByte(position++);
-                var (offset, len1) = ReadVarInt(accessor, ref position);
-                var (length, len2) = ReadVarInt(accessor, ref position);
+                var fileNo = VarIntUtils.ReadVarInt<int>(accessor, ref position);
+                var offset = VarIntUtils.ReadVarInt<long>(accessor, ref position);
+                var length = VarIntUtils.ReadVarInt<int>(accessor, ref position);
 
-                _Index[Convert.ToHexStringLower(hash)] = (fileNo, offset, (int)length);
+                _Index[Convert.ToHexStringLower(hash)] = (fileNo, offset, length);
             }
         }
         finally
@@ -186,9 +192,10 @@ internal class ChunkFileHandler
         {
             using var writer = new BinaryWriter(File.Open(_IndexFilePath, FileMode.Append, FileAccess.Write, FileShare.Read));
             writer.Write(Convert.FromHexString(hash));
-            writer.Write((byte)fileNumber); // 1 byte is enough for 256 rotated files
-            WriteVarInt(writer, offset);
-            WriteVarInt(writer, length);
+            VarIntUtils.WriteVarInt(writer, fileNumber);
+            VarIntUtils.WriteVarInt(writer, offset);
+            VarIntUtils.WriteVarInt(writer, length);
+            writer.Flush();
         }
         finally
         {
@@ -284,32 +291,6 @@ internal class ChunkFileHandler
             if (!info.Exists || info.Length < _MaxPackFileSize)
                 return new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
         }
-    }
-
-    private static void WriteVarInt(BinaryWriter writer, long value)
-    {
-        while (value > 0x7F)
-        {
-            writer.Write((byte)((value & 0x7F) | 0x80));
-            value >>= 7;
-        }
-        writer.Write((byte)value);
-    }
-
-    private static (long value, int length) ReadVarInt(MemoryMappedViewAccessor accessor, ref long pos)
-    {
-        long result = 0;
-        int shift = 0;
-        int len = 0;
-        byte b;
-        do
-        {
-            b = accessor.ReadByte(pos++);
-            result |= (long)(b & 0x7F) << shift;
-            shift += 7;
-            len++;
-        } while ((b & 0x80) != 0);
-        return (result, len);
     }
 }
 

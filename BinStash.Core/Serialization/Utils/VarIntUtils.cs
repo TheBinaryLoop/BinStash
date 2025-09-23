@@ -13,15 +13,17 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.IO.MemoryMappedFiles;
+
 namespace BinStash.Core.Serialization.Utils;
 
-internal class VarIntUtils
+public class VarIntUtils
 {
     #region Write Methods
     
     #region BinaryWriter Overloads
     
-    internal static void WriteVarInt<T>(BinaryWriter w, T value) where T : struct
+    public static void WriteVarInt<T>(BinaryWriter w, T value) where T : struct
     {
         switch (value)
         {
@@ -75,7 +77,7 @@ internal class VarIntUtils
     
     #region Stream Overloads
     
-    internal static void WriteVarInt<T>(Stream output, T value) where T : struct
+    public static void WriteVarInt<T>(Stream output, T value) where T : struct
     {
         switch (value)
         {
@@ -130,8 +132,10 @@ internal class VarIntUtils
     #endregion
     
     #region Read Methods
-    
-    internal static T ReadVarInt<T>(BinaryReader r) where T : struct
+
+    #region BinaryReader Overloads
+
+    public static T ReadVarInt<T>(BinaryReader r) where T : struct
     {
         var result = typeof(T) switch
         {
@@ -193,6 +197,73 @@ internal class VarIntUtils
         return (long)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
     }
 
+    #endregion
+    
+    #region MemoryMappedViewAccessor Overloads
+    
+    public static T ReadVarInt<T>(MemoryMappedViewAccessor accessor, ref long pos) where T : struct
+    {
+        var result = typeof(T) switch
+        {
+            { } t when t == typeof(int) => ReadSignedVarInt32(accessor, ref pos),
+            { } t when t == typeof(long) => ReadSignedVarInt64(accessor, ref pos),
+            { } t when t == typeof(uint) => ReadUnsignedVarInt32(accessor, ref pos),
+            { } t when t == typeof(ulong) => ReadUnsignedVarInt64(accessor, ref pos),
+            { } t when t == typeof(ushort) => (object)(ushort)ReadUnsignedVarInt32(accessor, ref pos),
+            _ => throw new NotSupportedException($"Type {typeof(T)} is not supported for varint deserialization.")
+        };
+        return (T)result;
+    }
+    
+    private static uint ReadUnsignedVarInt32(MemoryMappedViewAccessor accessor, ref long pos)
+    {
+        uint result = 0;
+        var shift = 0;
+
+        while (true)
+        {
+            var b = accessor.ReadByte(pos++);
+            result |= (uint)(b & 0x7F) << shift;
+            if ((b & 0x80) == 0) break;
+            shift += 7;
+            if (shift > 35)
+                throw new FormatException("VarInt32 too long.");
+        }
+
+        return result;
+    }
+
+    private static ulong ReadUnsignedVarInt64(MemoryMappedViewAccessor accessor, ref long pos)
+    {
+        ulong result = 0;
+        var shift = 0;
+
+        while (true)
+        {
+            var b = accessor.ReadByte(pos++);
+            result |= (ulong)(b & 0x7F) << shift;
+            if ((b & 0x80) == 0) break;
+            shift += 7;
+            if (shift > 70)
+                throw new FormatException("VarInt64 too long.");
+        }
+
+        return result;
+    }
+
+    private static int ReadSignedVarInt32(MemoryMappedViewAccessor accessor, ref long pos)
+    {
+        var raw = ReadUnsignedVarInt32(accessor, ref pos);
+        return (int)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
+    }
+
+    private static long ReadSignedVarInt64(MemoryMappedViewAccessor accessor, ref long pos)
+    {
+        var raw = ReadUnsignedVarInt64(accessor, ref pos);
+        return (long)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
+    }
+    
+    #endregion
     
     #endregion
     

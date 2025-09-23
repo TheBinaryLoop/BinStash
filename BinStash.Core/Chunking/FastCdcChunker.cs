@@ -128,7 +128,7 @@ public class FastCdcChunker : IChunker
 
         for (long pos = 0; pos < fileLength; pos++)
         {
-            byte b = view.ReadByte(pos);
+            var b = view.ReadByte(pos);
             hash = (hash << 1) + GearTable[b & 0xFF];
             var currentLength = (int)(pos + 1 - chunkStart);
 
