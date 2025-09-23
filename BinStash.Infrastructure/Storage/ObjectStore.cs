@@ -18,6 +18,7 @@ using System.Collections.Concurrent;
 using System.IO.Hashing;
 using System.IO.MemoryMappedFiles;
 using BinStash.Core.Serialization.Utils;
+using BinStash.Core.Types;
 using BinStash.Infrastructure.Helper;
 using Blake3;
 using ZstdNet;
@@ -71,19 +72,20 @@ public class ObjectStore
     public async Task WriteChunkAsync(byte[] chunkData)
     {
         var hash = ComputeHash(chunkData);
-        var prefix = hash[..3];
+        var stringHash = Convert.ToHexStringLower(hash.GetBytes());
+        var prefix = stringHash[..3];
         await _FileHandlers[prefix].WriteChunkAsync(hash, chunkData);
     }
 
     public async Task<byte[]> ReadChunkAsync(string hash)
     {
         var prefix = hash[..3];
-        return await _FileHandlers[prefix].ReadChunkAsync(hash);
+        return await _FileHandlers[prefix].ReadChunkAsync(new Hash32(Convert.FromHexString(hash)));
     }
 
     public async Task WriteReleasePackageAsync(byte[] releasePackageData)
     {
-        var hash = ComputeHash(releasePackageData);
+        var hash = Convert.ToHexStringLower(ComputeHash(releasePackageData).GetBytes());
         var folder = Path.Join(_BasePath, "Releases", hash[..3]);
         Directory.CreateDirectory(folder);
         var filePath = Path.Join(folder, $"{hash}.rdef");
@@ -101,10 +103,10 @@ public class ObjectStore
         return await File.ReadAllBytesAsync(filePath);
     }
     
-    private static string ComputeHash(byte[] data)
+    private static Hash32 ComputeHash(byte[] data)
     {
         var hash = Hasher.Hash(data);
-        return Convert.ToHexStringLower(hash.AsSpan());
+        return new Hash32(hash.AsSpan());
     }
     
     public StorageStatistics GetStatistics()
@@ -142,7 +144,9 @@ internal class ChunkFileHandler
     private readonly string _DataFilePrefix;
     private readonly SemaphoreSlim _PackFileLock = new(1, 1);
     private readonly SemaphoreSlim _IndexFileLock = new(1, 1);
-    private readonly Dictionary<string, (int fileNo, long offset, int length)> _Index = new();
+    private readonly Dictionary<Hash32, (int fileNo, long offset, int length)> _Index = new();
+    
+    private int _currentFileNumber = int.MinValue;
 
     public ChunkFileHandler(string directoryPath, string prefix, long maxPackFileSize)
     {
@@ -175,7 +179,7 @@ internal class ChunkFileHandler
                 var offset = VarIntUtils.ReadVarInt<long>(accessor, ref position);
                 var length = VarIntUtils.ReadVarInt<int>(accessor, ref position);
 
-                _Index[Convert.ToHexStringLower(hash)] = (fileNo, offset, length);
+                _Index[new Hash32(hash)] = (fileNo, offset, length);
             }
         }
         finally
@@ -184,14 +188,14 @@ internal class ChunkFileHandler
         }
     }
     
-    private void SaveIndexEntry(string hash, int fileNumber, long offset, int length)
+    private void SaveIndexEntry(Hash32 hash, int fileNumber, long offset, int length)
     {
         _IndexFileLock.Wait();
 
         try
         {
             using var writer = new BinaryWriter(File.Open(_IndexFilePath, FileMode.Append, FileAccess.Write, FileShare.Read));
-            writer.Write(Convert.FromHexString(hash));
+            writer.Write(hash.GetBytes());
             VarIntUtils.WriteVarInt(writer, fileNumber);
             VarIntUtils.WriteVarInt(writer, offset);
             VarIntUtils.WriteVarInt(writer, length);
@@ -203,7 +207,7 @@ internal class ChunkFileHandler
         }
     }
     
-    public Dictionary<string, (int fileNo, long offset, int length)> GetIndexSnapshot()
+    public Dictionary<Hash32, (int fileNo, long offset, int length)> GetIndexSnapshot()
     {
         return new(_Index);
     }
@@ -243,11 +247,16 @@ internal class ChunkFileHandler
         }
     }
     
-    public async Task WriteChunkAsync(string hash, byte[] chunkData)
+    public async Task WriteChunkAsync(Hash32 hash, byte[] chunkData)
     {
+        // quick check without lock
+        if (_Index.ContainsKey(hash))
+            return;
+        
         await _PackFileLock.WaitAsync();
         try
         {
+            // double-check
             if (_Index.ContainsKey(hash))
                 return;
 
@@ -263,7 +272,7 @@ internal class ChunkFileHandler
         }
     }
 
-    public async Task<byte[]> ReadChunkAsync(string hash)
+    public async Task<byte[]> ReadChunkAsync(Hash32 hash)
     {
         await _PackFileLock.WaitAsync();
         try
@@ -284,13 +293,31 @@ internal class ChunkFileHandler
 
     private FileStream GetWritableDataFile(out int fileNumber)
     {
-        for (fileNumber = 0; ; fileNumber++)
+        // If we haven't determined the current file number yet, do so now
+        if (_currentFileNumber == int.MinValue)
         {
-            var path = $"{_DataFilePrefix}-{fileNumber}.pack";
-            var info = new FileInfo(path);
-            if (!info.Exists || info.Length < _MaxPackFileSize)
-                return new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+            for (fileNumber = 0; ; fileNumber++)
+            {
+                var path = $"{_DataFilePrefix}-{fileNumber}.pack";
+                var info = new FileInfo(path);
+                if (!info.Exists || info.Length < _MaxPackFileSize)
+                {
+                    _currentFileNumber = fileNumber;
+                    return new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+                }
+            }
         }
+        
+        // Check if the current file has reached the max size
+        if (new FileInfo($"{_DataFilePrefix}-{_currentFileNumber}.pack").Length >= _MaxPackFileSize)
+        {
+            // If so, increment to the next file number
+            _currentFileNumber++;
+        }
+        
+        // Return a stream to the current file
+        fileNumber = _currentFileNumber;
+        return new FileStream($"{_DataFilePrefix}-{fileNumber}.pack", FileMode.Append, FileAccess.Write, FileShare.Read);
     }
 }
 
