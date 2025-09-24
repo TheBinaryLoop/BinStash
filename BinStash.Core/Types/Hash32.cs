@@ -1,6 +1,6 @@
 ﻿namespace BinStash.Core.Types;
 
-public readonly struct Hash32 : IEquatable<Hash32>
+public readonly struct Hash32 : IEquatable<Hash32>, IComparable<Hash32>
 {
     private readonly ulong _h0, _h1, _h2, _h3; // pack 32 bytes into 4x ulong
 
@@ -24,7 +24,25 @@ public readonly struct Hash32 : IEquatable<Hash32>
         _h3 = BitConverter.ToUInt64(bytes.Slice(24, 8).ToArray()); 
     }
     
+    public static Hash32 FromHexString(string hex)
+    {
+        if (hex.Length != 64) throw new ArgumentException("Hash32 hex string must be 64 characters");
+        var bytes = Convert.FromHexString(hex);
+        return new Hash32(bytes);
+    }
+    
     public bool Equals(Hash32 other) => _h0 == other._h0 && _h1 == other._h1 && _h2 == other._h2 && _h3 == other._h3;
+    public int CompareTo(Hash32 other)
+    {
+        var c = _h0.CompareTo(other._h0);
+        if (c != 0) return c;
+        c = _h1.CompareTo(other._h1);
+        if (c != 0) return c;
+        c = _h2.CompareTo(other._h2);
+        if (c != 0) return c;
+        return _h3.CompareTo(other._h3);
+    }
+
     public override int GetHashCode() => HashCode.Combine(_h0,_h1,_h2,_h3);
     
     public byte[] GetBytes()
@@ -36,4 +54,6 @@ public readonly struct Hash32 : IEquatable<Hash32>
         Array.Copy(BitConverter.GetBytes(_h3), 0, bytes, 24, 8);
         return bytes;
     }
+    
+    public string ToHexString() => Convert.ToHexStringLower(GetBytes());
 }

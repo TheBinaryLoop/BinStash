@@ -15,6 +15,7 @@
 
 using System.Collections.Concurrent;
 using System.IO.MemoryMappedFiles;
+using BinStash.Core.Types;
 
 namespace BinStash.Core.Chunking;
 
@@ -166,7 +167,7 @@ public class FastCdcChunker : IChunker
                 FilePath = filePath ?? string.Empty,
                 Offset = offset,
                 Length = data.Length,
-                Checksum = Convert.ToHexString(Blake3.Hasher.Hash(data).AsSpan())
+                Checksum = new Hash32(Blake3.Hasher.Hash(data).AsSpan())
             };
         });
 
@@ -213,7 +214,7 @@ public class FastCdcChunker : IChunker
         log($"📁 Found {files.Length} files under: {folderPath}");
         
         var avgSizesToTest = new[] { 8 * 1024, 16 * 1024, 32 * 1024, 64 * 1024, 128 * 1024, 256 * 1024 };
-        var configResults = new List<(int min, int avg, int max, List<int> chunkSizes, HashSet<string> uniqueHashes)>();
+        var configResults = new List<(int min, int avg, int max, List<int> chunkSizes, HashSet<Hash32> uniqueHashes)>();
 
         foreach (var avg in avgSizesToTest)
         {
@@ -223,7 +224,7 @@ public class FastCdcChunker : IChunker
             log($"🔍 Testing config: min={min}, avg={avg}, max={max}");
 
             var chunkSizes = new ConcurrentBag<int>();
-            var hashes = new ConcurrentBag<string>();
+            var hashes = new ConcurrentBag<Hash32>();
 
             Parallel.ForEach(files, file =>
             {

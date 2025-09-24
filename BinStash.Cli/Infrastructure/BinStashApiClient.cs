@@ -19,6 +19,7 @@ using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
 using BinStash.Core.Chunking;
 using BinStash.Core.Serialization;
+using BinStash.Core.Types;
 using RestSharp;
 
 namespace BinStash.Cli.Infrastructure;

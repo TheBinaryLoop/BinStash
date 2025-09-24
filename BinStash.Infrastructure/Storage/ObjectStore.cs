@@ -72,7 +72,7 @@ public class ObjectStore
     public async Task WriteChunkAsync(byte[] chunkData)
     {
         var hash = ComputeHash(chunkData);
-        var stringHash = Convert.ToHexStringLower(hash.GetBytes());
+        var stringHash = hash.ToHexString();
         var prefix = stringHash[..3];
         await _FileHandlers[prefix].WriteChunkAsync(hash, chunkData);
     }
@@ -80,12 +80,12 @@ public class ObjectStore
     public async Task<byte[]> ReadChunkAsync(string hash)
     {
         var prefix = hash[..3];
-        return await _FileHandlers[prefix].ReadChunkAsync(new Hash32(Convert.FromHexString(hash)));
+        return await _FileHandlers[prefix].ReadChunkAsync(Hash32.FromHexString(hash));
     }
 
     public async Task WriteReleasePackageAsync(byte[] releasePackageData)
     {
-        var hash = Convert.ToHexStringLower(ComputeHash(releasePackageData).GetBytes());
+        var hash = ComputeHash(releasePackageData).ToHexString();
         var folder = Path.Join(_BasePath, "Releases", hash[..3]);
         Directory.CreateDirectory(folder);
         var filePath = Path.Join(folder, $"{hash}.rdef");

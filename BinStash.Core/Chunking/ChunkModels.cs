@@ -13,6 +13,8 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Types;
+
 namespace BinStash.Core.Chunking;
 
 public class ChunkMapEntry
@@ -20,12 +22,12 @@ public class ChunkMapEntry
     public required string FilePath { get; init; }
     public required long Offset { get; init; }         // Start byte in file
     public required int Length { get; init; }          // Chunk size
-    public required string Checksum { get; init; }     // SHA256 or content hash
+    public required Hash32 Checksum { get; init; }     // SHA256 or content hash
 }
 
 public class ChunkData
 {
-    public required string Checksum { get; init; }
+    public required Hash32 Checksum { get; init; }
     public required byte[] Data { get; init; }
 }
 
