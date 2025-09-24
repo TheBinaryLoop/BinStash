@@ -21,6 +21,7 @@ using BinStash.Cli.Infrastructure;
 using BinStash.Contracts.Release;
 using BinStash.Core.Chunking;
 using BinStash.Core.Entities;
+using BinStash.Core.Types;
 using CliFx;
 using CliFx.Attributes;
 using CliFx.Exceptions;
@@ -131,7 +132,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
             Stats = new()
         };
         var fileEntries = new ConcurrentBag<(ReleaseFile File, List<ChunkMapEntry> Entries, Component Component)>();
-        var allChunkChecksums = new ConcurrentBag<string>();
+        var allChunkChecksums = new ConcurrentBag<Hash32>();
         var chunkMaps = new ConcurrentBag<List<ChunkMapEntry>>();
         
         var client = new BinStashApiClient(GetUrl());
@@ -317,7 +318,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 }
                 
                 // Build map from checksum to its length
-                var checksumLengthMap = new Dictionary<string, ulong>(StringComparer.Ordinal);
+                var checksumLengthMap = new Dictionary<Hash32, ulong>();
                 foreach (var chunkMap in chunkMaps)
                 {
                     foreach (var entry in chunkMap)
@@ -330,7 +331,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 // Sum length of only unique checksums
                 var dedupedSize = (ulong)uniqueChecksums.Sum(c => (long)(checksumLengthMap.TryGetValue(c, out var len) ? len : 0));
 
-                releasePackage.Chunks = uniqueChecksums.Select((checksum) => new ChunkInfo(Convert.FromHexString(checksum))).ToList();
+                releasePackage.Chunks = uniqueChecksums.Select((checksum) => new ChunkInfo(checksum.GetBytes())).ToList();
                 
                 releasePackage.Stats = new ReleaseStats
                 {
@@ -344,7 +345,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 WriteLogMessage(ansiConsole, $"Release definition contains [bold blue]{uniqueChecksums.Count}[/] unique chunks");
                 
                 ctx.Status("Requesting missing chunk info from chunk store...");
-                var missingChunks = await client.GetMissingChunkChecksumAsync(chunkStore.Id, uniqueChecksums);
+                var missingChunks = await client.GetMissingChunkChecksumAsync(chunkStore.Id, uniqueChecksums.Select(x => x.ToHexString()).ToList());
                 if (missingChunks.Count == 0)
                 {
                     WriteLogMessage(ansiConsole, "No missing chunks found in the chunk store. All chunks are already available");
@@ -355,8 +356,8 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                     
                     ctx.Status("Calculating chunk map entries for upload...");
                     sw.Restart();
-                    var missingSet = new HashSet<string>(missingChunks, StringComparer.Ordinal);
-                    var selectedEntries = new ConcurrentDictionary<string, ChunkMapEntry>(StringComparer.Ordinal);
+                    var missingSet = new HashSet<Hash32>(missingChunks.Select(Hash32.FromHexString));
+                    var selectedEntries = new ConcurrentDictionary<Hash32, ChunkMapEntry>();
 
                     Parallel.ForEach(chunkMaps, chunkMap =>
                     {
