@@ -20,6 +20,7 @@ using System.Numerics;
 using System.Text;
 using BinStash.Contracts.Release;
 using BinStash.Core.Compression;
+using BinStash.Core.IO;
 using BinStash.Core.Serialization.Entities;
 using BinStash.Core.Serialization.Utils;
 using ZstdNet;
@@ -229,8 +230,8 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             var sectionFlags = reader.ReadByte(); // Currently unused, reserved for future use
             var sectionSize = VarIntUtils.ReadVarInt<uint>(reader);
 
-            using var compressed = new MemoryStream(reader.ReadBytes((int)sectionSize));
-            var s = (Stream)(isCompressed ? new DecompressionStream(compressed) : compressed);
+            using var slice = new BoundedStream(stream, (int)sectionSize);
+            var s = (Stream)(isCompressed ? new DecompressionStream(slice) : slice);
             using var r = new BinaryReader(s);
 
             switch (sectionId)
@@ -240,21 +241,22 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                     package.ReleaseId = r.ReadString();
                     package.RepoId = r.ReadString();
                     package.Notes = r.ReadString();
-                    package.CreatedAt = DateTimeOffset.FromUnixTimeSeconds(VarIntUtils.ReadVarInt<long>(r));
+                    package.CreatedAt = DateTimeOffset.FromUnixTimeSeconds(VarIntUtils.ReadVarInt<long>(s));
                     break;
                 case 0x02: // Section: 0x02 - Chunk table
                     package.Chunks.AddRange(ChecksumCompressor.TransposeDecompress(s).Select(x => new ChunkInfo(x)));
                     break;
                 case 0x03: // Section: 0x03 - String table
-                    var entryCount = VarIntUtils.ReadVarInt<uint>(r);
+                    var entryCount = VarIntUtils.ReadVarInt<uint>(s);
                     for (var i = 0; i < entryCount; i++)
                     {
-                        var len = VarIntUtils.ReadVarInt<uint>(r); 
+                        var len = VarIntUtils.ReadVarInt<uint>(s); 
                         package.StringTable.Add(Encoding.UTF8.GetString(r.ReadBytes(Convert.ToInt32(len))));
                     }
                     break;
                 case 0x04: // Section: 0x04 - Custom properties
-                    var propCount = VarIntUtils.ReadVarInt<uint>(r);
+                    var propCount = VarIntUtils.ReadVarInt<uint>(s);
+                    package.CustomProperties = new Dictionary<string,string>(checked((int)propCount));
                     for (var i = 0; i < propCount; i++)
                     {
                         var key = ReadTokenizedString(r, package.StringTable);
@@ -262,27 +264,30 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                         package.CustomProperties[key] = value;
                     }
                     break;
-                case 0x05: // Section: 0x04 - ContentId mapping
-                    var contentIdCount = VarIntUtils.ReadVarInt<uint>(r);
+                case 0x05: // Section: 0x05 - ContentId mapping
+                    var contentIdCount = VarIntUtils.ReadVarInt<uint>(s);
+                    contentIds = new List<List<DeltaChunkRef>>((int)contentIdCount);
                     for (var i = 0; i < contentIdCount; i++)
-                    {
                         contentIds.Add(ReadChunkRefs(r));
-                    }
                     break;
-                case 0x06: // Section: 0x05 - Components and files
-                    var compCount = VarIntUtils.ReadVarInt<uint>(r);
+                case 0x06: // Section: 0x06 - Components and files
+                    var compCount = VarIntUtils.ReadVarInt<uint>(s);
+                    package.Components = new List<Component>((int)compCount);
+                    Span<byte> h = stackalloc byte[8];
                     for (var i = 0; i < compCount; i++)
                     {
                         var compName = ReadTokenizedString(r, package.StringTable);
                         var comp = new Component { Name = compName };
-                        var fileCount = VarIntUtils.ReadVarInt<uint>(r);
+                        var fileCount = VarIntUtils.ReadVarInt<uint>(s);
+                        comp.Files = new List<ReleaseFile>((int)fileCount);
                         for (var j = 0; j < fileCount; j++)
                         {
                             var fileName = ReadTokenizedString(r, package.StringTable);
+                            r.BaseStream.ReadExactly(h);
                             var file = new ReleaseFile
                             {
                                 Name = fileName,
-                                Hash = r.ReadBytes(8) // 8 bytes for XxHash3, maybe make this configurable?
+                                Hash = BinaryPrimitives.ReadUInt64LittleEndian(h) // 8 bytes for XxHash3, maybe make this configurable?
                             };
                             
                             var chunkLocation = r.ReadByte();
@@ -295,7 +300,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                                 // Reference by content ID
                                 case 0x01:
                                 {
-                                    var contentIndex = VarIntUtils.ReadVarInt<uint>(r);
+                                    var contentIndex = VarIntUtils.ReadVarInt<uint>(s);
                                     file.Chunks = contentIds[(int)contentIndex];
                                     break;
                                 }
@@ -308,12 +313,12 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                         package.Components.Add(comp);
                     }
                     break;
-                case 0x07: // Section: 0x05 - Package statistics
-                    package.Stats.ComponentCount = VarIntUtils.ReadVarInt<uint>(r);
-                    package.Stats.FileCount = VarIntUtils.ReadVarInt<uint>(r);
-                    package.Stats.ChunkCount = VarIntUtils.ReadVarInt<uint>(r);
-                    package.Stats.RawSize = VarIntUtils.ReadVarInt<ulong>(r);
-                    package.Stats.DedupedSize = VarIntUtils.ReadVarInt<ulong>(r);
+                case 0x07: // Section: 0x07 - Package statistics
+                    package.Stats.ComponentCount = VarIntUtils.ReadVarInt<uint>(s);
+                    package.Stats.FileCount = VarIntUtils.ReadVarInt<uint>(s);
+                    package.Stats.ChunkCount = VarIntUtils.ReadVarInt<uint>(s);
+                    package.Stats.RawSize = VarIntUtils.ReadVarInt<ulong>(s);
+                    package.Stats.DedupedSize = VarIntUtils.ReadVarInt<ulong>(s);
                     break;
                 
                 default:

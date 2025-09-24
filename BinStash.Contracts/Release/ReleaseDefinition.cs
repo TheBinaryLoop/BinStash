@@ -13,8 +13,6 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using MessagePack;
-
 namespace BinStash.Contracts.Release;
 
 public readonly struct DeltaChunkRef
@@ -49,7 +47,7 @@ public class ReleaseStats
 public class ReleaseFile
 {
     public string Name { get; set; } = string.Empty;
-    public byte[] Hash { get; set; } = [];
+    public ulong Hash { get; set; }
     public List<DeltaChunkRef> Chunks { get; set; } = [];
 }
 

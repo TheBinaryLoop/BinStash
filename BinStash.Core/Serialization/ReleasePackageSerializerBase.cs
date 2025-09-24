@@ -146,10 +146,6 @@ public abstract class ReleasePackageSerializerBase
                 chunks.Add(new DeltaChunkRef(delta, offset, length));
             }
 
-            // ensure no leftover *meaningful* bits remain
-            if (bitReader.BitsRemaining >= 8)
-                throw new InvalidDataException("Trailing data in packed block.");
-
             return chunks;
         }
         finally

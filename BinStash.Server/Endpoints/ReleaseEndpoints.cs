@@ -21,6 +21,7 @@ using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Extensions;
 using BinStash.Core.Serialization;
+using BinStash.Core.Types;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using BinStash.Server.Helpers;
@@ -281,7 +282,7 @@ public static class ReleaseEndpoints
                         await outputStream.WriteAsync(chunk, 0, chunk.Length);
                 }, totalSize, release.CreatedAt.UtcDateTime);
                 
-                await tarWriter.WriteFileAsync($"{relativePath}.xxhash3", componentFile.Hash);
+                await tarWriter.WriteFileAsync($"{relativePath}.xxhash3", new Hash8(componentFile.Hash).GetBytes());
             }
         }
 

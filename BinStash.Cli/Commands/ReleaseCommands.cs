@@ -246,7 +246,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                         {
                             hasher.Append(buffer[..bytesRead]);
                         }
-                        var fileHash = hasher.GetCurrentHash();
+                        var fileHash = hasher.GetCurrentHashAsUInt64();
                         var releaseFile = new ReleaseFile
                         {
                             Name = file.Replace(RootFolder, string.Empty).Replace(componentMapEntry.Key, string.Empty).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),

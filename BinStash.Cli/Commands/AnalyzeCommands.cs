@@ -27,7 +27,7 @@ public class AnalyzeBaseCommand : ICommand
     public ValueTask ExecuteAsync(IConsole console)
     {
         // TODO: Add subcommands for analyzing chunk stores and repositories
-        throw new CommandException("Please specify a subcommand for 'analyze'. Available subcommands: N/A.", showHelp: true);
+        throw new CommandException("Please specify a subcommand for 'analyze'. Available subcommands: chunker.", showHelp: true);
     }
 }
 

@@ -15,6 +15,7 @@
 
 using BinStash.Contracts.Delta;
 using BinStash.Contracts.Release;
+using BinStash.Core.Types;
 using DeltaChunkRef = BinStash.Contracts.Delta.DeltaChunkRef;
 
 namespace BinStash.Server.Helpers;
@@ -76,8 +77,8 @@ public static class DeltaCalculator
                 files.Add(new DeltaFile(
                     (singleComponent != null ? file.Name : Path.Combine(component.Name, file.Name)).Replace('\\', '/'),
                     totalSize,
-                    oldHash != null ? Convert.ToHexStringLower(oldHash) : string.Empty,
-                    Convert.ToHexStringLower(file.Hash),
+                    oldHash != null ? new Hash8(oldHash.Value).ToHexString() : string.Empty,
+                    new Hash8(file.Hash).ToHexString(),
                     chunkRefs
                 ));
             }

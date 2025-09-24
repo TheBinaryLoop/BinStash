@@ -265,6 +265,74 @@ public class VarIntUtils
     
     #endregion
     
+    #region Stream Overloads
+    
+    public static T ReadVarInt<T>(Stream s) where T : struct
+    {
+        var result = typeof(T) switch
+        {
+            { } t when t == typeof(int) => ReadSignedVarInt32(s),
+            { } t when t == typeof(long) => ReadSignedVarInt64(s),
+            { } t when t == typeof(uint) => ReadUnsignedVarInt32(s),
+            { } t when t == typeof(ulong) => ReadUnsignedVarInt64(s),
+            { } t when t == typeof(ushort) => (object)(ushort)ReadUnsignedVarInt32(s),
+            _ => throw new NotSupportedException($"Type {typeof(T)} is not supported for varint deserialization.")
+        };
+        return (T)result;
+    }
+    
+    private static uint ReadUnsignedVarInt32(Stream s)
+    {
+        uint result = 0;
+        var shift = 0;
+
+        while (true)
+        {
+            Span<byte> b = stackalloc byte[1];
+            s.ReadExactly(b);
+            result |= (uint)(b[0] & 0x7F) << shift;
+            if ((b[0] & 0x80) == 0) break;
+            shift += 7;
+            if (shift > 35)
+                throw new FormatException("VarInt32 too long.");
+        }
+
+        return result;
+    }
+
+    private static ulong ReadUnsignedVarInt64(Stream s)
+    {
+        ulong result = 0;
+        var shift = 0;
+
+        while (true)
+        {
+            Span<byte> b = stackalloc byte[1];
+            s.ReadExactly(b);
+            result |= (ulong)(b[0] & 0x7F) << shift;
+            if ((b[0] & 0x80) == 0) break;
+            shift += 7;
+            if (shift > 70)
+                throw new FormatException("VarInt64 too long.");
+        }
+
+        return result;
+    }
+
+    private static int ReadSignedVarInt32(Stream s)
+    {
+        var raw = ReadUnsignedVarInt32(s);
+        return (int)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
+    }
+
+    private static long ReadSignedVarInt64(Stream s)
+    {
+        var raw = ReadUnsignedVarInt64(s);
+        return (long)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
+    }
+    
+    #endregion
+    
     #endregion
     
     #region Helper Methods
