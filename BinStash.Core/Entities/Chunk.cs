@@ -13,11 +13,13 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Types;
+
 namespace BinStash.Core.Entities;
 
 public class Chunk
 {
-    public required string Checksum { get; set; }
+    public required Hash32 Checksum { get; set; }
     public required Guid ChunkStoreId { get; set; }
     public required long Length { get; set; }
 }

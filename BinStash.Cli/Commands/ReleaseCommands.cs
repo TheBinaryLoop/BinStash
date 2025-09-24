@@ -356,9 +356,9 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                     
                     ctx.Status("Calculating chunk map entries for upload...");
                     sw.Restart();
-                    var missingSet = new HashSet<Hash32>(missingChunks.Select(Hash32.FromHexString));
+                    var missingSet = new HashSet<Hash32>(missingChunks);
                     var selectedEntries = new ConcurrentDictionary<Hash32, ChunkMapEntry>();
-
+                    
                     Parallel.ForEach(chunkMaps, chunkMap =>
                     {
                         foreach (var entry in chunkMap)
@@ -379,6 +379,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 }
                 
                 WriteLogMessage(ansiConsole, "All missing chunks uploaded to the chunk store");
+                    
                 
                 ctx.Status("Uploading release package...");
                 await client.CreateReleaseAsync(repository.Id.ToString(), releasePackage);

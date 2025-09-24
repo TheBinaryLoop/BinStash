@@ -14,6 +14,7 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Core.Entities;
+using BinStash.Core.Types;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -23,11 +24,19 @@ public class ChunkEntityTypeConfiguration : IEntityTypeConfiguration<Chunk>
 {
     public void Configure(EntityTypeBuilder<Chunk> builder)
     {
-        builder.ToTable("Chunks");
+        builder.ToTable("Chunks", t =>
+        {
+            t.HasCheckConstraint("chk_chunks_checksum_len", "octet_length(\"Checksum\") = 32");
+        });
         
-        builder.HasKey(c => new { c.Checksum, c.ChunkStoreId });
+        builder.HasKey(c => new { c.ChunkStoreId, c.Checksum });
         
-        builder.Property(c => c.Checksum).HasColumnType("char(64)").IsRequired();
+        builder.Property(c => c.Checksum)
+            .HasConversion(
+                v => v.GetBytes(), // to database (byte[])
+                v => new Hash32(v)) // from database (Hash32)
+            .HasColumnType("bytea")
+            .IsRequired();
         builder.Property(c => c.ChunkStoreId).IsRequired();
         builder.Property(c => c.Length).IsRequired();
     }

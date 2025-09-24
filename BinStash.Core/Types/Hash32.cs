@@ -46,6 +46,9 @@ public readonly struct Hash32 : IEquatable<Hash32>, IComparable<Hash32>
         return new Hash32(bytes);
     }
     
+    public static bool operator ==(Hash32 left, Hash32 right) => left.Equals(right);
+    public static bool operator !=(Hash32 left, Hash32 right) => !left.Equals(right);
+    
     public bool Equals(Hash32 other) => _h0 == other._h0 && _h1 == other._h1 && _h2 == other._h2 && _h3 == other._h3;
     public int CompareTo(Hash32 other)
     {

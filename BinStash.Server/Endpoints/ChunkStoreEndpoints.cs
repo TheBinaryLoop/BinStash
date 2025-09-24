@@ -151,7 +151,7 @@ public static class ChunkStoreEndpoints
             Stats = new Dictionary<string, object>() // await new LocalFolderChunkStorage(store.LocalPath).GetStorageStatsAsync()
         });
     }
-    
+
     private static async Task<IResult> DeleteChunkStoreAsync(Guid id, BinStashDbContext db)
     {
         var store = await db.ChunkStores.FindAsync(id);
@@ -177,14 +177,10 @@ public static class ChunkStoreEndpoints
             // Return a list of all chunks that are in the dto but not in the database with the store id
             if (!chunkChecksums.Any())
                 return Results.Bytes(ChecksumCompressor.TransposeCompress([]), "application/octet-stream");
-        
-            var chunkChecksumStringArray = chunkChecksums.Select(x => x.ToHexString()).ToArray();
             
             var knownChecksums = db.Chunks
-                .Where(c => c.ChunkStoreId == id && chunkChecksumStringArray.Contains(c.Checksum))
+                .Where(c => c.ChunkStoreId == id && chunkChecksums.Contains(c.Checksum))
                 .Select(c => c.Checksum)
-                .AsEnumerable()
-                .Select(Hash32.FromHexString)
                 .ToList();
             
             var missingChecksums = chunkChecksums.Except(knownChecksums).ToList();
@@ -202,6 +198,8 @@ public static class ChunkStoreEndpoints
 
     private static async Task<IResult> UploadChunkAsync(Guid id, string chunkChecksum, BinStashDbContext db, Stream chunkStream)
     {
+        var checksum = Hash32.FromHexString(chunkChecksum);
+        
         var store = await db.ChunkStores.FindAsync(id);
         if (store == null)
             return Results.NotFound();
@@ -212,11 +210,11 @@ public static class ChunkStoreEndpoints
         await chunkStream.CopyToAsync(ms);
         ms.Position = 0;
 
-        if (db.Chunks.Any(c => c.Checksum == chunkChecksum && c.ChunkStoreId == id)) return Results.Ok();
+        if (db.Chunks.Any(c => c.ChunkStoreId == id && c.Checksum == checksum)) return Results.Ok();
         if (!await store.StoreChunkAsync(chunkChecksum, ms.ToArray())) return Results.Problem();
         db.Chunks.Add(new Chunk
         {
-            Checksum = chunkChecksum,
+            Checksum = checksum,
             ChunkStoreId = id,
             Length = ms.Length
         });
@@ -241,7 +239,7 @@ public static class ChunkStoreEndpoints
             .Select(g => g.First())
             .ToList();
 
-        var checksums = uniqueChunks.Select(c => c.Checksum).ToArray();
+        var checksums = uniqueChunks.Select(c => Hash32.FromHexString(c.Checksum)).ToArray();
         
         var knownChecksums = await db.Chunks
             .Where(c => c.ChunkStoreId == id && checksums.Contains(c.Checksum))
@@ -249,7 +247,7 @@ public static class ChunkStoreEndpoints
             .ToListAsync();
         
         var missingChunks = uniqueChunks
-            .Where(c => !knownChecksums.Contains(c.Checksum))
+            .Where(c => !knownChecksums.Contains(Hash32.FromHexString(c.Checksum)))
             .ToList();
 
         var writeTasks = missingChunks.Select(async chunk =>
@@ -268,7 +266,7 @@ public static class ChunkStoreEndpoints
 
         var chunksToAdd = missingChunks.Select(chunk => new Chunk
         {
-            Checksum = chunk.Checksum,
+            Checksum = Hash32.FromHexString(chunk.Checksum),
             ChunkStoreId = id,
             Length = chunk.Data.Length
         });

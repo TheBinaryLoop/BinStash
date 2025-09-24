@@ -95,6 +95,7 @@ public class BinStashApiClient
     }
     
     public async Task<List<string>> GetMissingChunkChecksumAsync(Guid id,  List<Hash32> chunkChecksums)
+    public async Task<List<Hash32>> GetMissingChunkChecksumAsync(Guid id,  List<Hash32> chunkChecksums)
     {
         using var client = new HttpClient();
         client.BaseAddress = new Uri(_rootUrl);
@@ -103,7 +104,7 @@ public class BinStashApiClient
         await File.WriteAllBytesAsync(@"C:\Tmp\missing-checksums.client.bin", await resp.Content.ReadAsByteArrayAsync());
         var respStream = await resp.Content.ReadAsStreamAsync();
         var decompressedChecksums = await ChecksumCompressor.TransposeDecompressAsync(respStream);
-        return decompressedChecksums.Select(Convert.ToHexStringLower).ToList();
+        return decompressedChecksums.Select(x => new Hash32(x)).ToList();
     }
     
     public async Task UploadChunkStoreFileAsync(Guid id, string chunkChecksum, byte[] chunkData)
@@ -262,6 +263,7 @@ public class BinStashApiClient
     }
     
     #endregion
+
 
     
 }
