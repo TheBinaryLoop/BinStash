@@ -143,7 +143,7 @@ public class BinStashApiClient
             foreach (var entry in batch)
             {
                 var data = (await chunker.LoadChunkDataAsync(entry, cancellationToken)).Data;
-                uploadDtos.Add(new ChunkUploadDto { Checksum = entry.Checksum, Data = data });
+                uploadDtos.Add(new ChunkUploadDto { Checksum = entry.Checksum.ToHexString(), Data = data });
             }
 
             var request = new RestRequest($"api/chunkstores/{chunkStoreId}/chunks/batch", Method.Post)

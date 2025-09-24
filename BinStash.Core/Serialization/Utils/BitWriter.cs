@@ -17,26 +17,82 @@ namespace BinStash.Core.Serialization.Utils;
 
 internal class BitWriter
 {
-    private readonly List<byte> _Buffer = new();
-    private byte _Current;
-    private int _BitCount;
+    private readonly List<byte> _buffer = new();
+    private byte _current;
+    private int _bitCount; // number of bits already filled in _current (0..7)
 
+    /// <summary>
+    /// Writes the lowest <paramref name="bitCount"/> bits of <paramref name="value"/> LSB-first.
+    /// The first bit written goes into bit position 0 of the current byte.
+    /// </summary>
     public void WriteBits(ulong value, int bitCount)
     {
-        for (var i = 0; i < bitCount; i++)
+        if ((uint)bitCount > 64u)
+            throw new ArgumentOutOfRangeException(nameof(bitCount), "bitCount must be between 0 and 64.");
+
+        // Optional debug safety: ensure callers don't pass bits that would be truncated.
+        if (bitCount < 64 && (value >> bitCount) != 0) 
+            throw new ArgumentException("Value has set bits outside bitCount.", nameof(value));
+
+        var remaining = bitCount;
+        var shift = 0; // how many bits of 'value' we have already consumed
+
+        // Fill up current partial byte if any
+        if (_bitCount != 0 && remaining > 0)
         {
-            var bit = (value >> i) & 1;
-            _Current |= (byte)(bit << _BitCount++);
-            if (_BitCount != 8) continue;
-            _Buffer.Add(_Current);
-            _Current = 0;
-            _BitCount = 0;
+            var space = 8 - _bitCount; // free bits in _current
+            var take = remaining < space ? remaining : space;
+
+            // Take 'take' LSBs from value
+            var chunk = (byte)((value >> shift) & ((1u << take) - 1u));
+            _current |= (byte)(chunk << _bitCount);
+
+            _bitCount += take;
+            shift += take;
+            remaining -= take;
+
+            if (_bitCount == 8)
+            {
+                _buffer.Add(_current);
+                _current = 0;
+                _bitCount = 0;
+            }
+        }
+
+        // Write full bytes directly from value
+        while (remaining >= 8)
+        {
+            var b = (byte)((value >> shift) & 0xFFu);
+            _buffer.Add(b);
+            shift += 8;
+            remaining -= 8;
+        }
+
+        // Write tail bits into _current
+        if (remaining > 0)
+        {
+            var tail = (byte)((value >> shift) & ((1u << remaining) - 1u));
+            _current |= (byte)(tail << _bitCount);
+            _bitCount += remaining;
+
+            if (_bitCount == 8)
+            {
+                _buffer.Add(_current);
+                _current = 0;
+                _bitCount = 0;
+            }
         }
     }
 
     public byte[] ToArray()
     {
-        if (_BitCount > 0) _Buffer.Add(_Current);
-        return _Buffer.ToArray();
+        if (_bitCount > 0)
+        {
+            _buffer.Add(_current);
+            _current = 0;
+            _bitCount = 0;
+        }
+
+        return _buffer.ToArray();
     }
 }

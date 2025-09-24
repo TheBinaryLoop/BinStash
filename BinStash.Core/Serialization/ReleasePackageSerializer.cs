@@ -13,7 +13,10 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Buffers;
+using System.Buffers.Binary;
 using System.IO.Hashing;
+using System.Numerics;
 using System.Text;
 using BinStash.Contracts.Release;
 using BinStash.Core.Compression;
@@ -23,7 +26,7 @@ using ZstdNet;
 
 namespace BinStash.Core.Serialization;
 
-public static class ReleasePackageSerializer
+public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
 {
     private const string Magic = "BPKG";
     private const byte Version = 1;
@@ -60,13 +63,13 @@ public static class ReleasePackageSerializer
             w.Write(package.RepoId);
             w.Write(package.Notes ?? "");
             VarIntUtils.WriteVarInt(w, package.CreatedAt.ToUnixTimeSeconds());
-        }, options, cancellationToken);
+        }, options.EnableCompression, options.CompressionLevel, cancellationToken);
 
         // Section: 0x02 - Chunk table
         await WriteSectionAsync(stream, 0x02, w =>
         {
-            w.Write(ChecksumCompressor.TransposeCompress(package.Chunks.Select(x => x.Checksum).ToList()));
-        }, options, cancellationToken);
+            w.Write(ChecksumCompressor.TransposeCompress(package.Chunks.Select(x => x.Checksum).ToList())); // TODO: Improve performance by avoiding ToList
+        }, options.EnableCompression, options.CompressionLevel, cancellationToken);
         
         // Create the string table and tokenize components and files
         var substringBuilder = new SubstringTableBuilder();
@@ -83,7 +86,7 @@ public static class ReleasePackageSerializer
         foreach (var kvp in package.CustomProperties)
         {
             var keyTokens = substringBuilder.Tokenize(kvp.Key);
-            var valueTokens = substringBuilder.Tokenize(kvp.Value?.ToString() ?? string.Empty);
+            var valueTokens = substringBuilder.Tokenize(kvp.Value);
             tokenizedProperties.Add((keyTokens, valueTokens));
         }
 
@@ -95,11 +98,23 @@ public static class ReleasePackageSerializer
             VarIntUtils.WriteVarInt(w, (uint)package.StringTable.Count);
             foreach (var s in package.StringTable)
             {
-                var bytes = Encoding.UTF8.GetBytes(s);
-                VarIntUtils.WriteVarInt(w, (ushort)bytes.Length);
-                w.Write(bytes);
+                // fast length without alloc
+                var byteCount = Encoding.UTF8.GetByteCount(s);
+                VarIntUtils.WriteVarInt(w, Convert.ToUInt32(byteCount));
+                
+                // encode into pooled buffer
+                var rented = ArrayPool<byte>.Shared.Rent(byteCount);
+                try
+                {
+                    var written = Encoding.UTF8.GetBytes(s, 0, s.Length, rented, 0);
+                    w.Write(rented, 0, written);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(rented);
+                }
             }
-        }, options, cancellationToken);
+        }, options.EnableCompression, options.CompressionLevel, cancellationToken);
         
         // Section: 0x04 - Custom properties
         await WriteSectionAsync(stream, 0x04, w =>
@@ -111,32 +126,37 @@ public static class ReleasePackageSerializer
                 WriteTokenSequence(w, keyTokens);
                 WriteTokenSequence(w, valueTokens);
             }
-        }, options, cancellationToken);
+        }, options.EnableCompression, options.CompressionLevel,  cancellationToken);
         
         // Generate the contentIds and fileContentId mappings
         var contentIds = GroupChunkListsByContentId(package);
         var fileContentIds = MapFilesToContentIds(package);
-        var dedupeContentIds = contentIds
-            .Where(kv => ShouldDeduplicate(kv.Value.Stats, kv.Value.Occurrences))
-            .Select(kv => kv.Key)
-            .ToHashSet();
-        var contentIndexMap = dedupeContentIds
-            .Select((cid, index) => new { cid, index })
-            .ToDictionary(x => x.cid, x => (uint)x.index);
         
-        // Section: 0x04 - ContentId mapping
+        // Filter and order deterministically (by contentId or first occurrence index)
+        var dedupeList = new List<(ulong Cid, ChunkListStats Stats, int Occ, List<DeltaChunkRef> Chunks)>(contentIds.Count);
+        foreach (var kv in contentIds)
+            if (ShouldDeduplicate(kv.Value.Stats, kv.Value.Occurrences))
+                dedupeList.Add((kv.Key, kv.Value.Stats, kv.Value.Occurrences, kv.Value.Chunks));
+
+        dedupeList.Sort(static (a,b) => a.Cid.CompareTo(b.Cid)); // cheap and stable
+
+        var contentIndexMap = new Dictionary<ulong, uint>(dedupeList.Count);
+        for (var i = 0; i < dedupeList.Count; i++)
+            contentIndexMap[dedupeList[i].Cid] = (uint)i;
+        
+        
+        // Section: 0x05 - ContentId mapping
         await WriteSectionAsync(stream, 0x05, w =>
         {
-            VarIntUtils.WriteVarInt(w, (uint)dedupeContentIds.Count);
+            VarIntUtils.WriteVarInt(w, (uint)dedupeList.Count);
             
-            foreach (var dedupeContentId in dedupeContentIds)
+            foreach (var entry in dedupeList)
             {
-                var (chunks, _, _) = contentIds[dedupeContentId];
-                WriteChunkRefs(w, chunks);
+                WriteChunkRefs(w, entry.Chunks);
             }
-        }, options, cancellationToken);
+        }, options.EnableCompression, options.CompressionLevel, cancellationToken);
         
-        // Section: 0x05 - Components and files
+        // Section: 0x06 - Components and files
         await WriteSectionAsync(stream, 0x06, w =>
         {
             VarIntUtils.WriteVarInt(w, (uint)tokenizedComponents.Count);
@@ -152,9 +172,10 @@ public static class ReleasePackageSerializer
                     var file = package.Components[i].Files[j];
                     w.Write(file.Hash);
 
-                    var contentId = fileContentIds[file.Name];
+                    var key = package.Components[i].Name + "\u001F" + file.Name;
+                    var contentId = fileContentIds[key];
                     
-                    if (dedupeContentIds.Contains(contentId))
+                    if (dedupeList.Any(x => x.Cid == contentId))
                     {
                         // Reference using the content ID
                         w.Write((byte)0x01); // 0x01 = reference by content ID
@@ -168,9 +189,9 @@ public static class ReleasePackageSerializer
                     }
                 }
             }
-        }, options, cancellationToken);
+        }, options.EnableCompression, options.CompressionLevel, cancellationToken);
 
-        // Section: 0x06 - Package statistics
+        // Section: 0x07 - Package statistics
         await WriteSectionAsync(stream, 0x07, w =>
         {
             VarIntUtils.WriteVarInt(w , package.Stats.ComponentCount);
@@ -178,7 +199,7 @@ public static class ReleasePackageSerializer
             VarIntUtils.WriteVarInt(w, package.Stats.ChunkCount);
             VarIntUtils.WriteVarInt(w, package.Stats.RawSize);
             VarIntUtils.WriteVarInt(w, package.Stats.DedupedSize);
-        }, options, cancellationToken);
+        }, options.EnableCompression, options.CompressionLevel, cancellationToken);
     }
 
     public static async Task<ReleasePackage> DeserializeAsync(byte[] data, CancellationToken cancellationToken = default)
@@ -209,17 +230,7 @@ public static class ReleasePackageSerializer
             var sectionSize = VarIntUtils.ReadVarInt<uint>(reader);
 
             using var compressed = new MemoryStream(reader.ReadBytes((int)sectionSize));
-            Stream s;
-            if (isCompressed)
-            {
-                s = new DecompressionStream(compressed);
-                /*await using var z = new DecompressionStream(compressed);
-                await z.CopyToAsync(s, cancellationToken);
-                s.Position = 0;*/
-            }
-            else
-                s = compressed;
-            
+            var s = (Stream)(isCompressed ? new DecompressionStream(compressed) : compressed);
             using var r = new BinaryReader(s);
 
             switch (sectionId)
@@ -238,8 +249,8 @@ public static class ReleasePackageSerializer
                     var entryCount = VarIntUtils.ReadVarInt<uint>(r);
                     for (var i = 0; i < entryCount; i++)
                     {
-                        var len = VarIntUtils.ReadVarInt<ushort>(r);
-                        package.StringTable.Add(Encoding.UTF8.GetString(r.ReadBytes(len)));
+                        var len = VarIntUtils.ReadVarInt<uint>(r); 
+                        package.StringTable.Add(Encoding.UTF8.GetString(r.ReadBytes(Convert.ToInt32(len))));
                     }
                     break;
                 case 0x04: // Section: 0x04 - Custom properties
@@ -304,42 +315,12 @@ public static class ReleasePackageSerializer
                     package.Stats.RawSize = VarIntUtils.ReadVarInt<ulong>(r);
                     package.Stats.DedupedSize = VarIntUtils.ReadVarInt<ulong>(r);
                     break;
+                
+                default:
+                    throw new InvalidDataException($"Unknown section ID: {sectionId:X2}");
             }
         }
         return Task.FromResult(package);
-    }
-    
-    private static async Task WriteSectionAsync(Stream baseStream, byte id, Action<BinaryWriter> write, ReleasePackageSerializerOptions options, CancellationToken ct)
-    {
-        using var ms = new MemoryStream();
-        var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
-        write(w);
-        w.Flush();
-
-        ms.Position = 0;
-        
-        if (options.EnableCompression)
-        {
-            using var compressed = new MemoryStream();
-            await using (var z = new CompressionStream(compressed, new CompressionOptions(options.CompressionLevel)))
-                await ms.CopyToAsync(z, ct);
-
-            compressed.Position = 0;
-            var writer = new BinaryWriter(baseStream, Encoding.UTF8, true);
-            writer.Write(id);
-            writer.Write((byte)0); // FLAG: Currently unused, reserved for future use
-            VarIntUtils.WriteVarInt(writer, (ulong)compressed.Length);
-            await compressed.CopyToAsync(baseStream, ct);
-        }
-        else
-        {
-            // Write uncompressed section data
-            var writer = new BinaryWriter(baseStream, Encoding.UTF8, true);
-            writer.Write(id);
-            writer.Write((byte)0); // FLAG: Currently unused, reserved for future use
-            VarIntUtils.WriteVarInt(writer, (ulong)ms.Length);
-            await ms.CopyToAsync(baseStream, ct);
-        }
     }
     
     private static void WriteTokenSequence(BinaryWriter w, List<(ushort id, Separator sep)> tokens)
@@ -369,69 +350,17 @@ public static class ReleasePackageSerializer
         return sb.ToString();
     }
     
-    private static void WriteChunkRefs(BinaryWriter w, List<DeltaChunkRef> chunks)
-    {
-        VarIntUtils.WriteVarInt(w, (uint)chunks.Count);
-        
-        // Calculate bit widths for delta index, offset and length
-        var bitsDelta = (byte)Math.Ceiling(Math.Log2(chunks.Max(c => c.DeltaIndex) + 1));
-        var bitsOffset = (byte)Math.Ceiling(Math.Log2(chunks.Max(c => c.Offset) + 1));
-        var bitsLength = (byte)Math.Ceiling(Math.Log2(chunks.Max(c => c.Length) + 1));
-
-        // Write bit widths
-        w.Write(bitsDelta);
-        w.Write(bitsOffset);
-        w.Write(bitsLength);
-
-        // Write bit-packed chunk data
-        var bitWriter = new BitWriter();
-        foreach (var chunk in chunks)
-        {
-            bitWriter.WriteBits(chunk.DeltaIndex, bitsDelta);
-            bitWriter.WriteBits(chunk.Offset, bitsOffset);
-            bitWriter.WriteBits(chunk.Length, bitsLength);
-        }
-
-        var packed = bitWriter.ToArray();
-        VarIntUtils.WriteVarInt(w, (uint)packed.Length);
-        w.Write(packed);
-    }
-
-    private static List<DeltaChunkRef> ReadChunkRefs(BinaryReader r)
-    {
-        var chunks = new List<DeltaChunkRef>();
-        var chunkCount = VarIntUtils.ReadVarInt<uint>(r);
-        
-        var bitsDelta = r.ReadByte();
-        var bitsOffset = r.ReadByte();
-        var bitsLength = r.ReadByte();
-
-        var packedLength = VarIntUtils.ReadVarInt<uint>(r);
-        var packedData = r.ReadBytes((int)packedLength);
-
-        var bitReader = new BitReader(packedData);
-        for (var k = 0; k < chunkCount; k++)
-        {
-            var delta = (uint)bitReader.ReadBits(bitsDelta);
-            var offset = bitReader.ReadBits(bitsOffset);
-            var length = bitReader.ReadBits(bitsLength);
-            chunks.Add(new DeltaChunkRef(delta, offset, length));
-        }
-        
-        return chunks;
-    }
-    
     private static ulong GetContentId(List<DeltaChunkRef> chunks)
     {
         // Generate a unique ID for the file based on its chunks
         var hasher = new XxHash3();
-        foreach (var chunk in chunks)
+        Span<byte> buf = stackalloc byte[24]; // 3 x 8 bytes
+        foreach (var c in chunks)
         {
-            var buffer = new byte[24]; // 3 x 8 bytes for ulong
-            BitConverter.TryWriteBytes(buffer.AsSpan(0, 8), chunk.DeltaIndex);
-            BitConverter.TryWriteBytes(buffer.AsSpan(8, 8), chunk.Offset);
-            BitConverter.TryWriteBytes(buffer.AsSpan(16, 8), chunk.Length);
-            hasher.Append(buffer);
+            BinaryPrimitives.WriteUInt64LittleEndian(buf[..8], c.DeltaIndex);
+            BinaryPrimitives.WriteUInt64LittleEndian(buf.Slice(8, 8),  c.Offset);
+            BinaryPrimitives.WriteUInt64LittleEndian(buf.Slice(16, 8), c.Length);
+            hasher.Append(buf);
         }
         return hasher.GetCurrentHashAsUInt64();
     }
@@ -446,36 +375,55 @@ public static class ReleasePackageSerializer
             {
                 var chunks = file.Chunks;
 
-                // Generate content ID
+                // Stable ID for the exact chunk list
                 var contentId = GetContentId(chunks);
 
                 if (contentIds.TryGetValue(contentId, out var existing))
                 {
                     contentIds[contentId] = (existing.Chunks, existing.Stats, existing.Occurrences + 1);
+                    continue;
+                }
+
+                byte bitsDelta, bitsOffset, bitsLength;
+                byte[] packed;
+
+                if (chunks.Count == 0)
+                {
+                    bitsDelta = bitsOffset = bitsLength = 0;
+                    packed = [];
                 }
                 else
                 {
-                    var bitsDelta = (byte)Math.Ceiling(Math.Log2(chunks.Max(c => c.DeltaIndex) + 1));
-                    var bitsOffset = (byte)Math.Ceiling(Math.Log2(chunks.Max(c => c.Offset) + 1));
-                    var bitsLength = (byte)Math.Ceiling(Math.Log2(chunks.Max(c => c.Length) + 1));
+                    static byte BitsU64(ulong max) => max == 0 ? (byte)0 : (byte)(BitOperations.Log2(max) + 1);
 
-                    var bitWriter = new BitWriter();
-                    foreach (var chunk in chunks)
+                    // Compute maxima (works whether DeltaIndex is uint or ulong)
+                    var maxDelta  = chunks.Max(c => (ulong)c.DeltaIndex);
+                    var maxOffset = chunks.Max(c => c.Offset);
+                    var maxLength = chunks.Max(c => c.Length);
+
+                    bitsDelta  = BitsU64(maxDelta);
+                    bitsOffset = BitsU64(maxOffset);
+                    bitsLength = BitsU64(maxLength);
+
+                    var bw = new BitWriter();
+                    foreach (var c in chunks)
                     {
-                        bitWriter.WriteBits(chunk.DeltaIndex, bitsDelta);
-                        bitWriter.WriteBits(chunk.Offset, bitsOffset);
-                        bitWriter.WriteBits(chunk.Length, bitsLength);
+                        if (bitsDelta  != 0) bw.WriteBits(c.DeltaIndex, bitsDelta);
+                        if (bitsOffset != 0) bw.WriteBits(c.Offset, bitsOffset);
+                        if (bitsLength != 0) bw.WriteBits(c.Length, bitsLength);
                     }
 
-                    var packed = bitWriter.ToArray();
-                    var stats = new ChunkListStats(bitsDelta, bitsOffset, bitsLength, packed);
-                    contentIds[contentId] = (chunks, stats, 1);
+                    packed = bw.ToArray();
                 }
+
+                var stats = new ChunkListStats(bitsDelta, bitsOffset, bitsLength, packed);
+                contentIds[contentId] = (chunks, stats, 1);
             }
         }
 
         return contentIds;
     }
+
     
     private static Dictionary<string, ulong> MapFilesToContentIds(ReleasePackage package)
     {
@@ -485,8 +433,7 @@ public static class ReleasePackageSerializer
         {
             foreach (var file in comp.Files)
             {
-                var contentId = GetContentId(file.Chunks);
-                result[file.Name] = contentId;
+                result[comp.Name + "\u001F" + file.Name] = GetContentId(file.Chunks);
             }
         }
 
