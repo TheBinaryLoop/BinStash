@@ -18,6 +18,7 @@ using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
 using BinStash.Core.Chunking;
+using BinStash.Core.Compression;
 using BinStash.Core.Serialization;
 using BinStash.Core.Types;
 using RestSharp;
@@ -93,24 +94,16 @@ public class BinStashApiClient
         }
     }
     
-    public async Task<List<string>> GetMissingChunkChecksumAsync(Guid id,  List<string> chunkChecksums)
+    public async Task<List<string>> GetMissingChunkChecksumAsync(Guid id,  List<Hash32> chunkChecksums)
     {
-        // TODO: Switch to a Transpose-based approach for better performance
-        using var client = new RestClient(_restClientOptions);
-        var request = new RestRequest($"api/chunkstores/{id}/chunks/missing", Method.Post);
-        request.AddJsonBody(new ChunkStoreMissingChunkSyncInfoDto
-        {
-            ChunkChecksums = chunkChecksums
-        });
-        
-        var response = await client.ExecuteAsync<ChunkStoreMissingChunkSyncInfoDto>(request);
-        
-        if (!response.IsSuccessful)
-        {
-            throw new InvalidOperationException($"Failed to get missing chunks: {response.StatusCode} {response.ErrorMessage}");
-        }
-        
-        return response.Data?.ChunkChecksums ?? new List<string>();
+        using var client = new HttpClient();
+        client.BaseAddress = new Uri(_rootUrl);
+        var resp = await client.PostAsync($"api/chunkstores/{id}/chunks/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(chunkChecksums.Select(x => x.GetBytes()).ToList())));
+        resp.EnsureSuccessStatusCode();
+        await File.WriteAllBytesAsync(@"C:\Tmp\missing-checksums.client.bin", await resp.Content.ReadAsByteArrayAsync());
+        var respStream = await resp.Content.ReadAsStreamAsync();
+        var decompressedChecksums = await ChecksumCompressor.TransposeDecompressAsync(respStream);
+        return decompressedChecksums.Select(Convert.ToHexStringLower).ToList();
     }
     
     public async Task UploadChunkStoreFileAsync(Guid id, string chunkChecksum, byte[] chunkData)

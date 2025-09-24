@@ -13,9 +13,10 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.Security.Cryptography;
 using BinStash.Contracts.ChunkStore;
+using BinStash.Core.Compression;
 using BinStash.Core.Entities;
+using BinStash.Core.Types;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -163,35 +164,40 @@ public static class ChunkStoreEndpoints
         return Results.Conflict();
     }
 
-    private static async Task<IResult> GetMissingChunksAsync(Guid id, ChunkStoreMissingChunkSyncInfoDto dto, BinStashDbContext db)
+    private static async Task<IResult> GetMissingChunksAsync(Guid id, HttpRequest request, BinStashDbContext db)
     {
-        var store = await db.ChunkStores.FindAsync(id);
-        if (store == null)
-            return Results.NotFound();
-            
-        // Return a list of all chunks that are in the dto but not in the database with the store id
-        if (!dto.ChunkChecksums.Any())
-            return Results.BadRequest("No chunk checksums provided.");
-        
-        var chunkChecksumArray = dto.ChunkChecksums.ToArray();
-            
-        var knownChecksums = await db.Chunks
-            .Where(c => c.ChunkStoreId == id && chunkChecksumArray.Contains(c.Checksum))
-            .Select(c => c.Checksum)
-            .ToListAsync();
-            
-        var missingChecksums = dto.ChunkChecksums.Except(knownChecksums).ToList();
-            
-        if (!missingChecksums.Any())
-            return Results.Ok(new ChunkStoreMissingChunkSyncInfoDto
-            {
-                ChunkChecksums = []
-            });
-            
-        return Results.Ok(new ChunkStoreMissingChunkSyncInfoDto
+        try
         {
-            ChunkChecksums = missingChecksums
-        });
+            var chunkChecksums = (await ChecksumCompressor.TransposeDecompressAsync(request.Body)).Select(x => new Hash32(x)).ToArray();
+            
+            var store = await db.ChunkStores.FindAsync(id);
+            if (store == null)
+                return Results.NotFound();
+            
+            // Return a list of all chunks that are in the dto but not in the database with the store id
+            if (!chunkChecksums.Any())
+                return Results.Bytes(ChecksumCompressor.TransposeCompress([]), "application/octet-stream");
+        
+            var chunkChecksumStringArray = chunkChecksums.Select(x => x.ToHexString()).ToArray();
+            
+            var knownChecksums = db.Chunks
+                .Where(c => c.ChunkStoreId == id && chunkChecksumStringArray.Contains(c.Checksum))
+                .Select(c => c.Checksum)
+                .AsEnumerable()
+                .Select(Hash32.FromHexString)
+                .ToList();
+            
+            var missingChecksums = chunkChecksums.Except(knownChecksums).ToList();
+            
+            if (!missingChecksums.Any())
+                return Results.Bytes(ChecksumCompressor.TransposeCompress([]), "application/octet-stream");
+        
+            return Results.Bytes(ChecksumCompressor.TransposeCompress(missingChecksums.Select(x => x.GetBytes()).ToList()), "application/octet-stream");
+        }
+        catch (Exception)
+        {
+            return Results.BadRequest("Invalid request body.");
+        }
     }
 
     private static async Task<IResult> UploadChunkAsync(Guid id, string chunkChecksum, BinStashDbContext db, Stream chunkStream)

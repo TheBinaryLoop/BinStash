@@ -345,7 +345,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 WriteLogMessage(ansiConsole, $"Release definition contains [bold blue]{uniqueChecksums.Count}[/] unique chunks");
                 
                 ctx.Status("Requesting missing chunk info from chunk store...");
-                var missingChunks = await client.GetMissingChunkChecksumAsync(chunkStore.Id, uniqueChecksums.Select(x => x.ToHexString()).ToList());
+                var missingChunks = await client.GetMissingChunkChecksumAsync(chunkStore.Id, uniqueChecksums);
                 if (missingChunks.Count == 0)
                 {
                     WriteLogMessage(ansiConsole, "No missing chunks found in the chunk store. All chunks are already available");
