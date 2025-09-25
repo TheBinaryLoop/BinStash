@@ -244,8 +244,11 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                     package.CreatedAt = DateTimeOffset.FromUnixTimeSeconds(VarIntUtils.ReadVarInt<long>(s));
                     break;
                 case 0x02: // Section: 0x02 - Chunk table
-                    package.Chunks.AddRange(ChecksumCompressor.TransposeDecompress(s).Select(x => new ChunkInfo(x)));
+                {
+                    using var nds = new NonDisposingStream(s);
+                    package.Chunks.AddRange(ChecksumCompressor.TransposeDecompress(nds).Select(x => new ChunkInfo(x)));
                     break;
+                }
                 case 0x03: // Section: 0x03 - String table
                     var entryCount = VarIntUtils.ReadVarInt<uint>(s);
                     for (var i = 0; i < entryCount; i++)
@@ -273,7 +276,10 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                 case 0x06: // Section: 0x06 - Components and files
                     var compCount = VarIntUtils.ReadVarInt<uint>(s);
                     package.Components = new List<Component>((int)compCount);
+#pragma warning disable CA2014
+                    // ReSharper disable once StackAllocInsideLoop
                     Span<byte> h = stackalloc byte[8];
+#pragma warning restore CA2014
                     for (var i = 0; i < compCount; i++)
                     {
                         var compName = ReadTokenizedString(r, package.StringTable);
@@ -326,33 +332,6 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             }
         }
         return Task.FromResult(package);
-    }
-    
-    private static void WriteTokenSequence(BinaryWriter w, List<(ushort id, Separator sep)> tokens)
-    {
-        VarIntUtils.WriteVarInt(w, (ushort)tokens.Count);
-        foreach (var (id, sep) in tokens)
-        {
-            VarIntUtils.WriteVarInt(w, id);
-            w.Write((byte)sep);
-        }
-    }
-    
-    private static string ReadTokenizedString(BinaryReader r, List<string> table)
-    {
-        var count = VarIntUtils.ReadVarInt<ushort>(r);
-        var sb = new StringBuilder();
-
-        for (var i = 0; i < count; i++)
-        {
-            var id = VarIntUtils.ReadVarInt<ushort>(r);
-            var sep = (Separator)r.ReadByte();
-            sb.Append(table[id]);
-            if (sep != Separator.None)
-                sb.Append((char)sep);
-        }
-
-        return sb.ToString();
     }
     
     private static ulong GetContentId(List<DeltaChunkRef> chunks)

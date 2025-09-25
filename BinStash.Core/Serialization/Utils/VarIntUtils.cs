@@ -286,9 +286,9 @@ public class VarIntUtils
         uint result = 0;
         var shift = 0;
 
+        Span<byte> b = stackalloc byte[1];
         while (true)
         {
-            Span<byte> b = stackalloc byte[1];
             s.ReadExactly(b);
             result |= (uint)(b[0] & 0x7F) << shift;
             if ((b[0] & 0x80) == 0) break;
@@ -305,9 +305,9 @@ public class VarIntUtils
         ulong result = 0;
         var shift = 0;
 
+        Span<byte> b = stackalloc byte[1];
         while (true)
         {
-            Span<byte> b = stackalloc byte[1];
             s.ReadExactly(b);
             result |= (ulong)(b[0] & 0x7F) << shift;
             if ((b[0] & 0x80) == 0) break;

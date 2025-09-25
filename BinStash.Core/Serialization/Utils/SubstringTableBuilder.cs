@@ -69,7 +69,7 @@ internal class SubstringTableBuilder
     };
 }
 
-internal enum Separator : byte
+public enum Separator : byte
 {
     None = 0,
     Dot = (byte)'.',

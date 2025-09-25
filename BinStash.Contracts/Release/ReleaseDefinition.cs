@@ -15,6 +15,8 @@
 
 namespace BinStash.Contracts.Release;
 
+public enum ListOp : byte { Keep = 0, Del = 1, Ins = 2 }
+
 public readonly struct DeltaChunkRef
 {
     public readonly uint DeltaIndex;
@@ -78,4 +80,64 @@ public class ChunkRef
     public int Index { get; set; }
     public long Offset { get; set; }
     public int Length { get; set; }
+}
+
+
+public record PatchStringEntry(PatchOperation Op, ushort Id, string? Value);
+public record PatchChunkEntry(PatchOperation Op, byte[] Hash);
+public record PatchContentIdEntry(PatchOperation Op, ulong ContentId, List<DeltaChunkRef>? Chunks);
+public record PatchFileEntry(PatchOperation Op, string Name, byte[]? Hash, List<DeltaChunkRef>? Chunks);
+public record PatchComponentEntry(PatchOperation Op, string Name, List<PatchFileEntry>? Files);
+
+public sealed class ComponentInsertPayload
+{
+    public string Name { get; set; } = string.Empty;
+    public List<FileInsertPayload> Files { get; set; } = new(); // full files for new components
+}
+
+public sealed class FileInsertPayload
+{
+    public string Name { get; set; } = string.Empty;
+    public ulong Hash { get; set; }
+    public List<DeltaChunkRef> Chunks { get; set; } = new(); // DeltaIndex is CHILD after patch
+}
+
+// Per-component file script + insert payload
+public sealed class FileListEdit
+{
+    public List<(ListOp Op, uint Len)> Runs { get; set; } = new();
+    public List<FileInsertPayload> Insert { get; set; } = new();
+    // Optional: separate “Modify”s for kept files that changed content:
+    public List<(string Name, byte[]? Hash, List<DeltaChunkRef>? Chunks)> Modifies { get; set; } = new();
+}
+
+public class ReleasePackagePatch
+{
+    public string Version { get; set; } = "1.0";
+    public string ReleaseId { get; set; } = string.Empty;
+    public string RepoId { get; set; } = string.Empty;
+    public string? ParentId { get; set; }
+    public int Level { get; set; } = 0;
+    public string? Notes { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    
+    public List<PatchStringEntry> StringTableDelta { get; set; } = new();
+
+    public List<(ListOp Op, uint Len)> ComponentRuns { get; set; } = new();
+    public List<ComponentInsertPayload> ComponentInsert { get; set; } = new();
+    
+    // File list script per kept component (keyed by component name)
+    public Dictionary<string, FileListEdit> FileEdits { get; set; } = new(StringComparer.Ordinal);
+    
+    public int ChunkFinalCount { get; set; }  
+    public List<byte[]> ChunkInsertDict { get; set; } = new();
+    public List<(byte Op, uint Len)> ChunkRuns { get; set; } = new(); // Op: 0=keep, 1=delete, 2=insert
+    public List<PatchContentIdEntry> ContentIdDelta { get; set; } = new();
+}
+
+public enum PatchOperation : byte
+{
+    Add = 0x00,
+    Remove = 0x01,
+    Modify = 0x02
 }
