@@ -105,6 +105,9 @@ public static class ReleaseEndpoints
         if (db.Releases.Any(r => r.RepoId == repo.Id && r.Version == releasePackage.Version))
             return Results.Conflict($"A release with version '{releasePackage.Version}' already exists for this repository.");
 
+        var createdAt = DateTimeOffset.UtcNow;
+        
+        releasePackage.CreatedAt = createdAt;
         releasePackage.ReleaseId = releaseId.ToString();
         releasePackage.RepoId = repo.Id.ToString();
 
@@ -117,7 +120,7 @@ public static class ReleaseEndpoints
         {
             Id = releaseId,
             Version = releasePackage.Version,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = createdAt,
             Notes = releasePackage.Notes,
             RepoId = repo.Id,
             Repository = repo,
