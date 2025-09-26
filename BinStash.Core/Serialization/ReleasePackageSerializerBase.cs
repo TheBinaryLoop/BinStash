@@ -68,7 +68,7 @@ public abstract class ReleasePackageSerializerBase
         }
         var endPos = baseStream.Position;
         var written = endPos - pos;
-        Console.WriteLine("Wrote section {0:X2} at {1}, {2} bytes", id, pos, written);
+        Debug.WriteLine("Wrote section {0:X2} at {1}, {2} bytes", id, pos, written);
     }
     
     protected static void WriteChunkRefs(BinaryWriter w, List<DeltaChunkRef> chunks)
