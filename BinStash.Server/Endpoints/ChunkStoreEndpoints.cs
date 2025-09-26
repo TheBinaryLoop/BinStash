@@ -211,7 +211,8 @@ public static class ChunkStoreEndpoints
         ms.Position = 0;
 
         if (db.Chunks.Any(c => c.ChunkStoreId == id && c.Checksum == checksum)) return Results.Ok();
-        if (!await store.StoreChunkAsync(chunkChecksum, ms.ToArray())) return Results.Problem();
+        var (success, _) = await store.StoreChunkAsync(chunkChecksum, ms.ToArray());
+        if (!success) return Results.Problem();
         db.Chunks.Add(new Chunk
         {
             Checksum = checksum,
@@ -222,8 +223,22 @@ public static class ChunkStoreEndpoints
         return Results.Ok();
     }
 
-    private static async Task<IResult> UploadChunksBatchAsync(Guid id, List<ChunkUploadDto> chunks, BinStashDbContext db)
+    private static async Task<IResult> UploadChunksBatchAsync(Guid id, List<ChunkUploadDto> chunks, BinStashDbContext db, HttpRequest request)
     {
+        // Check for the ingest id header X-Ingest-Session-Id
+        if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
+            return Results.BadRequest("Missing or invalid X-Ingest-Session-Id header.");
+        
+        var ingestSession = await db.IngestSessions.FindAsync(ingestId);
+        if (ingestSession == null)
+            return Results.BadRequest("Invalid X-Ingest-Session-Id header value.");
+        
+        if (ingestSession.State == IngestSessionState.Completed || ingestSession.State == IngestSessionState.Failed || ingestSession.State == IngestSessionState.Aborted || ingestSession.State == IngestSessionState.Expired || ingestSession.ExpiresAt < DateTimeOffset.UtcNow)
+            return Results.BadRequest("Ingest session is not active.");
+        
+        if (ingestSession.State == IngestSessionState.Created)
+            ingestSession.State = IngestSessionState.InProgress;
+        
         var storeMeta = await db.ChunkStores.FindAsync(id);
         if (storeMeta == null)
             return Results.NotFound();
@@ -233,11 +248,15 @@ public static class ChunkStoreEndpoints
         if (chunks.Count == 0)
             return Results.BadRequest("No chunks provided.");
 
+        ingestSession.ChunksSeenTotal += chunks.Count;
+        
         // Deduplicate
         var uniqueChunks = chunks
             .GroupBy(c => c.Checksum)
             .Select(g => g.First())
             .ToList();
+        
+        ingestSession.ChunksSeenUnique += uniqueChunks.Count;
 
         var checksums = uniqueChunks.Select(c => Hash32.FromHexString(c.Checksum)).ToArray();
         
@@ -249,6 +268,8 @@ public static class ChunkStoreEndpoints
         var missingChunks = uniqueChunks
             .Where(c => !knownChecksums.Contains(Hash32.FromHexString(c.Checksum)))
             .ToList();
+        
+        ingestSession.ChunksSeenNew += missingChunks.Count;
 
         var writeTasks = missingChunks.Select(async chunk =>
         {
@@ -256,7 +277,13 @@ public static class ChunkStoreEndpoints
             if (!hash.Equals(chunk.Checksum, StringComparison.OrdinalIgnoreCase))
                 return false; // Consider logging this
 
-            return await store.StoreChunkAsync(chunk.Checksum, chunk.Data);
+            var (success, bytesWritten) = await store.StoreChunkAsync(chunk.Checksum, chunk.Data);
+            if (success)
+            {
+                ingestSession.DataSizeTotal += (ulong)bytesWritten;
+                ingestSession.DataSizeUnique += (ulong)bytesWritten;
+            }
+            return success;
         });
 
         var results = await Task.WhenAll(writeTasks);
@@ -270,6 +297,9 @@ public static class ChunkStoreEndpoints
             ChunkStoreId = id,
             Length = chunk.Data.Length
         });
+        
+        ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;
+        ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
 
         db.Chunks.AddRange(chunksToAdd);
         await db.SaveChangesAsync();

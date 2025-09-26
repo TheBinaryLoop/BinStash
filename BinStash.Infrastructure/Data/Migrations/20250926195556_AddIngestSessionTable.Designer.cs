@@ -3,6 +3,7 @@ using System;
 using BinStash.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace BinStash.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(BinStashDbContext))]
-    partial class BinStashDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250926195556_AddIngestSessionTable")]
+    partial class AddIngestSessionTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -164,69 +167,6 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.ToTable("Releases", (string)null);
                 });
 
-            modelBuilder.Entity("BinStash.Core.Entities.ReleaseMetrics", b =>
-                {
-                    b.Property<Guid>("ReleaseId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("ChunksInRelease")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<int>("ComponentsInRelease")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
-
-                    b.Property<int>("FilesInRelease")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<Guid>("IngestSessionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("MetaBytesFull")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<int>("MetaBytesFullDiff")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<int>("NewChunks")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
-
-                    b.Property<decimal>("NewCompressedBytes")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("numeric(20,0)")
-                        .HasDefaultValue(0m);
-
-                    b.Property<decimal>("TotalUncompressedSize")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("numeric(20,0)")
-                        .HasDefaultValue(0m);
-
-                    b.HasKey("ReleaseId");
-
-                    b.HasIndex("CreatedAt");
-
-                    b.HasIndex("IngestSessionId")
-                        .IsUnique();
-
-                    b.ToTable("ReleaseMetrics", (string)null);
-                });
-
             modelBuilder.Entity("BinStash.Core.Entities.Repository", b =>
                 {
                     b.Property<Guid>("Id")
@@ -315,17 +255,6 @@ namespace BinStash.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Repository");
-                });
-
-            modelBuilder.Entity("BinStash.Core.Entities.ReleaseMetrics", b =>
-                {
-                    b.HasOne("BinStash.Core.Entities.IngestSession", "IngestSession")
-                        .WithOne()
-                        .HasForeignKey("BinStash.Core.Entities.ReleaseMetrics", "IngestSessionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("IngestSession");
                 });
 
             modelBuilder.Entity("BinStash.Core.Entities.Repository", b =>

@@ -69,12 +69,12 @@ public class ObjectStore
         }
     }
 
-    public async Task WriteChunkAsync(byte[] chunkData)
+    public async Task<int> WriteChunkAsync(byte[] chunkData)
     {
         var hash = ComputeHash(chunkData);
         var stringHash = hash.ToHexString();
         var prefix = stringHash[..3];
-        await _FileHandlers[prefix].WriteChunkAsync(hash, chunkData);
+        return await _FileHandlers[prefix].WriteChunkAsync(hash, chunkData);
     }
 
     public async Task<byte[]> ReadChunkAsync(string hash)
@@ -247,24 +247,25 @@ internal class ChunkFileHandler
         }
     }
     
-    public async Task WriteChunkAsync(Hash32 hash, byte[] chunkData)
+    public async Task<int> WriteChunkAsync(Hash32 hash, byte[] chunkData)
     {
         // quick check without lock
         if (_Index.ContainsKey(hash))
-            return;
+            return 0;
         
         await _PackFileLock.WaitAsync();
         try
         {
             // double-check
             if (_Index.ContainsKey(hash))
-                return;
+                return 0;
 
             await using var dataStream = GetWritableDataFile(out var fileNo);
             var (offset, length) = await PackFileEntry.WriteAsync(dataStream, chunkData);
 
             _Index[hash] = (fileNo, offset, length);
             SaveIndexEntry(hash, fileNo, offset, length);
+            return length;
         }
         finally
         {

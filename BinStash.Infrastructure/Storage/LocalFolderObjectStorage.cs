@@ -28,10 +28,10 @@ public class LocalFolderObjectStorage : IObjectStorage
         _ObjectStore = ObjectStoreManager.GetOrCreateChunkStorage(basePath);
     }
 
-    public async Task<bool> StoreChunkAsync(string key, byte[] data)
+    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data)
     {
-        await _ObjectStore.WriteChunkAsync(data);
-        return true;
+        var bytesWritten = await _ObjectStore.WriteChunkAsync(data);
+        return (true, bytesWritten);
     }
 
     public async Task<byte[]?> RetrieveChunkAsync(string key)
