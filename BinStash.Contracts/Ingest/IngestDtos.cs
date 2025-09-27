@@ -13,15 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Core.Storage;
+namespace BinStash.Contracts.Ingest;
 
-public interface IObjectStorage
-{
-    Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data);
-    Task<byte[]?> RetrieveChunkAsync(string key);
-    
-    Task<bool> StoreReleasePackageAsync(byte[] packageData);
-    Task<byte[]?> RetrieveReleasePackageAsync(string key);
-
-    Task<Dictionary<string, object>> GetStorageStatsAsync();
-}
+public record CreateIngestSessionRequest(Guid RepoId);
+public record CreateIngestSessionResponse(Guid SessionId, DateTimeOffset ExpiresAt);

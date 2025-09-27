@@ -15,6 +15,7 @@
 
 using System.Net;
 using BinStash.Contracts.ChunkStore;
+using BinStash.Contracts.Ingest;
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
 using BinStash.Core.Chunking;
@@ -122,7 +123,7 @@ public class BinStashApiClient
     }
     
     // TODO: Implement gRPC-based upload method to support smoother chunk uploads
-    public async Task UploadChunksAsync(IChunker chunker, Guid chunkStoreId, IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
+    public async Task UploadChunksAsync(Guid ingestSessionId, IChunker chunker, Guid chunkStoreId, IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
     {
         using var client = new RestClient(_restClientOptions);
         var allChunks = chunksToUpload.ToList();
@@ -139,7 +140,7 @@ public class BinStashApiClient
             }
 
             var request = new RestRequest($"api/chunkstores/{chunkStoreId}/chunks/batch", Method.Post)
-                .AddJsonBody(uploadDtos);
+                .AddJsonBody(uploadDtos).AddHeader("X-Ingest-Session-Id", ingestSessionId.ToString());
 
             var response = await client.ExecuteAsync(request, cancellationToken);
             if (!response.IsSuccessful)
@@ -208,7 +209,7 @@ public class BinStashApiClient
         return await client.GetAsync<List<ReleaseSummaryDto>>(request);
     }
     
-    public async Task CreateReleaseAsync(string repositoryId, ReleasePackage release)
+    public async Task CreateReleaseAsync(Guid ingestSessionId, string repositoryId, ReleasePackage release)
     {
         using var client = new HttpClient(); // ideally use IHttpClientFactory
         using var uploadStream = new MemoryStream();
@@ -218,6 +219,7 @@ public class BinStashApiClient
 
         // Create multipart form data
         using var form = new MultipartFormDataContent();
+        form.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
 
         // Add repositoryId as form field
         form.Add(new StringContent(repositoryId), "repositoryId");
@@ -261,7 +263,21 @@ public class BinStashApiClient
     }
     
     #endregion
-
-
     
+    #region Ingestion Session
+    
+    public async Task<Guid> CreateIngestSessionAsync(Guid repoId)
+    { 
+        using var client = new RestClient(_restClientOptions);
+        var request = new RestRequest($"api/ingest/sessions");
+        request.AddJsonBody(new CreateIngestSessionRequest(repoId));
+        var response = await client.PostAsync<CreateIngestSessionResponse>(request);
+        if (response == null)
+            throw new InvalidOperationException("Failed to create ingest session: No response from server.");
+        if (response.SessionId == Guid.Empty)
+            throw new InvalidOperationException("Failed to create ingest session: Invalid session ID returned.");
+        return response.SessionId;
+    }
+    
+    #endregion
 }

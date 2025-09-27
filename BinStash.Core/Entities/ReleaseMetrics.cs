@@ -13,15 +13,20 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Core.Storage;
+namespace BinStash.Core.Entities;
 
-public interface IObjectStorage
+public class ReleaseMetrics
 {
-    Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data);
-    Task<byte[]?> RetrieveChunkAsync(string key);
-    
-    Task<bool> StoreReleasePackageAsync(byte[] packageData);
-    Task<byte[]?> RetrieveReleasePackageAsync(string key);
-
-    Task<Dictionary<string, object>> GetStorageStatsAsync();
+    public Guid ReleaseId { get; set; }
+    public Guid IngestSessionId { get; set; }
+    public virtual IngestSession IngestSession { get; set; } = null!;
+    public DateTimeOffset CreatedAt { get; set; }
+    public int ChunksInRelease { get; set; }
+    public int NewChunks { get; set; }
+    public ulong TotalUncompressedSize { get; set; }
+    public ulong NewCompressedBytes { get; set; }
+    public int MetaBytesFull { get; set; }
+    public int MetaBytesFullDiff { get; set; }
+    public int ComponentsInRelease { get; set; }
+    public int FilesInRelease { get; set; }
 }

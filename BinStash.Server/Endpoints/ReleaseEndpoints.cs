@@ -72,6 +72,20 @@ public static class ReleaseEndpoints
     
     private static async Task<IResult> CreateReleaseAsync(HttpRequest request, BinStashDbContext db)
     {
+        // Check for the ingest id header X-Ingest-Session-Id
+        if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
+            return Results.BadRequest("Missing or invalid X-Ingest-Session-Id header.");
+        
+        var ingestSession = await db.IngestSessions.FindAsync(ingestId);
+        if (ingestSession == null)
+            return Results.BadRequest("Invalid X-Ingest-Session-Id header value.");
+        
+        if (ingestSession.State == IngestSessionState.Completed || ingestSession.State == IngestSessionState.Failed || ingestSession.State == IngestSessionState.Aborted || ingestSession.State == IngestSessionState.Expired || ingestSession.ExpiresAt < DateTimeOffset.UtcNow)
+            return Results.BadRequest("Ingest session is not active.");
+        
+        if (ingestSession.State == IngestSessionState.Created)
+            ingestSession.State = IngestSessionState.InProgress;
+        
         if (!request.HasFormContentType)
             return Results.BadRequest("Content-Type must be multipart/form-data.");
         
@@ -116,7 +130,7 @@ public static class ReleaseEndpoints
         var releasePackageData = releasePackageStream.ToArray();
         var hash = Convert.ToHexString(Blake3.Hasher.Hash(releasePackageData).AsSpan());
 
-        await db.Releases.AddAsync(new Release
+        var release = new Release
         {
             Id = releaseId,
             Version = releasePackage.Version,
@@ -126,10 +140,32 @@ public static class ReleaseEndpoints
             Repository = repo,
             ReleaseDefinitionChecksum = hash,
             CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null
-        });
+        };
+        
+        await db.Releases.AddAsync(release);
 
         var chunkStore = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
         await chunkStore.StoreReleasePackageAsync(releasePackageData);
+        
+        ingestSession.State = IngestSessionState.Completed;
+        ingestSession.CompletedAt = DateTimeOffset.UtcNow;
+
+        var releaseMetrics = new ReleaseMetrics
+        {
+            ReleaseId = release.Id,
+            IngestSessionId = ingestSession.Id,
+            CreatedAt = release.CreatedAt,
+            ChunksInRelease = releasePackage.Chunks.Count,
+            NewChunks = ingestSession.ChunksSeenNew,
+            TotalUncompressedSize = releasePackage.Stats.RawSize,
+            NewCompressedBytes = ingestSession.DataSizeUnique,
+            MetaBytesFull = releasePackageData.Length,
+            MetaBytesFullDiff = 0, // Set if we save a patch/diff instead of the full release definition
+            ComponentsInRelease = releasePackage.Components.Count,
+            FilesInRelease = releasePackage.Components.Sum(c => c.Files.Count)
+        };
+
+        await db.ReleaseMetrics.AddAsync(releaseMetrics);
 
         await db.SaveChangesAsync();
 

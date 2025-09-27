@@ -344,6 +344,10 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 
                 WriteLogMessage(ansiConsole, $"Release definition contains [bold blue]{uniqueChecksums.Count}[/] unique chunks");
                 
+                ctx.Status("Requesting ingest session...");
+                var ingestSessionId = await client.CreateIngestSessionAsync(repository.Id);
+                WriteLogMessage(ansiConsole, $"Received ingest session ID: [bold blue]{ingestSessionId}[/]");
+                
                 ctx.Status("Requesting missing chunk info from chunk store...");
                 var missingChunks = await client.GetMissingChunkChecksumAsync(chunkStore.Id, uniqueChecksums);
                 if (missingChunks.Count == 0)
@@ -375,14 +379,14 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                     sw.Stop();
                     
                     ctx.Status("Uploading missing chunks to chunk store...");
-                    await client.UploadChunksAsync(chunker, chunkStore.Id, missingChunkEntries, progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing chunks to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
+                    await client.UploadChunksAsync(ingestSessionId, chunker, chunkStore.Id, missingChunkEntries, progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing chunks to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
                 }
                 
                 WriteLogMessage(ansiConsole, "All missing chunks uploaded to the chunk store");
                     
                 
                 ctx.Status("Uploading release package...");
-                await client.CreateReleaseAsync(repository.Id.ToString(), releasePackage);
+                await client.CreateReleaseAsync(ingestSessionId, repository.Id.ToString(), releasePackage);
                 
                 /*if (release == null)
                 {

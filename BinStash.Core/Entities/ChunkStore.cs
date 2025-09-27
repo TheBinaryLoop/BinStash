@@ -52,7 +52,7 @@ public class ChunkStore
         _storage = storage ?? throw new ArgumentNullException(nameof(storage), "Storage cannot be null.");
     }
     
-    public async Task<bool> StoreChunkAsync(string chunkId, byte[] chunkData)
+    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string chunkId, byte[] chunkData)
     {
         if (_storage == null)
             throw new InvalidOperationException("Chunk storage is not initialized.");

@@ -19,9 +19,11 @@ namespace BinStash.Infrastructure.Data;
 
 public class BinStashDbContext : DbContext
 {
+    public DbSet<IngestSession> IngestSessions { get; set; }
     public DbSet<ChunkStore> ChunkStores { get; set; }
     public DbSet<Repository> Repositories { get; set; }
     public DbSet<Release> Releases { get; set; }
+    public DbSet<ReleaseMetrics> ReleaseMetrics { get; set; }
     public DbSet<Chunk> Chunks { get; set; }
 
     public BinStashDbContext(DbContextOptions<BinStashDbContext> options) : base(options) {}
