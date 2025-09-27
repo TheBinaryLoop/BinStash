@@ -94,7 +94,33 @@ public class BinStashApiClient
         }
     }
     
-    public async Task<List<string>> GetMissingChunkChecksumAsync(Guid id,  List<Hash32> chunkChecksums)
+    public async Task<BloomFilter> GetChunkStoreBloomFilterAsync(Guid chunkStoreId)
+    {
+        using var client = new RestClient(_restClientOptions);
+        var request = new RestRequest($"api/chunkstores/{chunkStoreId}/filter", Method.Get);
+        
+        var response = await client.GetAsync(request);
+        
+        if (!response.IsSuccessful)
+        {
+            throw new InvalidOperationException($"Failed to get bloom filter: {response.StatusCode} {response.ErrorMessage}");
+        }
+        
+        if (response.RawBytes == null || response.RawBytes.Length == 0)
+        {
+            throw new InvalidOperationException("Received empty bloom filter data.");
+        }
+        
+        using var decompressor = new Decompressor();
+
+        var decompressedData = decompressor.Unwrap(response.RawBytes);
+        
+        if (!BloomFilter.TryFromBytes(decompressedData, out var bloomFilter))
+            throw new InvalidOperationException("Failed to deserialize bloom filter data.");
+
+        return bloomFilter;
+    }
+    
     public async Task<List<Hash32>> GetMissingChunkChecksumAsync(Guid id,  List<Hash32> chunkChecksums)
     {
         using var client = new HttpClient();

@@ -16,6 +16,7 @@
 using BinStash.Contracts.ChunkStore;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
+using BinStash.Core.Probabilistic;
 using BinStash.Core.Types;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
@@ -51,6 +52,12 @@ public static class ChunkStoreEndpoints
             .WithSummary("Delete Chunk Store")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status404NotFound);*/
+        group.MapGet("/{id:guid}/filter", GetBloomFilterAsync)
+            .WithDescription("Gets the Bloom filter for the chunk store.")
+            .WithSummary("Get Bloom Filter")
+            .Produces(StatusCodes.Status200OK, contentType: "application/octet-stream")
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status500InternalServerError);
         group.MapPost("/{id:guid}/chunks/missing", GetMissingChunksAsync)
             .WithDescription("Gets a list of missing chunks in the chunk store.")
             .WithSummary("Get Missing Chunks")
@@ -164,6 +171,47 @@ public static class ChunkStoreEndpoints
         return Results.Conflict();
     }
 
+    private static async Task<IResult> GetBloomFilterAsync(Guid id, BinStashDbContext db)
+    {
+        try
+        {
+            var store = await db.ChunkStores.FindAsync(id);
+            if (store == null)
+                return Results.NotFound();
+            
+            var filterPath = Path.Combine(store.LocalPath, "filter.bin");
+            
+            if (File.Exists(filterPath))
+            {
+                var existingFilter = await File.ReadAllBytesAsync(filterPath);
+                return Results.Bytes(existingFilter, "application/octet-stream");
+            }
+            
+            var chunkCount = await db.Chunks.CountAsync(c => c.ChunkStoreId == id);
+
+            var filter = new BloomFilter(capacity: checked((int)Math.Ceiling(chunkCount * 1.2)), errorRate: 0.0001f);
+            var chunks = db.Chunks.Where(c => c.ChunkStoreId == id).AsAsyncEnumerable();
+            await foreach (var chunk in chunks)
+            {
+                filter.Add(chunk.Checksum.GetBytes());
+            }
+            
+            // Compress the filter with zstd
+            var content = filter.ToByteArray();
+
+            using var compressor = new Compressor(new CompressionOptions(CompressionOptions.MaxCompressionLevel));
+            var compressed = compressor.Wrap(content);
+            
+            await File.WriteAllBytesAsync(filterPath, compressed);
+
+            return Results.Bytes(compressed, "application/octet-stream");
+        }
+        catch (Exception)
+        {
+            return Results.InternalServerError();
+        }
+    }
+    
     private static async Task<IResult> GetMissingChunksAsync(Guid id, HttpRequest request, BinStashDbContext db)
     {
         try

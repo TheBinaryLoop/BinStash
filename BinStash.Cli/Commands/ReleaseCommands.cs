@@ -22,6 +22,7 @@ using BinStash.Contracts.Release;
 using BinStash.Core.Chunking;
 using BinStash.Core.Entities;
 using BinStash.Core.Types;
+using BinStash.Core.Probabilistic;
 using CliFx;
 using CliFx.Attributes;
 using CliFx.Exceptions;
@@ -343,9 +344,47 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 };
                 
                 WriteLogMessage(ansiConsole, $"Release definition contains [bold blue]{uniqueChecksums.Count}[/] unique chunks");
+
+                sw.Restart();
+                ctx.Status("Fetching bloom filter from chunk store...");
+                BloomFilter? bloomFilter;
+                try
+                {
+                    bloomFilter = await client.GetChunkStoreBloomFilterAsync(chunkStore.Id);
+                    WriteLogMessage(ansiConsole, $"Fetched bloom filter in [darkorange]{sw.Elapsed}[/]");
+                }
+                catch (Exception e)
+                {
+                    WriteLogMessage(ansiConsole, "[yellow]Failed to fetch bloom filter from chunk store. Falling back to server-side lookup[/]");
+                    WriteLogMessage(ansiConsole, $"Error fetching bloom filter: {e.Message}");
+                    bloomFilter = null;
+                    return;
+                }
+
+                var missingChunks = new List<Hash32>();
+                
+                if (bloomFilter != null)
+                {
+                    sw.Restart();
+                    ctx.Status("Checking chunks against bloom filter...");
+                    missingChunks = uniqueChecksums.Where(c => !bloomFilter.Contains(c.GetBytes())).ToList();
+                    WriteLogMessage(ansiConsole, $"Bloom filter pre-check found [bold blue]{missingChunks.Count}[/] missing chunks in [darkorange]{sw.Elapsed}[/]");
+                }
+                else
+                {
+                    WriteLogMessage(ansiConsole, "No bloom filter available. Skipping pre-check");
+                }
+                
                 
                 ctx.Status("Requesting missing chunk info from chunk store...");
-                var missingChunks = await client.GetMissingChunkChecksumAsync(chunkStore.Id, uniqueChecksums);
+                var before = missingChunks.Count;
+                var serverSideCheckCount = uniqueChecksums.Count - missingChunks.Count;
+                WriteLogMessage(ansiConsole, $"Requesting info for [bold blue]{serverSideCheckCount}[/] chunks from server");
+                sw.Restart();
+                missingChunks.AddRange(await client.GetMissingChunkChecksumAsync(chunkStore.Id, uniqueChecksums.Where(x => !missingChunks.Contains(x)).ToList())); 
+                var after = missingChunks.Count;
+                WriteLogMessage(ansiConsole, $"Server-side check found additional [bold blue]{after - before}[/] missing chunks in [darkorange]{sw.Elapsed}[/]");
+                
                 if (missingChunks.Count == 0)
                 {
                     WriteLogMessage(ansiConsole, "No missing chunks found in the chunk store. All chunks are already available");
