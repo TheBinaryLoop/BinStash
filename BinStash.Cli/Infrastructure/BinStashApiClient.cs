@@ -18,6 +18,7 @@ using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
 using BinStash.Core.Chunking;
+using BinStash.Core.Probabilistic;
 using BinStash.Core.Compression;
 using BinStash.Core.Serialization;
 using BinStash.Core.Types;
