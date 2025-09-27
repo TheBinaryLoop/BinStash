@@ -21,6 +21,7 @@ using BinStash.Core.Types;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
+using ZstdNet;
 
 namespace BinStash.Server.Endpoints;
 
