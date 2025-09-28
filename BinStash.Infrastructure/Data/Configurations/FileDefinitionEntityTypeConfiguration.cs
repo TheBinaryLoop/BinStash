@@ -20,24 +20,23 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace BinStash.Infrastructure.Data.Configurations;
 
-public class ChunkEntityTypeConfiguration : IEntityTypeConfiguration<Chunk>
+public class FileDefinitionEntityTypeConfiguration : IEntityTypeConfiguration<FileDefinition>
 {
-    public void Configure(EntityTypeBuilder<Chunk> builder)
+    public void Configure(EntityTypeBuilder<FileDefinition> builder)
     {
-        builder.ToTable("Chunks", t =>
+        builder.ToTable("FileDefinitions", t =>
         {
-            t.HasCheckConstraint("chk_chunks_checksum_len", "octet_length(\"Checksum\") = 32");
+            t.HasCheckConstraint("chk_file_definitions_checksum_len", "octet_length(\"Checksum\") = 32");
         });
         
-        builder.HasKey(c => new { c.ChunkStoreId, c.Checksum });
+        builder.HasKey(fd => new { fd.ChunkStoreId, fd.Checksum });
         
-        builder.Property(c => c.Checksum)
+        builder.Property(fd => fd.Checksum)
             .HasConversion(
                 v => v.GetBytes(), // to database (byte[])
                 v => new Hash32(v)) // from database (Hash32)
             .HasColumnType("bytea")
             .IsRequired();
-        builder.Property(c => c.ChunkStoreId).IsRequired();
-        builder.Property(c => c.Length).IsRequired();
+        builder.Property(fd => fd.ChunkStoreId).IsRequired();
     }
 }

@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
 using BinStash.Core.Storage;
 
 namespace BinStash.Core.Entities;
@@ -52,6 +53,14 @@ public class ChunkStore
         _storage = storage ?? throw new ArgumentNullException(nameof(storage), "Storage cannot be null.");
     }
     
+    public Task<bool> RebuildStorageAsync()
+    {
+        if (_storage == null)
+            throw new InvalidOperationException("Chunk storage is not initialized.");
+
+        return _storage.RebuildStorageAsync();
+    }
+    
     public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string chunkId, byte[] chunkData)
     {
         if (_storage == null)
@@ -75,6 +84,28 @@ public class ChunkStore
             throw new ArgumentException("Chunk ID cannot be null or empty.", nameof(chunkId));
         
         return await _storage.RetrieveChunkAsync(chunkId);
+    }
+    
+    public async Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, byte[] fileDefinitionData)
+    {
+        if (_storage == null)
+            throw new InvalidOperationException("Chunk storage is not initialized.");
+        
+        if (fileDefinitionData == null || fileDefinitionData.Length == 0)
+            throw new ArgumentException("Chunk data cannot be null or empty.", nameof(fileDefinitionData));
+        
+        return await _storage.StoreFileDefinitionAsync(fileHash, fileDefinitionData);
+    }
+
+    public async Task<byte[]?> RetrieveFileDefinitionAsync(string fileHash)
+    {
+        if (_storage == null)
+            throw new InvalidOperationException("Chunk storage is not initialized.");
+        
+        if (string.IsNullOrWhiteSpace(fileHash))
+            throw new ArgumentException("File hash cannot be null or empty.", nameof(fileHash));
+        
+        return await _storage.RetrieveFileDefinitionAsync(fileHash);
     }
 
     public async Task<bool> StoreReleasePackageAsync(byte[] packageData)

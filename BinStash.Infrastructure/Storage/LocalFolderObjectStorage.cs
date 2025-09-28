@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
 using BinStash.Core.Storage;
 
 namespace BinStash.Infrastructure.Storage;
@@ -28,15 +29,31 @@ public class LocalFolderObjectStorage : IObjectStorage
         _ObjectStore = ObjectStoreManager.GetOrCreateChunkStorage(basePath);
     }
 
+    public Task<bool> RebuildStorageAsync()
+    {
+        return _ObjectStore.RebuildStorageAsync();
+    }
+    
     public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data)
     {
         var bytesWritten = await _ObjectStore.WriteChunkAsync(data);
         return (true, bytesWritten);
     }
 
-    public async Task<byte[]?> RetrieveChunkAsync(string key)
+    public Task<byte[]?> RetrieveChunkAsync(string key)
     {
-        return await _ObjectStore.ReadChunkAsync(key); 
+        return _ObjectStore.ReadChunkAsync(key)!;
+    }
+
+    public async Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, byte[] data)
+    {
+        var bytesWritten = await _ObjectStore.WriteFileDefinitionAsync(fileHash, data);
+        return (true, bytesWritten);
+    }
+
+    public Task<byte[]?> RetrieveFileDefinitionAsync(string key)
+    {
+        return _ObjectStore.ReadFileDefinitionAsync(key)!;
     }
 
     public async Task<bool> StoreReleasePackageAsync(byte[] packageData)

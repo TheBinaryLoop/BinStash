@@ -14,9 +14,10 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.ChunkStore;
+using BinStash.Contracts.Hashing;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
-using BinStash.Core.Types;
+using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -46,6 +47,23 @@ public static class ChunkStoreEndpoints
             .WithSummary("Get Chunk Store By ID")
             .Produces<ChunkStoreDetailDto>()
             .Produces(StatusCodes.Status404NotFound);
+        group.MapGet("/{id:guid}/rebuild", RebuildChunkStoreAsync)
+            .WithDescription(
+                "Rebuilds the chunk store by scanning the underlying storage and rewriting the pack and index files.")
+            .WithSummary("Rebuild Chunk Store")
+            .Produces(StatusCodes.Status200OK);
+        group.MapPost("/{id:guid}/files/missing", GetMissingFileDefinitionsAsync)
+            .WithDescription("Gets a list of missing file definitions in the chunk store.")
+            .WithSummary("Get Missing File Definitions")
+            .Produces<byte[]>(contentType: "application/octet-stream")
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status400BadRequest);
+        group.MapPost("/{id:guid}/files/batch", UploadFileDefinitionsBatchAsync)
+            .WithDescription("Uploads a batch of file definitions to the chunk store.")
+            .WithSummary("Upload File Definitions Batch")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status400BadRequest);
         /*group.MapDelete("/{id:guid}", DeleteChunkStoreAsync)
             .WithDescription("Deletes a chunk store by its ID.")
             .WithSummary("Delete Chunk Store")
@@ -54,7 +72,7 @@ public static class ChunkStoreEndpoints
         group.MapPost("/{id:guid}/chunks/missing", GetMissingChunksAsync)
             .WithDescription("Gets a list of missing chunks in the chunk store.")
             .WithSummary("Get Missing Chunks")
-            .Produces<ChunkStoreMissingChunkSyncInfoDto>()
+            .Produces<byte[]>(contentType: "application/octet-stream")
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status400BadRequest);
         group.MapPost("/{id:guid}/chunks/{chunkChecksum:length(64)}", UploadChunkAsync)
@@ -152,6 +170,22 @@ public static class ChunkStoreEndpoints
         });
     }
 
+    private static async Task<IResult> RebuildChunkStoreAsync(Guid id, BinStashDbContext db)
+    {
+        var store = await db.ChunkStores.FindAsync(id);
+        if (store == null)
+            return Results.NotFound();
+        
+        store = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
+
+        var result = await store.RebuildStorageAsync();
+        if (!result)
+            return Results.Problem("Failed to rebuild chunk store.");
+        
+        return Results.Ok();
+        
+    }
+
     private static async Task<IResult> DeleteChunkStoreAsync(Guid id, BinStashDbContext db)
     {
         var store = await db.ChunkStores.FindAsync(id);
@@ -164,6 +198,115 @@ public static class ChunkStoreEndpoints
         return Results.Conflict();
     }
 
+    private static async Task<IResult> GetMissingFileDefinitionsAsync(Guid id, HttpRequest request, BinStashDbContext db)
+    {
+        try
+        {
+            var fileDefinitionChecksums = (await ChecksumCompressor.TransposeDecompressAsync(request.Body)).Select(x => new Hash32(x)).ToArray();
+            
+            var store = await db.ChunkStores.FindAsync(id);
+            if (store == null)
+                return Results.NotFound();
+            
+            // Return a list of all file definitions that are in the request but not in the database with the store id
+            if (!fileDefinitionChecksums.Any())
+                return Results.Bytes(ChecksumCompressor.TransposeCompress([]), "application/octet-stream");
+            
+            var knownChecksums = db.FileDefinitions
+                .Where(c => c.ChunkStoreId == id && fileDefinitionChecksums.Contains(c.Checksum))
+                .Select(c => c.Checksum)
+                .ToList();
+            
+            var missingChecksums = fileDefinitionChecksums.Except(knownChecksums).ToList();
+            if (!missingChecksums.Any())
+                return Results.Bytes(ChecksumCompressor.TransposeCompress([]), "application/octet-stream");
+            
+            return Results.Bytes(ChecksumCompressor.TransposeCompress(missingChecksums.Select(x => x.GetBytes()).ToList()), "application/octet-stream");
+        }
+        catch (Exception) 
+        {
+            return Results.BadRequest("Invalid request body.");
+        }
+    }
+    
+    private static async Task<IResult> UploadFileDefinitionsBatchAsync(Guid id, BinStashDbContext db, HttpRequest request)
+    {
+        // Check for the ingest id header X-Ingest-Session-Id
+        if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
+            return Results.BadRequest("Missing or invalid X-Ingest-Session-Id header.");
+        
+        var ingestSession = await db.IngestSessions.FindAsync(ingestId);
+        if (ingestSession == null)
+            return Results.BadRequest("Invalid X-Ingest-Session-Id header value.");
+        
+        if (ingestSession.State == IngestSessionState.Completed || ingestSession.State == IngestSessionState.Failed || ingestSession.State == IngestSessionState.Aborted || ingestSession.State == IngestSessionState.Expired || ingestSession.ExpiresAt < DateTimeOffset.UtcNow)
+            return Results.BadRequest("Ingest session is not active.");
+        
+        if (ingestSession.State == IngestSessionState.Created)
+            ingestSession.State = IngestSessionState.InProgress;
+
+        var fileDefinitions = new Dictionary<Hash32, List<Hash32>>();
+        /*using var ms = new MemoryStream();
+        await using var decompressionStream = new ZstdNet.DecompressionStream(request.Body);
+        await decompressionStream.CopyToAsync(ms);
+        ms.Position = 0;*/
+        await using var decompressionStream = new ZstdNet.DecompressionStream(request.Body);
+        using var reader = new BinaryReader(decompressionStream);
+        var chunkChecksums = await ChecksumCompressor.TransposeDecompressAsync(decompressionStream);
+        var batchCount = await VarIntUtils.ReadVarIntAsync<int>(decompressionStream);
+        for (var i = 0; i < batchCount; i++)
+        {
+            var fileChecksum = new Hash32(reader.ReadBytes(32));
+            var chunkCount = await VarIntUtils.ReadVarIntAsync<int>(decompressionStream);
+            var chunks = new List<Hash32>(chunkCount);
+            for (var j = 0; j < chunkCount; j++)
+            {
+                var chunkIndex = await VarIntUtils.ReadVarIntAsync<int>(decompressionStream);
+                if (chunkIndex < 0 || chunkIndex >= chunkChecksums.Count)
+                    return Results.BadRequest("Invalid chunk index in batch.");
+                chunks.Add(new Hash32(chunkChecksums[chunkIndex]));
+            }
+            fileDefinitions[fileChecksum] = chunks;
+        }
+        
+        ingestSession.FilesSeenTotal += fileDefinitions.Count;
+        
+        var storeMeta = await db.ChunkStores.FindAsync(id);
+        if (storeMeta == null)
+            return Results.NotFound();
+
+        var fileHashes = fileDefinitions.Keys.ToList();
+        var existingFiles = db.FileDefinitions.Where(x => x.ChunkStoreId == id && fileHashes.Contains(x.Checksum)).Select(x => x.Checksum).ToList();
+        
+        var store = new ChunkStore(storeMeta.Name, storeMeta.Type, storeMeta.LocalPath, new LocalFolderObjectStorage(storeMeta.LocalPath));
+
+        foreach (var fileDefinition in fileDefinitions.Where(x => !existingFiles.Contains(x.Key)))
+        {
+            var entry = new FileDefinition
+            {
+                Checksum = fileDefinition.Key,
+                ChunkStoreId = id
+            };
+            
+            var storeFileDefinitionResult = await store.StoreFileDefinitionAsync(fileDefinition.Key, ChecksumCompressor.TransposeCompress(fileDefinition.Value.Select(x => x.GetBytes()).ToList()));
+            
+            if (!storeFileDefinitionResult.Success)
+                return Results.Problem($"Failed to store file definition ({fileDefinition.Key.ToHexString()}) in chunk store.");
+            
+            ingestSession.FilesSeenUnique++;
+            ingestSession.FilesSeenNew++;
+            ingestSession.MetadataSize += storeFileDefinitionResult.BytesWritten;
+            
+            db.FileDefinitions.Add(entry);
+        }
+        
+        ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
+        
+        await db.SaveChangesAsync();
+        
+        return Results.Created();
+    }
+    
     private static async Task<IResult> GetMissingChunksAsync(Guid id, HttpRequest request, BinStashDbContext db)
     {
         try

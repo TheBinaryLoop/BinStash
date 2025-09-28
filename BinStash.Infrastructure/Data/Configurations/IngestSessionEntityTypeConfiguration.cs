@@ -39,6 +39,11 @@ public class IngestSessionEntityTypeConfiguration : IEntityTypeConfiguration<Ing
         builder.Property(e => e.ChunksSeenNew).IsRequired().HasDefaultValue(0);
         builder.Property(e => e.DataSizeTotal).IsRequired().HasDefaultValue(0L);
         builder.Property(e => e.DataSizeUnique).IsRequired().HasDefaultValue(0L);
+        builder.Property(e => e.FilesSeenTotal).IsRequired().HasDefaultValue(0L);
+        builder.Property(e => e.FilesSeenUnique).IsRequired().HasDefaultValue(0L);
+        builder.Property(e => e.FilesSeenNew).IsRequired().HasDefaultValue(0L);
+        builder.Property(e => e.MetadataSize).IsRequired().HasDefaultValue(0L);
+        
         
         builder.HasIndex(e => e.State);
         

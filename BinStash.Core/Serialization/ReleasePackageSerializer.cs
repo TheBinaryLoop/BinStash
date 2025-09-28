@@ -18,6 +18,7 @@ using System.Buffers.Binary;
 using System.IO.Hashing;
 using System.Numerics;
 using System.Text;
+using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
 using BinStash.Core.Compression;
 using BinStash.Core.IO;
@@ -33,6 +34,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
     private const byte Version = 1;
     // Flags
     private const byte CompressionFlag = 0b0000_0001;
+    private const byte FileDefinitionLikedFlag = 0b0000_0010;
     
     
     public static async Task<byte[]> SerializeAsync(ReleasePackage package, ReleasePackageSerializerOptions? options = null, CancellationToken cancellationToken = default)
@@ -53,6 +55,9 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         byte flags = 0;
         if (options.EnableCompression)
             flags |= CompressionFlag;
+        
+        if (options.LinkToFileDefinitions)
+            flags |= FileDefinitionLikedFlag;
 
         writer.Write(flags);
 
@@ -66,10 +71,17 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             VarIntUtils.WriteVarInt(w, package.CreatedAt.ToUnixTimeSeconds());
         }, options.EnableCompression, options.CompressionLevel, cancellationToken);
 
-        // Section: 0x02 - Chunk table
+        var fileHashesMap = new Dictionary<Hash32, int>();
+        if (options.LinkToFileDefinitions)
+            fileHashesMap = package.Components.SelectMany(x => x.Files).Select(f => f.Hash).Distinct().Select((h, i) => (h, i)).ToDictionary(x => x.h, x => x.i);
+        
+        
+        // Section: 0x02 - Chunk table / File hashes
         await WriteSectionAsync(stream, 0x02, w =>
         {
-            w.Write(ChecksumCompressor.TransposeCompress(package.Chunks.Select(x => x.Checksum).ToList())); // TODO: Improve performance by avoiding ToList
+            w.Write(options.LinkToFileDefinitions
+                ? ChecksumCompressor.TransposeCompress(fileHashesMap.Select(x => x.Key.GetBytes()).ToList())
+                : ChecksumCompressor.TransposeCompress(package.Chunks.Select(x => x.Checksum).ToList()));
         }, options.EnableCompression, options.CompressionLevel, cancellationToken);
         
         // Create the string table and tokenize components and files
@@ -130,17 +142,20 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         }, options.EnableCompression, options.CompressionLevel,  cancellationToken);
         
         // Generate the contentIds and fileContentId mappings
-        var contentIds = GroupChunkListsByContentId(package);
-        var fileContentIds = MapFilesToContentIds(package);
+        var contentIds = options.LinkToFileDefinitions ? new Dictionary<ulong, (List<DeltaChunkRef> Chunks, ChunkListStats Stats, int Occurrences)>() : GroupChunkListsByContentId(package);
+        var fileContentIds = options.LinkToFileDefinitions ? new Dictionary<string, ulong>() : MapFilesToContentIds(package);
         
         // Filter and order deterministically (by contentId or first occurrence index)
         var dedupeList = new List<(ulong Cid, ChunkListStats Stats, int Occ, List<DeltaChunkRef> Chunks)>(contentIds.Count);
-        foreach (var kv in contentIds)
-            if (ShouldDeduplicate(kv.Value.Stats, kv.Value.Occurrences))
-                dedupeList.Add((kv.Key, kv.Value.Stats, kv.Value.Occurrences, kv.Value.Chunks));
-
-        dedupeList.Sort(static (a,b) => a.Cid.CompareTo(b.Cid)); // cheap and stable
-
+        if (!options.LinkToFileDefinitions) // Only for non-linked packages
+        {
+            foreach (var kv in contentIds)
+                if (ShouldDeduplicate(kv.Value.Stats, kv.Value.Occurrences))
+                    dedupeList.Add((kv.Key, kv.Value.Stats, kv.Value.Occurrences, kv.Value.Chunks));
+            
+            dedupeList.Sort(static (a,b) => a.Cid.CompareTo(b.Cid)); // cheap and stable
+        }
+        
         var contentIndexMap = new Dictionary<ulong, uint>(dedupeList.Count);
         for (var i = 0; i < dedupeList.Count; i++)
             contentIndexMap[dedupeList[i].Cid] = (uint)i;
@@ -171,22 +186,30 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                     WriteTokenSequence(w, fileTokenLists[j]);
 
                     var file = package.Components[i].Files[j];
-                    w.Write(file.Hash);
 
-                    var key = package.Components[i].Name + "\u001F" + file.Name;
-                    var contentId = fileContentIds[key];
-                    
-                    if (dedupeList.Any(x => x.Cid == contentId))
+                    if (options.LinkToFileDefinitions)
                     {
-                        // Reference using the content ID
-                        w.Write((byte)0x01); // 0x01 = reference by content ID
-                        VarIntUtils.WriteVarInt(w, contentIndexMap[contentId]);
+                        VarIntUtils.WriteVarInt(w, fileHashesMap[file.Hash]);
                     }
                     else
                     {
-                        // Inline using the known chunk list
-                        w.Write((byte)0x00); // 0x00 = inline chunk list
-                        WriteChunkRefs(w, file.Chunks);
+                        w.Write(file.Hash.GetBytes());
+                        
+                        var key = package.Components[i].Name + "\u001F" + file.Name;
+                        var contentId = fileContentIds[key];
+                    
+                        if (dedupeList.Any(x => x.Cid == contentId))
+                        {
+                            // Reference using the content ID
+                            w.Write((byte)0x01); // 0x01 = reference by content ID
+                            VarIntUtils.WriteVarInt(w, contentIndexMap[contentId]);
+                        }
+                        else
+                        {
+                            // Inline using the known chunk list
+                            w.Write((byte)0x00); // 0x00 = inline chunk list
+                            WriteChunkRefs(w, file.Chunks);
+                        }
                     }
                 }
             }
@@ -219,8 +242,10 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         if (version != Version) throw new InvalidDataException("Unsupported version");
         var flags = reader.ReadByte();
         var isCompressed = (flags & CompressionFlag) != 0;
+        var linkToFileDefinitions = (flags & FileDefinitionLikedFlag) != 0;
         
         // Temporary lookups
+        var fileHashesMap = new Dictionary<int, Hash32>();
         var contentIds = new List<List<DeltaChunkRef>>();
 
         var package = new ReleasePackage();
@@ -241,21 +266,24 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                     package.ReleaseId = r.ReadString();
                     package.RepoId = r.ReadString();
                     package.Notes = r.ReadString();
-                    package.CreatedAt = DateTimeOffset.FromUnixTimeSeconds(VarIntUtils.ReadVarInt<long>(s));
+                    package.CreatedAt = DateTimeOffset.FromUnixTimeSeconds(VarIntUtils.ReadVarInt<long>(r));
                     break;
                 case 0x02: // Section: 0x02 - Chunk table
-                    package.Chunks.AddRange(ChecksumCompressor.TransposeDecompress(s).Select(x => new ChunkInfo(x)));
+                    if (linkToFileDefinitions)
+                        fileHashesMap = ChecksumCompressor.TransposeDecompress(s).Select((x, i) => (x, i)).ToDictionary(x => x.i, x => new Hash32(x.x));
+                    else
+                        package.Chunks.AddRange(ChecksumCompressor.TransposeDecompress(s).Select(x => new ChunkInfo(x)));
                     break;
                 case 0x03: // Section: 0x03 - String table
-                    var entryCount = VarIntUtils.ReadVarInt<uint>(s);
+                    var entryCount = VarIntUtils.ReadVarInt<uint>(r);
                     for (var i = 0; i < entryCount; i++)
                     {
-                        var len = VarIntUtils.ReadVarInt<uint>(s); 
+                        var len = VarIntUtils.ReadVarInt<uint>(r); 
                         package.StringTable.Add(Encoding.UTF8.GetString(r.ReadBytes(Convert.ToInt32(len))));
                     }
                     break;
                 case 0x04: // Section: 0x04 - Custom properties
-                    var propCount = VarIntUtils.ReadVarInt<uint>(s);
+                    var propCount = VarIntUtils.ReadVarInt<uint>(r);
                     package.CustomProperties = new Dictionary<string,string>(checked((int)propCount));
                     for (var i = 0; i < propCount; i++)
                     {
@@ -265,60 +293,73 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                     }
                     break;
                 case 0x05: // Section: 0x05 - ContentId mapping
-                    var contentIdCount = VarIntUtils.ReadVarInt<uint>(s);
+                    var contentIdCount = VarIntUtils.ReadVarInt<uint>(r);
                     contentIds = new List<List<DeltaChunkRef>>((int)contentIdCount);
                     for (var i = 0; i < contentIdCount; i++)
                         contentIds.Add(ReadChunkRefs(r));
                     break;
                 case 0x06: // Section: 0x06 - Components and files
-                    var compCount = VarIntUtils.ReadVarInt<uint>(s);
+                    var compCount = VarIntUtils.ReadVarInt<uint>(r);
                     package.Components = new List<Component>((int)compCount);
                     Span<byte> h = stackalloc byte[8];
                     for (var i = 0; i < compCount; i++)
                     {
                         var compName = ReadTokenizedString(r, package.StringTable);
                         var comp = new Component { Name = compName };
-                        var fileCount = VarIntUtils.ReadVarInt<uint>(s);
+                        var fileCount = VarIntUtils.ReadVarInt<uint>(r);
                         comp.Files = new List<ReleaseFile>((int)fileCount);
                         for (var j = 0; j < fileCount; j++)
                         {
                             var fileName = ReadTokenizedString(r, package.StringTable);
-                            r.BaseStream.ReadExactly(h);
-                            var file = new ReleaseFile
+                            if (linkToFileDefinitions)
                             {
-                                Name = fileName,
-                                Hash = BinaryPrimitives.ReadUInt64LittleEndian(h) // 8 bytes for XxHash3, maybe make this configurable?
-                            };
-                            
-                            var chunkLocation = r.ReadByte();
-                            switch (chunkLocation)
-                            {
-                                // Inline chunk list
-                                case 0x00:
-                                    file.Chunks = ReadChunkRefs(r);
-                                    break;
-                                // Reference by content ID
-                                case 0x01:
+                                var fileHash = fileHashesMap[VarIntUtils.ReadVarInt<int>(r)];
+                                var file = new ReleaseFile
                                 {
-                                    var contentIndex = VarIntUtils.ReadVarInt<uint>(s);
-                                    file.Chunks = contentIds[(int)contentIndex];
-                                    break;
-                                }
-                                default:
-                                    throw new InvalidDataException($"Unknown chunk location type: {chunkLocation}");
+                                    Name = fileName,
+                                    Hash = fileHash,
+                                };
+                                comp.Files.Add(file);
                             }
+                            else
+                            {
+                                r.BaseStream.ReadExactly(h);
+                                _ = BinaryPrimitives.ReadUInt64LittleEndian(h); // 8 bytes for XxHash3, maybe make this configurable?
+                                var file = new ReleaseFile
+                                {
+                                    Name = fileName,
+                                };
+                            
+                                var chunkLocation = r.ReadByte();
+                                switch (chunkLocation)
+                                {
+                                    // Inline chunk list
+                                    case 0x00:
+                                        file.Chunks = ReadChunkRefs(r);
+                                        break;
+                                    // Reference by content ID
+                                    case 0x01:
+                                    {
+                                        var contentIndex = VarIntUtils.ReadVarInt<uint>(r);
+                                        file.Chunks = contentIds[(int)contentIndex];
+                                        break;
+                                    }
+                                    default:
+                                        throw new InvalidDataException($"Unknown chunk location type: {chunkLocation}");
+                                }
 
-                            comp.Files.Add(file);
+                                comp.Files.Add(file);
+                            }
                         }
                         package.Components.Add(comp);
                     }
                     break;
                 case 0x07: // Section: 0x07 - Package statistics
-                    package.Stats.ComponentCount = VarIntUtils.ReadVarInt<uint>(s);
-                    package.Stats.FileCount = VarIntUtils.ReadVarInt<uint>(s);
-                    package.Stats.ChunkCount = VarIntUtils.ReadVarInt<uint>(s);
-                    package.Stats.RawSize = VarIntUtils.ReadVarInt<ulong>(s);
-                    package.Stats.DedupedSize = VarIntUtils.ReadVarInt<ulong>(s);
+                    package.Stats.ComponentCount = VarIntUtils.ReadVarInt<uint>(r);
+                    package.Stats.FileCount = VarIntUtils.ReadVarInt<uint>(r);
+                    package.Stats.ChunkCount = VarIntUtils.ReadVarInt<uint>(r);
+                    package.Stats.RawSize = VarIntUtils.ReadVarInt<ulong>(r);
+                    package.Stats.DedupedSize = VarIntUtils.ReadVarInt<ulong>(r);
                     break;
                 
                 default:

@@ -15,13 +15,13 @@
 
 using System.Text;
 using System.Text.Json;
+using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Extensions;
 using BinStash.Core.Serialization;
-using BinStash.Core.Types;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using BinStash.Server.Helpers;
@@ -147,6 +147,8 @@ public static class ReleaseEndpoints
         var chunkStore = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
         await chunkStore.StoreReleasePackageAsync(releasePackageData);
         
+        ingestSession.MetadataSize =+ releasePackageData.Length;
+        
         ingestSession.State = IngestSessionState.Completed;
         ingestSession.CompletedAt = DateTimeOffset.UtcNow;
 
@@ -159,7 +161,7 @@ public static class ReleaseEndpoints
             NewChunks = ingestSession.ChunksSeenNew,
             TotalUncompressedSize = releasePackage.Stats.RawSize,
             NewCompressedBytes = ingestSession.DataSizeUnique,
-            MetaBytesFull = releasePackageData.Length,
+            MetaBytesFull = ingestSession.MetadataSize,
             MetaBytesFullDiff = 0, // Set if we save a patch/diff instead of the full release definition
             ComponentsInRelease = releasePackage.Components.Count,
             FilesInRelease = releasePackage.Components.Sum(c => c.Files.Count)
@@ -290,17 +292,40 @@ public static class ReleaseEndpoints
         {
             foreach (var (componentName, componentFile) in files)
             {
-                var totalSize = componentFile.Chunks.Sum(c => (long)c.Length);
+                //var totalSize = componentFile.Chunks.Sum(c => (long)c.Length);
                 // TODO: Remove component name from the path if component is set
                 var relativePath = componentFile.Name.Replace('\\', '/');
                 if (component != null)
                     relativePath = relativePath.Replace($"{componentName}/", string.Empty);
                 
+                var chunkRefs = ChunkRefHelper.ConvertDeltaToChunkRefs(componentFile.Chunks).ToList();
+                if (chunkRefs.Count == 0)
+                {
+                    var fileDefinition = await store.RetrieveFileDefinitionAsync(componentFile.Hash.ToHexString());
+                    if (fileDefinition == null)
+                        throw new FileNotFoundException("File definition not found in the chunk store.");
+                    var chunkList = ChecksumCompressor.TransposeDecompress(fileDefinition).Select(x => new Hash32(x)).ToList();
+                    chunksByIndex = chunkList.Select((x, i) => new { Index = i, Checksum = x.GetBytes()}).ToDictionary(x => x.Index, x => x.Checksum);
+                    var chunkEntriesFromDb = db.Chunks.Where(x => chunkList.Contains(x.Checksum)).ToList();
+                    // Set the chunk refs to the chunks loaded from the chunk store enriched with infos from the database
+                    chunkRefs = chunkList.Select((x, i) =>
+                    {
+                        var dbEntry = chunkEntriesFromDb.FirstOrDefault(c => c.Checksum == x);
+                        return new ChunkRef
+                        {
+                            Index = i,
+                            Offset = 0, // Offset is calculated from the length of all previous chunks
+                            Length = Convert.ToInt32(dbEntry?.Length ?? 0)
+                        };
+                    }).ToList();
+                }
+                
+                var totalSize = chunkRefs.Sum(c => (long)c.Length);
+                
                 await tarWriter.WriteFileAsync(relativePath, async (outputStream) =>
                 {
-                    var chunkRefs = ChunkRefHelper.ConvertDeltaToChunkRefs(componentFile.Chunks).ToList();
                     var loadedChunks = new byte[chunkRefs.Count][];
-                    var throttler = new SemaphoreSlim(64); // Limit parallel reads
+                    var throttler = new SemaphoreSlim(128); // Limit parallel reads
 
                     await Task.WhenAll(chunkRefs.Select(async (chunkRef, i) =>
                     {
@@ -316,12 +341,12 @@ public static class ReleaseEndpoints
                             throttler.Release();
                         }
                     }));
-
+                    
                     foreach (var chunk in loadedChunks)
                         await outputStream.WriteAsync(chunk, 0, chunk.Length);
                 }, totalSize, release.CreatedAt.UtcDateTime);
                 
-                await tarWriter.WriteFileAsync($"{relativePath}.xxhash3", new Hash8(componentFile.Hash).GetBytes());
+                await tarWriter.WriteFileAsync($"{relativePath}.hash", componentFile.Hash.GetBytes());
             }
         }
 

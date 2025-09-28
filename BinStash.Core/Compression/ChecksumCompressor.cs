@@ -57,7 +57,7 @@ public static class ChecksumCompressor
     public static async Task<List<byte[]>> TransposeDecompressAsync(Stream inputStream, CancellationToken ct = default)
     {
         // count (signed varint)
-        var count = await ReadSignedVarInt32Async(inputStream, ct).ConfigureAwait(false);
+        var count = await VarIntUtils.ReadVarIntAsync<int>(inputStream);
         
         if (count == 0) 
             return new List<byte[]>(0);
@@ -70,7 +70,7 @@ public static class ChecksumCompressor
         for (var i = 0; i < hashSize; i++)
         {
             // column length (signed varint in your current format)
-            var len = await ReadSignedVarInt32Async(inputStream, ct).ConfigureAwait(false);
+            var len = await VarIntUtils.ReadVarIntAsync<int>(inputStream).ConfigureAwait(false);
             if (len < 0) throw new InvalidDataException("Negative column length.");
 
             // read compressed column payload
@@ -126,6 +126,12 @@ public static class ChecksumCompressor
         return result;
     }
     
+    public static List<byte[]> TransposeDecompress(byte[] input)
+    {
+        using var ms = new MemoryStream(input, writable: false);
+        return TransposeDecompress(ms);
+    }
+    
     // -------- helpers (async, no sync IO) --------
     // Reads exactly 'dest.Length' bytes or throws EndOfStreamException.
     private static async Task ReadExactlyAsync(Stream s, Memory<byte> dest, CancellationToken ct)
@@ -137,34 +143,5 @@ public static class ChecksumCompressor
             if (read == 0) throw new EndOfStreamException();
             readTotal += read;
         }
-    }
-    
-    // VarInt (LEB128) unsigned 32-bit, async byte-by-byte.
-    private static async Task<uint> ReadUnsignedVarInt32Async(Stream s, CancellationToken ct)
-    {
-        uint result = 0;
-        var shift = 0;
-        var one = new byte[1];
-
-        while (true)
-        {
-            await ReadExactlyAsync(s, one, ct).ConfigureAwait(false);
-            var b = one[0];
-
-            result |= (uint)(b & 0x7F) << shift;
-            if ((b & 0x80) == 0) break;
-
-            shift += 7;
-            if (shift > 35) throw new FormatException("VarInt32 too long.");
-        }
-        return result;
-    }
-    
-    // ZigZag decode wrappers to match your VarIntUtils<int> usage.
-    private static async Task<int> ReadSignedVarInt32Async(Stream s, CancellationToken ct)
-    {
-        var raw = await ReadUnsignedVarInt32Async(s, ct).ConfigureAwait(false);
-        // ZigZag decode: (raw >> 1) ^ (~(raw & 1) + 1)
-        return (int)((raw >> 1) ^ (~(raw & 1u) + 1u));
     }
 }

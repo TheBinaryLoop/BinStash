@@ -44,4 +44,12 @@ public class IngestSession
     public int ChunksSeenNew { get; set; }
     public ulong DataSizeTotal { get; set; }
     public ulong DataSizeUnique { get; set; }
+    
+    // File stats
+    public int FilesSeenTotal { get; set; }
+    public int FilesSeenUnique { get; set; }
+    public int FilesSeenNew { get; set; }
+    
+    // Metadata stats
+    public int MetadataSize { get; set; }
 }

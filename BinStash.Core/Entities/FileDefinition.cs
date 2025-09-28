@@ -13,13 +13,12 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Core.Serialization;
+using BinStash.Contracts.Hashing;
 
-public class ReleasePackageSerializerOptions
+namespace BinStash.Core.Entities;
+
+public class FileDefinition
 {
-    public static ReleasePackageSerializerOptions Default { get; } = new();
-    
-    public bool EnableCompression { get; set; } = true;
-    public int CompressionLevel { get; set; } = 9;
-    public bool LinkToFileDefinitions { get; set; } = true;
+    public required Hash32 Checksum { get; set; }
+    public required Guid ChunkStoreId { get; set; }
 }

@@ -1,6 +1,4 @@
-﻿using BinStash.Core.Entities;
-using Microsoft.EntityFrameworkCore;
-// Copyright (C) 2025  Lukas Eßmann
+﻿// Copyright (C) 2025  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -15,6 +13,9 @@ using Microsoft.EntityFrameworkCore;
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Entities;
+using Microsoft.EntityFrameworkCore;
+
 namespace BinStash.Infrastructure.Data;
 
 public class BinStashDbContext : DbContext
@@ -25,6 +26,7 @@ public class BinStashDbContext : DbContext
     public DbSet<Release> Releases { get; set; }
     public DbSet<ReleaseMetrics> ReleaseMetrics { get; set; }
     public DbSet<Chunk> Chunks { get; set; }
+    public DbSet<FileDefinition> FileDefinitions { get; set; }
 
     public BinStashDbContext(DbContextOptions<BinStashDbContext> options) : base(options) {}
     

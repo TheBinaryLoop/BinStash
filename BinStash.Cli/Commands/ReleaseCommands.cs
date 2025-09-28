@@ -15,13 +15,13 @@
 
 using System.Collections.Concurrent;
 using System.Formats.Tar;
-using System.IO.Hashing;
 using BinStash.Cli.Converters;
 using BinStash.Cli.Infrastructure;
+using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
 using BinStash.Core.Chunking;
 using BinStash.Core.Entities;
-using BinStash.Core.Types;
+using Blake3;
 using CliFx;
 using CliFx.Attributes;
 using CliFx.Exceptions;
@@ -131,8 +131,9 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
             Chunks = new(),
             Stats = new()
         };
+        var fileHashes = new ConcurrentDictionary<Hash32, List<string>>();
+        var fileHashChunkMaps = new ConcurrentDictionary<Hash32, List<ChunkMapEntry>>();
         var fileEntries = new ConcurrentBag<(ReleaseFile File, List<ChunkMapEntry> Entries, Component Component)>();
-        var allChunkChecksums = new ConcurrentBag<Hash32>();
         var chunkMaps = new ConcurrentBag<List<ChunkMapEntry>>();
         
         var client = new BinStashApiClient(GetUrl());
@@ -214,6 +215,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 ctx.Status("Processing files...");
                 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
+                
                 foreach (var componentMapEntry in componentMap)
                 {
                     WriteLogMessage(ansiConsole, $"Processing component: [purple]{componentMapEntry.Value.Name}[/] in folder [bold blue]{Path.Combine(RootFolder, componentMapEntry.Key)}[/]");
@@ -230,39 +232,32 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                             // Skip files in version control directories
                             return;
                         }
-
-                        var chunkMap = chunker.GenerateChunkMap(file).ToList();
-                        if (chunkMap.Count == 0)
-                        {
-                            WriteLogMessage(ansiConsole, $"No chunks generated for file: [red]{file}[/]");
-                            return;
-                        }
                         
                         using var fsIn = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.SequentialScan); // 64 KB buffer
-                        var hasher = new XxHash3();
+                        var hasher = Hasher.New();
                         Span<byte> buffer = stackalloc byte[65536]; // 64 KB, fits L1/L2 cache well, maybe need to adjust based on the system
                         int bytesRead;
                         while ((bytesRead = fsIn.Read(buffer)) > 0)
                         {
-                            hasher.Append(buffer[..bytesRead]);
+                            hasher.Update(buffer[..bytesRead]);
                         }
-                        var fileHash = hasher.GetCurrentHashAsUInt64();
+                        var fileHash = hasher.Finalize();
+                        
+                        fileHashes.AddOrUpdate(new Hash32(fileHash.AsSpan()), [file], (key, list) =>
+                        {
+                            list.Add(file);
+                            return list;
+                        });
+
                         var releaseFile = new ReleaseFile
                         {
                             Name = file.Replace(RootFolder, string.Empty).Replace(componentMapEntry.Key, string.Empty).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                            Hash = fileHash,
+                            Hash = new Hash32(fileHash.AsSpan()),
                             Chunks = new()
                         };
 
-                        fileEntries.Add((releaseFile, chunkMap, componentMapEntry.Value));
-                        chunkMaps.Add(chunkMap);
+                        fileEntries.Add((releaseFile, [], componentMapEntry.Value));
 
-                        foreach (var entry in chunkMap)
-                        {
-                            allChunkChecksums.Add(entry.Checksum);
-                        }
-                        
-                        // TODO: Implement log levels and print this on debug level only
                         //WriteLogMessage(ansiConsole, $"Processed file [bold blue]{releaseFile.Component}[/]:[purple]{releaseFile.Name}[/](Chunks: [bold blue]{chunkMap.Count}[/])");
 #if xDEBUG
                     }
@@ -271,99 +266,75 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
 #endif
                 }
                 
-                WriteLogMessage(ansiConsole, $"Processed [bold blue]{chunkMaps.Sum(x => x.Count)}[/] chunks from [bold blue]{chunkMaps.Count}[/] files from the specified folder in [darkorange]{sw.Elapsed}[/]");
-                
-                ctx.Status($"Building chunk map for release definition with {chunkMaps.Sum(x => x.Count)} chunks...");
-                if (chunkMaps.Count == 0)
-                {
-                    WriteLogMessage(ansiConsole, "No chunks found in the specified folder. Please check the folder path and try again.");
-                    return;
-                }
-                
-                var uniqueChecksums = allChunkChecksums.Distinct().OrderBy(x => x).ToList();
-                var checksumToIndex = uniqueChecksums.Select((checksum, index) => new { checksum, index })
-                    .ToDictionary(x => x.checksum, x => (uint)x.index);
-
                 foreach (var group in fileEntries.GroupBy(x => x.Component))
                 {
                     var component = group.Key;
-                    foreach (var (file, entries, _) in group)
+                    foreach (var (file, _, _) in group)
                     {
-                        var lastIndex = 0u;
-                        var first = true;
-
-                        file.Chunks = entries.OrderBy(e => checksumToIndex[e.Checksum]).Select(entry =>
-                        {
-                            var currentIndex = checksumToIndex[entry.Checksum];
-                            uint deltaIndex;
-
-                            if (first)
-                            {
-                                deltaIndex = currentIndex;
-                                first = false;
-                            }
-                            else
-                            {
-                                deltaIndex = currentIndex - lastIndex;
-                            }
-
-                            lastIndex = currentIndex;
-
-                            return new DeltaChunkRef(deltaIndex, (ulong)entry.Offset, (ulong)entry.Length);
-                        }).ToList();
-
-
                         component.Files.Add(file);
                     }
                 }
                 
-                // Build map from checksum to its length
-                var checksumLengthMap = new Dictionary<Hash32, ulong>();
-                foreach (var chunkMap in chunkMaps)
+                WriteLogMessage(ansiConsole, $"Processed [bold blue]{fileHashes.Count}[/] files from the specified folder in [darkorange]{sw.Elapsed}[/]");
+                
+                ctx.Status("Requesting missing file def info from chunk store...");
+                var missingFileChecksums = await client.GetMissingFileChecksumsAsync(chunkStore.Id, fileHashes.Keys.ToList());
+                if (missingFileChecksums.Count == 0)
                 {
-                    foreach (var entry in chunkMap)
-                    {
-                        if (!checksumLengthMap.ContainsKey(entry.Checksum))
-                            checksumLengthMap[entry.Checksum] = Convert.ToUInt64(entry.Length);
-                    }
+                    WriteLogMessage(ansiConsole, "No missing files found in the chunk store. All files are already available");
                 }
-
-                // Sum length of only unique checksums
-                var dedupedSize = (ulong)uniqueChecksums.Sum(c => (long)(checksumLengthMap.TryGetValue(c, out var len) ? len : 0));
-
-                releasePackage.Chunks = uniqueChecksums.Select((checksum) => new ChunkInfo(checksum.GetBytes())).ToList();
-                
-                releasePackage.Stats = new ReleaseStats
+                else
                 {
-                    ComponentCount = (uint)releasePackage.Components.Count,
-                    FileCount = (uint)releasePackage.Components.SelectMany(c => c.Files).Count(),
-                    ChunkCount = (uint)releasePackage.Chunks.Count,
-                    RawSize = (ulong)chunkMaps.SelectMany(x => x).Sum(x => (long)x.Length),
-                    DedupedSize = dedupedSize
-                };
+                    WriteLogMessage(ansiConsole, $"Found [bold blue]{missingFileChecksums.Count}[/] missing files that need to be processed");
+                    ctx.Status("Processing missing files...");
+                    sw.Restart();
+                    
+                    Parallel.ForEach(missingFileChecksums, fileHash =>
+                    {
+                        if (!fileHashes.TryGetValue(fileHash, out var paths))
+                            return;
+                        
+                        var file = paths.First();
+                        
+                        var chunkMap = chunker.GenerateChunkMap(file).ToList();
+                        if (chunkMap.Count == 0)
+                        {
+                            WriteLogMessage(ansiConsole, $"No chunks generated for file: [red]{file}[/]");
+                            return;
+                        }
+                        
+                        fileHashChunkMaps.TryAdd(fileHash, chunkMap);
+                    });
+                    
+                    WriteLogMessage(ansiConsole, $"Processed [bold blue]{chunkMaps.Sum(x => x.Count)}[/] chunks from [bold blue]{chunkMaps.Count}[/] files from the specified folder in [darkorange]{sw.Elapsed}[/]");
+                }
                 
-                WriteLogMessage(ansiConsole, $"Release definition contains [bold blue]{uniqueChecksums.Count}[/] unique chunks");
+                var uniqueChecksums = fileHashChunkMaps.Values.SelectMany(x => x.Select(cme => cme.Checksum)).Distinct().OrderBy(x => x).ToList();
+                
+                WriteLogMessage(ansiConsole, $"Found [bold blue]{uniqueChecksums.Count}[/] unique chunk checksums across all files");
                 
                 ctx.Status("Requesting ingest session...");
+                // TODO: Re-enable ingest session after testing
                 var ingestSessionId = await client.CreateIngestSessionAsync(repository.Id);
+                //var ingestSessionId = Guid.Empty;
                 WriteLogMessage(ansiConsole, $"Received ingest session ID: [bold blue]{ingestSessionId}[/]");
                 
-                ctx.Status("Requesting missing chunk info from chunk store...");
-                var missingChunks = await client.GetMissingChunkChecksumAsync(chunkStore.Id, uniqueChecksums);
-                if (missingChunks.Count == 0)
+                ctx.Status("Requesting missing file def info from chunk store...");
+                var missingChunkChecksums = await client.GetMissingChunkChecksumsAsync(chunkStore.Id, uniqueChecksums);
+                if (missingChunkChecksums.Count == 0)
                 {
                     WriteLogMessage(ansiConsole, "No missing chunks found in the chunk store. All chunks are already available");
                 }
                 else
                 {
-                    WriteLogMessage(ansiConsole, $"Found [bold blue]{missingChunks.Count}[/] missing chunks that need to be uploaded to the chunk store");
+                    WriteLogMessage(ansiConsole, $"Found [bold blue]{missingChunkChecksums.Count}[/] missing chunks that need to be processed");
                     
                     ctx.Status("Calculating chunk map entries for upload...");
                     sw.Restart();
-                    var missingSet = new HashSet<Hash32>(missingChunks);
+                    var missingSet = new HashSet<Hash32>(missingChunkChecksums);
                     var selectedEntries = new ConcurrentDictionary<Hash32, ChunkMapEntry>();
                     
-                    Parallel.ForEach(chunkMaps, chunkMap =>
+                    Parallel.ForEach(fileHashChunkMaps.Values, chunkMap =>
                     {
                         foreach (var entry in chunkMap)
                         {
@@ -375,15 +346,27 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                     });
 
                     var missingChunkEntries = selectedEntries.Values.ToList();
-                    WriteLogMessage(ansiConsole, $"Calculated [bold blue]{missingChunkEntries.Count}[/] chunk map entries for upload in {sw.Elapsed}");
+                    WriteLogMessage(ansiConsole, $"Calculated [bold blue]{missingChunkEntries.Count}[/] chunk map entries for upload in [darkorange]{sw.Elapsed}[/]");
                     sw.Stop();
                     
                     ctx.Status("Uploading missing chunks to chunk store...");
+                    sw.Restart();
                     await client.UploadChunksAsync(ingestSessionId, chunker, chunkStore.Id, missingChunkEntries, progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing chunks to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
+                    WriteLogMessage(ansiConsole, $"All missing chunks uploaded to the chunk store in [darkorange]{sw.Elapsed}[/]");
                 }
-                
-                WriteLogMessage(ansiConsole, "All missing chunks uploaded to the chunk store");
-                    
+
+                if (missingFileChecksums.Count == 0)
+                {
+                    WriteLogMessage(ansiConsole, "No missing file definitions to upload.");
+                }
+                else
+                {
+                    ctx.Status("Uploading file definitions...");
+                    sw.Restart();
+                    await client.UploadFileDefinitionsAsync(ingestSessionId, chunkStore.Id, uniqueChecksums, fileHashChunkMaps.ToDictionary(x => x.Key, x => x.Value.Select(v => v.Checksum).ToList()), progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing file definitions to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
+                    WriteLogMessage(ansiConsole, $"All file definitions uploaded to the chunk store in [darkorange]{sw.Elapsed}[/]");
+                }
+
                 
                 ctx.Status("Uploading release package...");
                 await client.CreateReleaseAsync(ingestSessionId, repository.Id.ToString(), releasePackage);
@@ -394,6 +377,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                     return;
                 }*/
                 ansiConsole.MarkupLine($"[green]Release created successfully! Took {swTotal.Elapsed}...[/]");
+                
             });
     }
 
