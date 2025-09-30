@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.IO.Hashing;
 using System.Text;
 using System.Text.Json;
 using BinStash.Contracts.Hashing;
@@ -128,7 +129,7 @@ public static class ReleaseEndpoints
         await using var releasePackageStream = new MemoryStream();
         await ReleasePackageSerializer.SerializeAsync(releasePackageStream, releasePackage);
         var releasePackageData = releasePackageStream.ToArray();
-        var hash = Convert.ToHexString(Blake3.Hasher.Hash(releasePackageData).AsSpan());
+        var hash = new Hash32(Blake3.Hasher.Hash(releasePackageData).AsSpan());
 
         var release = new Release
         {

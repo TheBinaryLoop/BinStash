@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
 using BinStash.Core.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -30,7 +31,12 @@ public class ReleaseEntityTypeConfiguration : IEntityTypeConfiguration<Release>
         builder.Property(r => r.Id).HasColumnName("Id").ValueGeneratedNever();
         builder.Property(r => r.Version).IsRequired().HasMaxLength(256);
         builder.Property(r => r.CreatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
-        builder.Property(r => r.ReleaseDefinitionChecksum).HasColumnType("char(64)").IsRequired();
+        builder.Property(r => r.ReleaseDefinitionChecksum)
+            .HasConversion(
+                v => v.GetBytes(), // to database (byte[])
+                v => new Hash32(v)) // from database (Hash32)
+            .HasColumnType("bytea")
+            .IsRequired();
         builder.Property(r => r.CustomProperties).HasColumnType("jsonb").IsRequired(false);
 
         builder.HasOne(r => r.Repository)
