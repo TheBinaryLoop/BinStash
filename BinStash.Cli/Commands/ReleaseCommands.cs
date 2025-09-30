@@ -132,9 +132,9 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
             Stats = new()
         };
         var fileHashes = new ConcurrentDictionary<Hash32, List<string>>();
+        var fileStats = new ConcurrentDictionary<Hash32, long>();
         var fileHashChunkMaps = new ConcurrentDictionary<Hash32, List<ChunkMapEntry>>();
         var fileEntries = new ConcurrentBag<(ReleaseFile File, List<ChunkMapEntry> Entries, Component Component)>();
-        var chunkMaps = new ConcurrentBag<List<ChunkMapEntry>>();
         
         var client = new BinStashApiClient(GetUrl());
         
@@ -248,6 +248,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                             list.Add(file);
                             return list;
                         });
+                        fileStats.AddOrUpdate(new Hash32(fileHash.AsSpan()), fsIn.Length, (key, old) => old);
 
                         var releaseFile = new ReleaseFile
                         {
@@ -306,7 +307,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                         fileHashChunkMaps.TryAdd(fileHash, chunkMap);
                     });
                     
-                    WriteLogMessage(ansiConsole, $"Processed [bold blue]{chunkMaps.Sum(x => x.Count)}[/] chunks from [bold blue]{chunkMaps.Count}[/] files from the specified folder in [darkorange]{sw.Elapsed}[/]");
+                    WriteLogMessage(ansiConsole, $"Processed [bold blue]{fileHashChunkMaps.Sum(x => x.Value.Count)}[/] chunks from [bold blue]{fileHashChunkMaps.Count}[/] files from the specified folder in [darkorange]{sw.Elapsed}[/]");
                 }
                 
                 var uniqueChecksums = fileHashChunkMaps.Values.SelectMany(x => x.Select(cme => cme.Checksum)).Distinct().OrderBy(x => x).ToList();
@@ -363,7 +364,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 {
                     ctx.Status("Uploading file definitions...");
                     sw.Restart();
-                    await client.UploadFileDefinitionsAsync(ingestSessionId, chunkStore.Id, uniqueChecksums, fileHashChunkMaps.ToDictionary(x => x.Key, x => x.Value.Select(v => v.Checksum).ToList()), progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing file definitions to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
+                    await client.UploadFileDefinitionsAsync(ingestSessionId, chunkStore.Id, uniqueChecksums, fileHashChunkMaps.ToDictionary(x => x.Key, x => (Chunks: x.Value.Select(v =>  v.Checksum).ToList(), Length: fileStats[x.Key])), progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing file definitions to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
                     WriteLogMessage(ansiConsole, $"All file definitions uploaded to the chunk store in [darkorange]{sw.Elapsed}[/]");
                 }
 

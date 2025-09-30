@@ -245,7 +245,7 @@ public static class ChunkStoreEndpoints
         if (ingestSession.State == IngestSessionState.Created)
             ingestSession.State = IngestSessionState.InProgress;
 
-        var fileDefinitions = new Dictionary<Hash32, List<Hash32>>();
+        var fileDefinitions = new Dictionary<Hash32, (List<Hash32> Chunks, long Length)>();
         /*using var ms = new MemoryStream();
         await using var decompressionStream = new ZstdNet.DecompressionStream(request.Body);
         await decompressionStream.CopyToAsync(ms);
@@ -257,6 +257,7 @@ public static class ChunkStoreEndpoints
         for (var i = 0; i < batchCount; i++)
         {
             var fileChecksum = new Hash32(reader.ReadBytes(32));
+            var fileLength = await VarIntUtils.ReadVarIntAsync<long>(decompressionStream);
             var chunkCount = await VarIntUtils.ReadVarIntAsync<int>(decompressionStream);
             var chunks = new List<Hash32>(chunkCount);
             for (var j = 0; j < chunkCount; j++)
@@ -266,7 +267,7 @@ public static class ChunkStoreEndpoints
                     return Results.BadRequest("Invalid chunk index in batch.");
                 chunks.Add(new Hash32(chunkChecksums[chunkIndex]));
             }
-            fileDefinitions[fileChecksum] = chunks;
+            fileDefinitions[fileChecksum] = (chunks, fileLength);
         }
         
         ingestSession.FilesSeenTotal += fileDefinitions.Count;
@@ -285,10 +286,11 @@ public static class ChunkStoreEndpoints
             var entry = new FileDefinition
             {
                 Checksum = fileDefinition.Key,
-                ChunkStoreId = id
+                ChunkStoreId = id,
+                Length = fileDefinition.Value.Length,
             };
             
-            var storeFileDefinitionResult = await store.StoreFileDefinitionAsync(fileDefinition.Key, ChecksumCompressor.TransposeCompress(fileDefinition.Value.Select(x => x.GetBytes()).ToList()));
+            var storeFileDefinitionResult = await store.StoreFileDefinitionAsync(fileDefinition.Key, ChecksumCompressor.TransposeCompress(fileDefinition.Value.Chunks.Select(x => x.GetBytes()).ToList()));
             
             if (!storeFileDefinitionResult.Success)
                 return Results.Problem($"Failed to store file definition ({fileDefinition.Key.ToHexString()}) in chunk store.");
@@ -438,7 +440,7 @@ public static class ChunkStoreEndpoints
         {
             Checksum = Hash32.FromHexString(chunk.Checksum),
             ChunkStoreId = id,
-            Length = chunk.Data.Length
+            Length = Convert.ToInt64(chunk.Data.Length)
         });
         
         ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;

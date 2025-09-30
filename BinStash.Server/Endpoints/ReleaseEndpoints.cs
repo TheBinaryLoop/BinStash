@@ -223,7 +223,7 @@ public static class ReleaseEndpoints
             return Results.NotFound("Repository not found for the release.");
         
         var store = new ChunkStore(repo.ChunkStore.Name, repo.ChunkStore.Type, repo.ChunkStore.LocalPath, new LocalFolderObjectStorage(repo.ChunkStore.LocalPath));
-        var packageData = await store.RetrieveReleasePackageAsync(release.ReleaseDefinitionChecksum);
+        var packageData = await store.RetrieveReleasePackageAsync(release.ReleaseDefinitionChecksum.ToHexString());
         if (packageData == null)
             return Results.NotFound("Release package not found in the chunk store.");
 
@@ -244,6 +244,9 @@ public static class ReleaseEndpoints
             if (files.Count == 0)
                 return Results.NotFound($"File '{file}' not found in the component '{component}'.");
         }
+
+        var fileHashes = files.Select(f => f.File.Hash).ToList();
+        var fileStats = db.FileDefinitions.Where(x => x.ChunkStoreId == repo.ChunkStoreId && fileHashes.Contains(x.Checksum)).ToLookup(x => x.Checksum, x => x);
         
         if (files.Count == 0)
             return Results.NotFound("No files found for the requested component.");
@@ -264,7 +267,7 @@ public static class ReleaseEndpoints
         if (diffRelease is not null)
         {
             // Generate a diff release package
-            var diffPackageData = await store.RetrieveReleasePackageAsync(diffRelease.ReleaseDefinitionChecksum);
+            var diffPackageData = await store.RetrieveReleasePackageAsync(diffRelease.ReleaseDefinitionChecksum.ToHexString());
             if (diffPackageData == null)
                 return Results.NotFound("Diff release package not found in the chunk store.");
             
@@ -298,32 +301,27 @@ public static class ReleaseEndpoints
                 if (component != null)
                     relativePath = relativePath.Replace($"{componentName}/", string.Empty);
                 
-                var chunkRefs = ChunkRefHelper.ConvertDeltaToChunkRefs(componentFile.Chunks).ToList();
-                if (chunkRefs.Count == 0)
-                {
-                    var fileDefinition = await store.RetrieveFileDefinitionAsync(componentFile.Hash.ToHexString());
-                    if (fileDefinition == null)
-                        throw new FileNotFoundException("File definition not found in the chunk store.");
-                    var chunkList = ChecksumCompressor.TransposeDecompress(fileDefinition).Select(x => new Hash32(x)).ToList();
-                    chunksByIndex = chunkList.Select((x, i) => new { Index = i, Checksum = x.GetBytes()}).ToDictionary(x => x.Index, x => x.Checksum);
-                    var chunkEntriesFromDb = db.Chunks.Where(x => chunkList.Contains(x.Checksum)).ToList();
-                    // Set the chunk refs to the chunks loaded from the chunk store enriched with infos from the database
-                    chunkRefs = chunkList.Select((x, i) =>
-                    {
-                        var dbEntry = chunkEntriesFromDb.FirstOrDefault(c => c.Checksum == x);
-                        return new ChunkRef
-                        {
-                            Index = i,
-                            Offset = 0, // Offset is calculated from the length of all previous chunks
-                            Length = Convert.ToInt32(dbEntry?.Length ?? 0)
-                        };
-                    }).ToList();
-                }
-                
-                var totalSize = chunkRefs.Sum(c => (long)c.Length);
+                var totalSize = fileStats[componentFile.Hash].First().Length;
                 
                 await tarWriter.WriteFileAsync(relativePath, async (outputStream) =>
                 {
+                    var chunkRefs = ChunkRefHelper.ConvertDeltaToChunkRefs(componentFile.Chunks).ToList();
+                    if (chunkRefs.Count == 0)
+                    {
+                        var fileDefinition = await store.RetrieveFileDefinitionAsync(componentFile.Hash.ToHexString());
+                        if (fileDefinition == null)
+                            throw new FileNotFoundException("File definition not found in the chunk store.");
+                        var chunkList = ChecksumCompressor.TransposeDecompress(fileDefinition).Select(x => new Hash32(x)).ToList();
+                        chunksByIndex = chunkList.Select((x, i) => new { Index = i, Checksum = x.GetBytes()}).ToDictionary(x => x.Index, x => x.Checksum);
+                        // Set the chunk refs to the chunks loaded from the chunk store enriched with infos from the database
+                        chunkRefs = chunkList.Select((x, i) => new ChunkRef
+                        {
+                            Index = i,
+                            Offset = 0,
+                            Length = 0
+                        }).ToList();
+                    }
+                    
                     var loadedChunks = new byte[chunkRefs.Count][];
                     var throttler = new SemaphoreSlim(128); // Limit parallel reads
 

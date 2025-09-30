@@ -38,5 +38,6 @@ public class FileDefinitionEntityTypeConfiguration : IEntityTypeConfiguration<Fi
             .HasColumnType("bytea")
             .IsRequired();
         builder.Property(fd => fd.ChunkStoreId).IsRequired();
+        builder.Property(fd => fd.Length).IsRequired();
     }
 }

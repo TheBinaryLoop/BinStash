@@ -21,4 +21,5 @@ public class FileDefinition
 {
     public required Hash32 Checksum { get; set; }
     public required Guid ChunkStoreId { get; set; }
+    public required long Length { get; set; }
 }
