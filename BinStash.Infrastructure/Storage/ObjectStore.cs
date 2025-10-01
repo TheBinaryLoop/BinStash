@@ -15,7 +15,6 @@
 
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.IO.Hashing;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.CompilerServices;

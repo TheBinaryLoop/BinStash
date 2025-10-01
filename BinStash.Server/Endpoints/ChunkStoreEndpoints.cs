@@ -21,6 +21,7 @@ using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
+using ZstdNet;
 
 namespace BinStash.Server.Endpoints;
 
@@ -250,7 +251,7 @@ public static class ChunkStoreEndpoints
         await using var decompressionStream = new ZstdNet.DecompressionStream(request.Body);
         await decompressionStream.CopyToAsync(ms);
         ms.Position = 0;*/
-        await using var decompressionStream = new ZstdNet.DecompressionStream(request.Body);
+        await using var decompressionStream = new DecompressionStream(request.Body);
         using var reader = new BinaryReader(decompressionStream);
         var chunkChecksums = await ChecksumCompressor.TransposeDecompressAsync(decompressionStream);
         var batchCount = await VarIntUtils.ReadVarIntAsync<int>(decompressionStream);

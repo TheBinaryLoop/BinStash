@@ -166,7 +166,7 @@ public class BinStashApiClient
         }
     }
     
-    public async Task UploadFileDefinitionsAsync(Guid ingestSessionId, Guid chunkStoreId, IEnumerable<Hash32> chunkHashes, Dictionary<Hash32, (List<Hash32> Chunks, long Length)> fileDefinitionsToUpload, int batchSize = 10000, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
+    public async Task UploadFileDefinitionsAsync(Guid ingestSessionId, Guid chunkStoreId, IEnumerable<Hash32> chunkHashes, Dictionary<Hash32, (List<Hash32> Chunks, long Length)> fileDefinitionsToUpload, int batchSize = 1000, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
     {
         using var client = new RestClient(_restClientOptions);
         var allChunks = chunkHashes.ToList();
@@ -177,7 +177,7 @@ public class BinStashApiClient
         {
             var hashesForBatch = batch.SelectMany(x => x.Value.Chunks).Distinct().ToList();
             using var ms = new MemoryStream();
-            await using (var compressionStream = new ZstdNet.CompressionStream(ms))
+            await using (var compressionStream = new CompressionStream(ms))
             {
                 await compressionStream.WriteAsync(
                     ChecksumCompressor.TransposeCompress(hashesForBatch.Select(x => x.GetBytes()).ToList()),
