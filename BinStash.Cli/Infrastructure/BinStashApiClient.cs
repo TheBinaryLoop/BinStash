@@ -14,6 +14,8 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Net;
+using System.Net.Http.Json;
+using System.Web;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Ingest;
@@ -23,70 +25,57 @@ using BinStash.Core.Chunking;
 using BinStash.Core.Compression;
 using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
-using RestSharp;
+using Polly;
+using Polly.Extensions.Http;
 using ZstdNet;
 
 namespace BinStash.Cli.Infrastructure;
 
 public class BinStashApiClient
 {
-    private readonly string _rootUrl;
-    private readonly RestClientOptions _restClientOptions;
+    private readonly HttpClient _httpClient;
+    private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy = HttpPolicyExtensions.HandleTransientHttpError().OrResult(msg => msg.StatusCode == HttpStatusCode.TooManyRequests).WaitAndRetryAsync(5, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
 
     public BinStashApiClient(string rootUrl)
     {
-        _rootUrl = rootUrl;
-        _restClientOptions = new RestClientOptions
-        {
-            BaseUrl = new Uri(_rootUrl)
-        };
+        _httpClient = new HttpClient();
+        _httpClient.BaseAddress = new Uri(rootUrl);
     }
     
     #region ChunkStore
     
     public async Task<List<ChunkStoreSummaryDto>?> GetChunkStoresAsync()
-    {
-        using var client = new RestClient(_restClientOptions);
-        return await client.GetAsync<List<ChunkStoreSummaryDto>>("api/chunkstores");
-    }
+        => await GetAsync<List<ChunkStoreSummaryDto>>("api/chunkstores");
     
     public async Task<ChunkStoreDetailDto?> GetChunkStoreAsync(Guid id)
-    {
-        using var client = new RestClient(_restClientOptions);
-        return await client.GetAsync<ChunkStoreDetailDto>($"api/chunkstores/{id}");
-    }
+        => await GetAsync<ChunkStoreDetailDto>($"api/chunkstores/{id}");
     
     public async Task<ChunkStoreDetailDto?> CreateChunkStoreAsync(CreateChunkStoreDto dto)
     {
-        using var client = new RestClient(_restClientOptions);
-        var request = new RestRequest("api/chunkstores", Method.Post);
-        request.AddJsonBody(dto);
+        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsJsonAsync("api/chunkstores", dto));
+        response.EnsureSuccessStatusCode();
         
-        var response = await client.ExecuteAsync(request);
-        
-        if (!response.IsSuccessful || response.StatusCode != HttpStatusCode.Created)
-        {
-            throw new InvalidOperationException($"Failed to create chunk store: {response.StatusCode} {response.ErrorMessage}");
-        }
+        if (response.StatusCode != HttpStatusCode.Created) return null;
         
         // Parse Location header
-        var locationHeader = response.Headers?
-            .FirstOrDefault(h => h.Name.Equals("Location", StringComparison.OrdinalIgnoreCase))
-            ?.Value.ToString();
-
+        var locationHeader = response.Headers
+            .FirstOrDefault(h => h.Key.Equals("Location", StringComparison.OrdinalIgnoreCase))
+            .Value.ToString();
+            
         if (string.IsNullOrWhiteSpace(locationHeader))
-        {
             throw new InvalidOperationException("Missing Location header in response.");
-        }
-        
+            
         // Make follow-up GET request // TODO: Maybe use the existing GetChunkStoreAsync method instead?
-        var detailRequest = new RestRequest(locationHeader);
-        return await client.GetAsync<ChunkStoreDetailDto>(detailRequest);
+        response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.GetAsync(locationHeader));
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadFromJsonAsync<ChunkStoreDetailDto>();
+        return content;
     }
     
     public async Task DeleteChunkStoreAsync(Guid id)
     {
-        using var client = new RestClient(_restClientOptions);
+        await Task.Delay(0);
+        /*using var client = new RestClient(_restClientOptions);
         var request = new RestRequest($"api/chunkstores/{id}", Method.Delete);
         
         var response = await client.ExecuteAsync(request);
@@ -94,51 +83,31 @@ public class BinStashApiClient
         if (!response.IsSuccessful)
         {
             throw new InvalidOperationException($"Failed to delete chunk store: {response.StatusCode} {response.ErrorMessage}");
-        }
+        }*/
+        throw new NotImplementedException("Chunk store deletion is not implemented yet.");
     }
     
     public async Task<List<Hash32>> GetMissingChunkChecksumsAsync(Guid id,  List<Hash32> chunkChecksums)
     {
-        using var client = new HttpClient();
-        client.BaseAddress = new Uri(_rootUrl);
-        var resp = await client.PostAsync($"api/chunkstores/{id}/chunks/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(chunkChecksums.Select(x => x.GetBytes()).ToList())));
-        resp.EnsureSuccessStatusCode();
-        var respStream = await resp.Content.ReadAsStreamAsync();
+        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsync($"api/chunkstores/{id}/chunks/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(chunkChecksums.Select(x => x.GetBytes()).ToList()))));
+        response.EnsureSuccessStatusCode();
+        var respStream = await response.Content.ReadAsStreamAsync();
         var decompressedChecksums = await ChecksumCompressor.TransposeDecompressAsync(respStream);
         return decompressedChecksums.Select(x => new Hash32(x)).ToList();
     }
     
     public async Task<List<Hash32>> GetMissingFileChecksumsAsync(Guid chunkStoreId, List<Hash32> fileChecksums)
     {
-        using var client = new HttpClient();
-        client.BaseAddress = new Uri(_rootUrl);
-        var resp = await client.PostAsync($"api/chunkstores/{chunkStoreId}/files/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(fileChecksums.Select(x => x.GetBytes()).ToList())));
-        resp.EnsureSuccessStatusCode();
-        var respStream = await resp.Content.ReadAsStreamAsync();
+        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsync($"api/chunkstores/{chunkStoreId}/files/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(fileChecksums.Select(x => x.GetBytes()).ToList()))));
+        response.EnsureSuccessStatusCode();
+        var respStream = await response.Content.ReadAsStreamAsync();
         var decompressedChecksums = await ChecksumCompressor.TransposeDecompressAsync(respStream);
         return decompressedChecksums.Select(x => new Hash32(x)).ToList();
-    }
-    
-    public async Task UploadChunkStoreFileAsync(Guid id, string chunkChecksum, byte[] chunkData)
-    {
-        using var client = new RestClient(_restClientOptions);
-        var request = new RestRequest($"api/chunkstores/{id}/chunks/{chunkChecksum}", Method.Post);
-        
-        // Add file to the request
-        request.AddBody(chunkData, "application/octet-stream");
-        
-        var response = await client.ExecuteAsync(request);
-        
-        if (!response.IsSuccessful)
-        {
-            throw new InvalidOperationException($"Failed to upload file to chunk store: {response.StatusCode} {response.ErrorMessage}{Environment.NewLine}{response.Content}");
-        }
     }
     
     // TODO: Implement gRPC-based upload method to support smoother chunk uploads
     public async Task UploadChunksAsync(Guid ingestSessionId, IChunker chunker, Guid chunkStoreId, IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
     {
-        using var client = new RestClient(_restClientOptions);
         var allChunks = chunksToUpload.ToList();
         var total = allChunks.Count;
         var uploaded = 0;
@@ -152,14 +121,12 @@ public class BinStashApiClient
                 uploadDtos.Add(new ChunkUploadDto { Checksum = entry.Checksum.ToHexString(), Data = data });
             }
 
-            var request = new RestRequest($"api/chunkstores/{chunkStoreId}/chunks/batch", Method.Post)
-                .AddJsonBody(uploadDtos).AddHeader("X-Ingest-Session-Id", ingestSessionId.ToString());
-
-            var response = await client.ExecuteAsync(request, cancellationToken);
-            if (!response.IsSuccessful)
-            {
-                throw new InvalidOperationException($"Upload failed: {response.StatusCode} {response.Content}");
-            }
+            var request = new HttpRequestMessage(HttpMethod.Post, $"api/chunkstores/{chunkStoreId}/chunks/batch");
+            request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
+            request.Content = JsonContent.Create(uploadDtos);
+            
+            var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.SendAsync(request, cancellationToken));
+            response.EnsureSuccessStatusCode();
 
             uploaded += batch.Length;
             if (progressCallback != null)
@@ -168,8 +135,7 @@ public class BinStashApiClient
     }
     
     public async Task UploadFileDefinitionsAsync(Guid ingestSessionId, Guid chunkStoreId, IEnumerable<Hash32> chunkHashes, Dictionary<Hash32, (List<Hash32> Chunks, long Length)> fileDefinitionsToUpload, int batchSize = 1000, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
-    {
-        using var client = new RestClient(_restClientOptions);
+    { 
         var allChunks = chunkHashes.ToList();
         var total = allChunks.Count;
         var uploaded = 0;
@@ -202,15 +168,13 @@ public class BinStashApiClient
             } // the scope ends here, so we're disposing the compression stream which ensures end-of-frame is written
 
             var compressedData = ms.ToArray();
+        
+            var request = new HttpRequestMessage(HttpMethod.Post, $"api/chunkstores/{chunkStoreId}/files/batch");
+            request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
+            request.Content = new ByteArrayContent(compressedData);
             
-            var request = new RestRequest($"api/chunkstores/{chunkStoreId}/files/batch", Method.Post)
-                .AddBody(compressedData, ContentType.Binary).AddHeader("X-Ingest-Session-Id", ingestSessionId.ToString());
-
-            var response = await client.ExecuteAsync(request, cancellationToken);
-            if (!response.IsSuccessful)
-            {
-                throw new InvalidOperationException($"Upload failed: {response.StatusCode} {response.Content}");
-            }
+            var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.SendAsync(request, cancellationToken));
+            response.EnsureSuccessStatusCode();
 
             uploaded += batch.Length;
             if (progressCallback != null)
@@ -224,37 +188,30 @@ public class BinStashApiClient
     #region Repository
     
     public async Task<List<RepositorySummaryDto>?> GetRepositoriesAsync()
-    {
-        using var client = new RestClient(_restClientOptions);
-        return await client.GetAsync<List<RepositorySummaryDto>>("api/repositories");
-    }
+        => await GetAsync<List<RepositorySummaryDto>>("api/repositories");
     
     public async Task<RepositorySummaryDto?> CreateRepositoryAsync(CreateRepositoryDto createDto)
     {
-        using var client = new RestClient(_restClientOptions);
-        var request = new RestRequest("api/repositories", Method.Post);
-        request.AddJsonBody(createDto);
+        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsJsonAsync("api/repositories", createDto));
+        response.EnsureSuccessStatusCode();
         
-        var response = await client.ExecuteAsync(request);
-        
-        if (!response.IsSuccessful || response.StatusCode != HttpStatusCode.Created)
+        if (response.StatusCode != HttpStatusCode.Created)
         {
-            throw new InvalidOperationException($"Failed to create repository: {response.StatusCode} {response.ErrorMessage}");
+            throw new InvalidOperationException($"Failed to create repository: {response.StatusCode} {response.ReasonPhrase}");
         }
         
         // Parse Location header
-        var locationHeader = response.Headers?
-            .FirstOrDefault(h => h.Name.Equals("Location", StringComparison.OrdinalIgnoreCase))
-            ?.Value.ToString();
+        var locationHeader = response.Headers
+            .FirstOrDefault(h => h.Key.Equals("Location", StringComparison.OrdinalIgnoreCase))
+            .Value.ToString();
         
         if (string.IsNullOrWhiteSpace(locationHeader))
         {
             throw new InvalidOperationException("Missing Location header in response.");
         }
         
-        // Make follow-up GET request
-        var detailRequest = new RestRequest(locationHeader);
-        return await client.GetAsync<RepositorySummaryDto>(detailRequest);
+        // Make the follow-up GET request
+        return await GetAsync<RepositorySummaryDto>(locationHeader);
     }
     
     #endregion
@@ -262,21 +219,13 @@ public class BinStashApiClient
     #region Release
     
     public async Task<List<ReleaseSummaryDto>?> GetReleasesAsync()
-    {
-        using var client = new RestClient(_restClientOptions);
-        return await client.GetAsync<List<ReleaseSummaryDto>>("api/releases");
-    }
+        => await GetAsync<List<ReleaseSummaryDto>>("api/releases");
     
     public async Task<List<ReleaseSummaryDto>?> GetReleasesForRepoAsync(Guid repositoryId)
-    {
-        using var client = new RestClient(_restClientOptions);
-        var request = new RestRequest($"api/repositories/{repositoryId}/releases");
-        return await client.GetAsync<List<ReleaseSummaryDto>>(request);
-    }
+        => await GetAsync<List<ReleaseSummaryDto>>($"api/repositories/{repositoryId}/releases");
     
     public async Task CreateReleaseAsync(Guid ingestSessionId, string repositoryId, ReleasePackage release, ReleasePackageSerializerOptions? options = null)
     {
-        using var client = new HttpClient(); // ideally use IHttpClientFactory
         using var uploadStream = new MemoryStream();
         await ReleasePackageSerializer.SerializeAsync(uploadStream, release, options);
         
@@ -296,11 +245,10 @@ public class BinStashApiClient
         // This name MUST match what the server expects: "releaseDefinition"
         form.Add(fileContent, "releaseDefinition", "release.rdef");
 
-        // Updated URL — now posts to /api/releases (not /api/repositories/{id}/releases)
-        var url = new Uri(new Uri(_rootUrl), "api/releases");
-        var response = await client.PostAsync(url, form);
-
-        if (!response.IsSuccessStatusCode || response.StatusCode != HttpStatusCode.Created)
+        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsync("api/releases", form));
+        response.EnsureSuccessStatusCode();
+        
+        if (response.StatusCode != HttpStatusCode.Created)
         {
             var body = await response.Content.ReadAsStringAsync();
             throw new InvalidOperationException($"Failed to create release: {response.StatusCode} - {body}");
@@ -310,18 +258,19 @@ public class BinStashApiClient
     
     public async Task<bool> DownloadReleaseAsync(Guid releaseId, string downloadPath, string? component = null)
     {
-        using var client = new RestClient(_restClientOptions);
-        var request = new RestRequest($"api/releases/{releaseId}/download");
-        if (!string.IsNullOrWhiteSpace(component))
-            request.AddQueryParameter("component", component);
-
-        var response = await client.DownloadStreamAsync(request);
+        var uriBuilder = new UriBuilder($"api/releases/{releaseId}/download");
+        var query = HttpUtility.ParseQueryString(string.Empty);
         
-        if (response == null) 
-            return false;
+        if (!string.IsNullOrWhiteSpace(component))
+            query["component"] = component;
 
+        uriBuilder.Query = query.ToString();
+        var request = new HttpRequestMessage(HttpMethod.Get, uriBuilder.ToString());
+        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.SendAsync(request));
+        response.EnsureSuccessStatusCode();
+        
         await using var fsOut = File.OpenWrite(downloadPath);
-        await response.CopyToAsync(fsOut);
+        await response.Content.CopyToAsync(fsOut);
         await fsOut.FlushAsync();
         
         return true;
@@ -333,10 +282,7 @@ public class BinStashApiClient
     
     public async Task<Guid> CreateIngestSessionAsync(Guid repoId)
     { 
-        using var client = new RestClient(_restClientOptions);
-        var request = new RestRequest($"api/ingest/sessions");
-        request.AddJsonBody(new CreateIngestSessionRequest(repoId));
-        var response = await client.PostAsync<CreateIngestSessionResponse>(request);
+        var response = await PostAsJsonAsync<CreateIngestSessionResponse>("api/ingest/sessions", new CreateIngestSessionRequest(repoId));
         if (response == null)
             throw new InvalidOperationException("Failed to create ingest session: No response from server.");
         if (response.SessionId == Guid.Empty)
@@ -344,5 +290,25 @@ public class BinStashApiClient
         return response.SessionId;
     }
     
+    #endregion
+
+    #region Helpers
+
+    private async Task<T?> GetAsync<T>(string path)
+    {
+        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.GetAsync(path));
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadFromJsonAsync<T>();
+        return content;
+    }
+
+    private async Task<T?> PostAsJsonAsync<T>(string path, object? body)
+    {
+        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsJsonAsync(path, body));
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadFromJsonAsync<T>();
+        return content;
+    }
+
     #endregion
 }

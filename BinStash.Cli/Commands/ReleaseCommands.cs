@@ -68,11 +68,13 @@ public class ReleasesListCommand : AuthenticatedCommandBase
         }
                 
         var releases = await client.GetReleasesForRepoAsync(repository.Id);
-        if (releases == null || releases.Count == 0)
+        releases ??= new List<ReleaseSummaryDto>();
+        if (releases.Count == 0)
         {
             await console.Output.WriteLineAsync("No releases found.");
             return;
         }
+        releases.Sort((x, y) => y.CreatedAt.CompareTo(x.CreatedAt));
         await console.Output.WriteLineAsync("Available releases:");
         foreach (var release in releases)
         {
