@@ -24,6 +24,7 @@ using BinStash.Core.Compression;
 using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
 using RestSharp;
+using ZstdNet;
 
 namespace BinStash.Cli.Infrastructure;
 

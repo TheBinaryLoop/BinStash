@@ -10,12 +10,12 @@
 
     <ItemGroup>
       <ProjectReference Include="..\BinStash.Core\BinStash.Core.csproj" />
-      <ProjectReference Include="..\Externals\ZstdNet\ZstdNet\ZstdNet.csproj" />
     </ItemGroup>
 
     <ItemGroup>
       <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
       <PackageReference Include="System.IO.Hashing" Version="9.0.9" />
+      <PackageReference Include="ZstdNet" Version="1.4.6" />
     </ItemGroup>
 
     <ItemGroup>
