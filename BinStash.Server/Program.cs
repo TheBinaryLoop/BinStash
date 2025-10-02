@@ -15,6 +15,7 @@
 
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Extensions;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -36,6 +37,8 @@ public static class Program
 
         builder.Services.AddDbContext<BinStashDbContext>((_, optionsBuilder) => optionsBuilder.UseNpgsql(builder.Configuration.GetConnectionString("BinStashDb"))/*.EnableSensitiveDataLogging()*/);
 
+        builder.Services.AddIdentityApiEndpoints<IdentityUser<Guid>>().AddEntityFrameworkStores<BinStashDbContext>();
+        
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
         builder.Services.AddOpenApi();
 
@@ -48,12 +51,18 @@ public static class Program
             var db = scope.ServiceProvider.GetRequiredService<BinStashDbContext>();
             db.Database.Migrate(); // applies any pending migrations
         });
-
+        
         // Configure the HTTP request pipeline.
         if (app.Environment.IsDevelopment())
         {
             app.MapOpenApi();
-            app.MapScalarApiReference();
+            app.MapScalarApiReference(options => options
+                .AddPreferredSecuritySchemes("BearerAuth")
+                .AddHttpAuthentication("BearerAuth", scheme =>
+                {
+                    scheme.Description = "Standard Bearer authentication";
+                    scheme.Token = "exampletoken12345";
+                }));
         }
 
         app.UseHttpsRedirection();

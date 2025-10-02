@@ -14,11 +14,13 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Core.Entities;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Infrastructure.Data;
 
-public class BinStashDbContext : DbContext
+public class BinStashDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<Guid>, Guid>
 {
     public DbSet<IngestSession> IngestSessions { get; set; }
     public DbSet<ChunkStore> ChunkStores { get; set; }
@@ -33,5 +35,6 @@ public class BinStashDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(BinStashDbContext).Assembly);
+        base.OnModelCreating(modelBuilder);
     }
 }
