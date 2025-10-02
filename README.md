@@ -39,7 +39,7 @@ BinStash.Cli release add -v 1.0.0 -r my-repo -f ./build_output
 - **Dependencies**:
     - [CliFx](https://github.com/Tyrrrz/CliFx)
     - [Spectre.Console](https://spectreconsole.net/)
-    - Custom fork of [ZstdNet](https://github.com/TheBinaryLoop/ZstdNet)
+    - Custom fork of [ZstdNet](https://github.com/TheBinaryLoop/ZstdNetNGX)
 
 Build with:
 
