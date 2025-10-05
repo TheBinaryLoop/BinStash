@@ -38,6 +38,7 @@ public class ReleaseEntityTypeConfiguration : IEntityTypeConfiguration<Release>
             .HasColumnType("bytea")
             .IsRequired();
         builder.Property(r => r.CustomProperties).HasColumnType("jsonb").IsRequired(false);
+        builder.Property(r => r.SerializerVersion).IsRequired().HasDefaultValue(0);
 
         builder.HasOne(r => r.Repository)
             .WithMany(repo => repo.Releases)

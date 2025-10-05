@@ -24,7 +24,7 @@ public class ReleaseMetrics
     public int ChunksInRelease { get; set; }
     public int NewChunks { get; set; }
     public ulong TotalUncompressedSize { get; set; }
-    public ulong NewCompressedBytes { get; set; }
+    public long NewCompressedBytes { get; set; }
     public int MetaBytesFull { get; set; }
     public int MetaBytesFullDiff { get; set; }
     public int ComponentsInRelease { get; set; }

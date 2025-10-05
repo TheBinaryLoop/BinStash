@@ -134,6 +134,18 @@ public class ObjectStore
         return await File.ReadAllBytesAsync(filePath);
     }
     
+    public Task<bool> DeleteReleasePackageAsync(string hash)
+    {
+        var folder = Path.Join(_basePath, "Releases", hash[..3]);
+        if (!Directory.Exists(folder))
+            throw new DirectoryNotFoundException(folder);
+        var filePath = Path.Join(folder, $"{hash}.rdef");
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException(filePath);
+        File.Delete(filePath);
+        return Task.FromResult(true);
+    }
+    
     private static Hash32 ComputeHash(byte[] data)
     {
         var hash = Hasher.Hash(data);

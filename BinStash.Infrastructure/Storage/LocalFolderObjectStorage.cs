@@ -66,6 +66,11 @@ public class LocalFolderObjectStorage : IObjectStorage
     {
         return await _objectStore.ReadReleasePackageAsync(key);
     }
+    
+    public async Task<bool> DeleteReleasePackageAsync(string packageId)
+    {
+        return await _objectStore.DeleteReleasePackageAsync(packageId);
+    }
 
     public Task<Dictionary<string, object>> GetStorageStatsAsync()
     {

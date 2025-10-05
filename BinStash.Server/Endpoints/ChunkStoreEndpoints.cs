@@ -13,10 +13,13 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Collections.Concurrent;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
+using BinStash.Contracts.Release;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
+using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
@@ -52,6 +55,10 @@ public static class ChunkStoreEndpoints
             .WithDescription(
                 "Rebuilds the chunk store by scanning the underlying storage and rewriting the pack and index files.")
             .WithSummary("Rebuild Chunk Store")
+            .Produces(StatusCodes.Status200OK);
+        group.MapGet("/{id:guid}/upgrade", UpgradeReleasesToLatestVersionAsync)
+            .WithDescription("Upgrades all releases in the chunk store to the latest version.")
+            .WithSummary("Upgrade Releases")
             .Produces(StatusCodes.Status200OK);
         group.MapPost("/{id:guid}/files/missing", GetMissingFileDefinitionsAsync)
             .WithDescription("Gets a list of missing file definitions in the chunk store.")
@@ -185,6 +192,88 @@ public static class ChunkStoreEndpoints
         
         return Results.Ok();
         
+    }
+    
+    private static async Task<IResult> UpgradeReleasesToLatestVersionAsync(Guid id, BinStashDbContext db)
+    {
+        var store = await db.ChunkStores.FindAsync(id);
+        if (store == null)
+            return Results.NotFound();
+        
+        var repos = await db.Repositories.Where(x => x.ChunkStoreId == id).ToListAsync();
+        if (!repos.Any())
+            return Results.Ok();
+        
+        var repoIds = repos.Select(x => x.Id).ToList();
+        
+        var releasesToUpgrade = await db.Releases.Where(r => repoIds.Contains(r.RepoId) && r.SerializerVersion < ReleasePackageSerializer.Version).ToListAsync();
+        if (!releasesToUpgrade.Any())
+            return Results.Ok();
+        
+        store = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
+        
+        foreach (var releaseFile in Directory.EnumerateFiles(Path.Combine(store.LocalPath, "Releases"), "*.rdef",
+                     SearchOption.AllDirectories))
+        {
+            var tmpHash = Hash32.FromHexString(Path.GetFileNameWithoutExtension(releaseFile));
+            var tmpData = await File.ReadAllBytesAsync(releaseFile);
+            var tmpReleasePack = await ReleasePackageSerializer.DeserializeAsync(tmpData);
+            var tmpReleaseId = Guid.Parse(tmpReleasePack.ReleaseId);
+            var dbRelease = releasesToUpgrade.FirstOrDefault(r => r.Id == tmpReleaseId);
+            if (dbRelease == null)
+            {
+                File.Delete(releaseFile);
+                continue;
+            }
+            if (dbRelease.ReleaseDefinitionChecksum == tmpHash) continue;
+            dbRelease.ReleaseDefinitionChecksum = tmpHash;
+        }
+
+        var failedReleases = new Dictionary<Release, string>();
+        var grownReleases = new Dictionary<Release, int>(); // Release, grown size in bytes
+        
+        foreach (var release in releasesToUpgrade)
+        {
+            var releaseData = await store.RetrieveReleasePackageAsync(release.ReleaseDefinitionChecksum.ToHexString());
+            if (releaseData == null)
+            {
+                failedReleases[release] = "Failed to retrieve release package.";
+                continue;
+            }
+
+            ReleasePackage releasePackage;
+            try
+            {
+                releasePackage = await ReleasePackageSerializer.DeserializeAsync(releaseData);
+            }
+            catch (Exception e)
+            {
+                failedReleases[release] = $"Failed to deserialize release package: {e.Message}";
+                continue;
+            }
+            
+            var oldReleaseDefinitionChecksum = release.ReleaseDefinitionChecksum;
+
+            var serializedReleasePackage = await ReleasePackageSerializer.SerializeAsync(releasePackage);
+            
+            if (serializedReleasePackage.Length > releaseData.Length)
+                grownReleases[release] = serializedReleasePackage.Length - releaseData.Length;
+            
+            var hash = new Hash32(Blake3.Hasher.Hash(serializedReleasePackage).AsSpan());
+            await store.StoreReleasePackageAsync(serializedReleasePackage);
+            release.SerializerVersion = ReleasePackageSerializer.Version;
+            release.ReleaseDefinitionChecksum = hash;
+            await db.SaveChangesAsync();
+            try
+            {
+               await store.DeleteReleasePackageAsync(oldReleaseDefinitionChecksum.ToHexString());
+            }
+            catch (Exception e)
+            {
+                failedReleases[release] = $"Failed to delete old release package: {e.Message}";
+            }
+        }
+        return Results.Json(new { failedReleases = failedReleases.Select(x => new {x.Key.Id, x.Value}).ToList(), grownReleases = grownReleases.Select(x => new {x.Key.Id, x.Value}).ToList(), totalSizeGrowth = grownReleases.Sum(x => x.Value), totalReleases = releasesToUpgrade.Count, successfulUpgrades = releasesToUpgrade.Count - failedReleases.Count });
     }
 
     private static async Task<IResult> DeleteChunkStoreAsync(Guid id, BinStashDbContext db)
@@ -357,13 +446,14 @@ public static class ChunkStoreEndpoints
         ms.Position = 0;
 
         if (db.Chunks.Any(c => c.ChunkStoreId == id && c.Checksum == checksum)) return Results.Ok();
-        var (success, _) = await store.StoreChunkAsync(chunkChecksum, ms.ToArray());
+        var (success, bytesWritten) = await store.StoreChunkAsync(chunkChecksum, ms.ToArray());
         if (!success) return Results.Problem();
         db.Chunks.Add(new Chunk
         {
             Checksum = checksum,
             ChunkStoreId = id,
-            Length = ms.Length
+            Length = Convert.ToInt32(ms.Length),
+            CompressedLength = bytesWritten
         });
         await db.SaveChangesAsync();
         return Results.Ok();
@@ -417,6 +507,8 @@ public static class ChunkStoreEndpoints
         
         ingestSession.ChunksSeenNew += missingChunks.Count;
 
+        var missingChunksWrittenBytes = new ConcurrentDictionary<Hash32, int>();
+        
         var writeTasks = missingChunks.Select(async chunk =>
         {
             var hash = Convert.ToHexString(Blake3.Hasher.Hash(chunk.Data).AsSpan());
@@ -424,24 +516,29 @@ public static class ChunkStoreEndpoints
                 return false; // Consider logging this
 
             var (success, bytesWritten) = await store.StoreChunkAsync(chunk.Checksum, chunk.Data);
-            if (success)
-            {
-                ingestSession.DataSizeTotal += (ulong)bytesWritten;
-                ingestSession.DataSizeUnique += (ulong)bytesWritten;
-            }
+            missingChunksWrittenBytes[Hash32.FromHexString(chunk.Checksum)] = bytesWritten;
             return success;
         });
+        
+        ingestSession.DataSizeTotal += missingChunksWrittenBytes.Sum(c => c.Value);
+        ingestSession.DataSizeUnique += missingChunksWrittenBytes.Sum(c => c.Value);
 
         var results = await Task.WhenAll(writeTasks);
 
         if (results.Any(r => r == false))
             return Results.Problem("Some chunks failed checksum or storage.");
 
-        var chunksToAdd = missingChunks.Select(chunk => new Chunk
+        
+        var chunksToAdd = missingChunks.Select(chunk =>
         {
-            Checksum = Hash32.FromHexString(chunk.Checksum),
-            ChunkStoreId = id,
-            Length = Convert.ToInt64(chunk.Data.Length)
+            var checksum = Hash32.FromHexString(chunk.Checksum);
+            return new Chunk
+            {
+                Checksum = checksum,
+                ChunkStoreId = id,
+                Length = chunk.Data.Length,
+                CompressedLength = missingChunksWrittenBytes[checksum]
+            };
         });
         
         ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;

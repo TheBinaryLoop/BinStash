@@ -139,7 +139,8 @@ public static class ReleaseEndpoints
             RepoId = repo.Id,
             Repository = repo,
             ReleaseDefinitionChecksum = hash,
-            CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null
+            CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null,
+            SerializerVersion = ReleasePackageSerializer.Version
         };
         
         await db.Releases.AddAsync(release);

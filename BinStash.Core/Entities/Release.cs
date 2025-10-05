@@ -30,4 +30,6 @@ public class Release
     
     public Hash32 ReleaseDefinitionChecksum { get; set; }
     public string? CustomProperties { get; set; } = null;
+
+    public required byte SerializerVersion { get; set; }
 }

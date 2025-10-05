@@ -17,12 +17,12 @@ namespace BinStash.Core.Serialization.Utils;
 
 internal class SubstringTableBuilder
 {
-    private readonly Dictionary<string, ushort> _Index = new();
+    private readonly Dictionary<string, int> _Index = new();
     public readonly List<string> Table = new();
 
-    public List<(ushort id, Separator sep)> Tokenize(string input)
+    public List<(int id, Separator sep)> Tokenize(string input)
     {
-        var tokens = new List<(ushort id, Separator sep)>();
+        var tokens = new List<(int id, Separator sep)>();
         var start = 0;
 
         for (var i = 0; i < input.Length; i++)
@@ -50,10 +50,10 @@ internal class SubstringTableBuilder
         return tokens;
     }
 
-    private ushort GetOrAdd(string str)
+    private int GetOrAdd(string str)
     {
         if (_Index.TryGetValue(str, out var id)) return id;
-        id = (ushort)Table.Count;
+        id = Table.Count;
         Table.Add(str);
         _Index[str] = id;
         return id;
@@ -65,6 +65,8 @@ internal class SubstringTableBuilder
         '/' => Separator.Slash,
         '\\' => Separator.Backslash,
         ':' => Separator.Colon,
+        '-' => Separator.Dash,
+        '_' => Separator.Underscore,
         _ => Separator.None
     };
 }
@@ -76,4 +78,6 @@ internal enum Separator : byte
     Slash = (byte)'/',
     Backslash = (byte)'\\',
     Colon = (byte)':',
+    Dash = (byte)'-',
+    Underscore = (byte)'_'
 }

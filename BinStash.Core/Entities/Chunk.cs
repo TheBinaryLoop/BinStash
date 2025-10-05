@@ -21,5 +21,6 @@ public class Chunk
 {
     public required Hash32 Checksum { get; set; }
     public required Guid ChunkStoreId { get; set; }
-    public required long Length { get; set; }
+    public required int Length { get; set; }
+    public required int CompressedLength { get; set; }
 }
