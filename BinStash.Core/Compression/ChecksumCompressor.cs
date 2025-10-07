@@ -69,11 +69,11 @@ public static class ChecksumCompressor
 
         for (var i = 0; i < hashSize; i++)
         {
-            // column length (signed varint in your current format)
+            // column length (signed varint)
             var len = await VarIntUtils.ReadVarIntAsync<int>(inputStream).ConfigureAwait(false);
             if (len < 0) throw new InvalidDataException("Negative column length.");
 
-            // read compressed column payload
+            // read the compressed column payload
             var compressed = GC.AllocateUninitializedArray<byte>(len);
             await ReadExactlyAsync(inputStream, compressed, ct).ConfigureAwait(false);
 

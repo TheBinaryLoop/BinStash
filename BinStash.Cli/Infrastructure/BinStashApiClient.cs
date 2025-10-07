@@ -25,6 +25,7 @@ using BinStash.Core.Chunking;
 using BinStash.Core.Compression;
 using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
+using Microsoft.Extensions.Http;
 using Polly;
 using Polly.Extensions.Http;
 using ZstdNet;
@@ -38,8 +39,23 @@ public class BinStashApiClient
 
     public BinStashApiClient(string rootUrl)
     {
-        _httpClient = new HttpClient();
-        _httpClient.BaseAddress = new Uri(rootUrl);
+        // Wire it into the handler pipeline manually
+        var sockets = new SocketsHttpHandler
+        {
+            // Optional, but good defaults:
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        };
+
+        var policyHandler = new PolicyHttpMessageHandler(_retryPolicy)
+        {
+            InnerHandler = sockets
+        };
+        
+        _httpClient = new HttpClient(policyHandler)
+        {
+            BaseAddress = new Uri(rootUrl)
+        };
     }
     
     #region ChunkStore
@@ -52,7 +68,7 @@ public class BinStashApiClient
     
     public async Task<ChunkStoreDetailDto?> CreateChunkStoreAsync(CreateChunkStoreDto dto)
     {
-        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsJsonAsync("api/chunkstores", dto));
+        var response = await _httpClient.PostAsJsonAsync("api/chunkstores", dto);
         response.EnsureSuccessStatusCode();
         
         if (response.StatusCode != HttpStatusCode.Created) return null;
@@ -66,7 +82,7 @@ public class BinStashApiClient
             throw new InvalidOperationException("Missing Location header in response.");
             
         // Make follow-up GET request // TODO: Maybe use the existing GetChunkStoreAsync method instead?
-        response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.GetAsync(locationHeader));
+        response = await _httpClient.GetAsync(locationHeader);
         response.EnsureSuccessStatusCode();
         var content = await response.Content.ReadFromJsonAsync<ChunkStoreDetailDto>();
         return content;
@@ -89,7 +105,7 @@ public class BinStashApiClient
     
     public async Task<List<Hash32>> GetMissingChunkChecksumsAsync(Guid id,  List<Hash32> chunkChecksums)
     {
-        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsync($"api/chunkstores/{id}/chunks/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(chunkChecksums.Select(x => x.GetBytes()).ToList()))));
+        var response = await _httpClient.PostAsync($"api/chunkstores/{id}/chunks/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(chunkChecksums.Select(x => x.GetBytes()).ToList())));
         response.EnsureSuccessStatusCode();
         var respStream = await response.Content.ReadAsStreamAsync();
         var decompressedChecksums = await ChecksumCompressor.TransposeDecompressAsync(respStream);
@@ -98,7 +114,7 @@ public class BinStashApiClient
     
     public async Task<List<Hash32>> GetMissingFileChecksumsAsync(Guid chunkStoreId, List<Hash32> fileChecksums)
     {
-        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsync($"api/chunkstores/{chunkStoreId}/files/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(fileChecksums.Select(x => x.GetBytes()).ToList()))));
+        var response = await _httpClient.PostAsync($"api/chunkstores/{chunkStoreId}/files/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(fileChecksums.Select(x => x.GetBytes()).ToList())));
         response.EnsureSuccessStatusCode();
         var respStream = await response.Content.ReadAsStreamAsync();
         var decompressedChecksums = await ChecksumCompressor.TransposeDecompressAsync(respStream);
@@ -125,7 +141,7 @@ public class BinStashApiClient
             request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
             request.Content = JsonContent.Create(uploadDtos);
             
-            var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.SendAsync(request, cancellationToken));
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
             uploaded += batch.Length;
@@ -173,7 +189,7 @@ public class BinStashApiClient
             request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
             request.Content = new ByteArrayContent(compressedData);
             
-            var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.SendAsync(request, cancellationToken));
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
 
             uploaded += batch.Length;
@@ -192,7 +208,7 @@ public class BinStashApiClient
     
     public async Task<RepositorySummaryDto?> CreateRepositoryAsync(CreateRepositoryDto createDto)
     {
-        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsJsonAsync("api/repositories", createDto));
+        var response = await _httpClient.PostAsJsonAsync("api/repositories", createDto);
         response.EnsureSuccessStatusCode();
         
         if (response.StatusCode != HttpStatusCode.Created)
@@ -245,7 +261,7 @@ public class BinStashApiClient
         // This name MUST match what the server expects: "releaseDefinition"
         form.Add(fileContent, "releaseDefinition", "release.rdef");
 
-        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsync("api/releases", form));
+        var response = await _httpClient.PostAsync("api/releases", form);
         response.EnsureSuccessStatusCode();
         
         if (response.StatusCode != HttpStatusCode.Created)
@@ -258,15 +274,17 @@ public class BinStashApiClient
     
     public async Task<bool> DownloadReleaseAsync(Guid releaseId, string downloadPath, string? component = null)
     {
-        var uriBuilder = new UriBuilder($"api/releases/{releaseId}/download");
+        var downloadUri = new Uri(_httpClient.BaseAddress!, $"api/releases/{releaseId}/download");
+        var uriBuilder = new UriBuilder(downloadUri);
         var query = HttpUtility.ParseQueryString(string.Empty);
         
         if (!string.IsNullOrWhiteSpace(component))
             query["component"] = component;
 
         uriBuilder.Query = query.ToString();
+        Console.WriteLine(uriBuilder.ToString());
         var request = new HttpRequestMessage(HttpMethod.Get, uriBuilder.ToString());
-        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.SendAsync(request));
+        var response = await _httpClient.SendAsync(request);
         response.EnsureSuccessStatusCode();
         
         await using var fsOut = File.OpenWrite(downloadPath);
@@ -296,7 +314,7 @@ public class BinStashApiClient
 
     private async Task<T?> GetAsync<T>(string path)
     {
-        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.GetAsync(path));
+        var response = await _httpClient.GetAsync(path);
         response.EnsureSuccessStatusCode();
         var content = await response.Content.ReadFromJsonAsync<T>();
         return content;
@@ -304,7 +322,7 @@ public class BinStashApiClient
 
     private async Task<T?> PostAsJsonAsync<T>(string path, object? body)
     {
-        var response = await _retryPolicy.ExecuteAsync(async () => await _httpClient.PostAsJsonAsync(path, body));
+        var response = await _httpClient.PostAsJsonAsync(path, body);
         response.EnsureSuccessStatusCode();
         var content = await response.Content.ReadFromJsonAsync<T>();
         return content;
