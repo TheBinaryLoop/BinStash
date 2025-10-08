@@ -76,6 +76,7 @@ pipeline {
         success { echo '✅ Tests passed' }
       }
     }
+  }
   post {
     always {
       // Recommended by the plugin to avoid lingering build servers on agents
