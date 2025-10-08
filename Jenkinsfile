@@ -29,7 +29,7 @@ pipeline {
       steps {
         // The SDK is on PATH via the 'tools { dotnetsdk ... }' directive
         withDotNet(sdk: 'dotnet-lts') {
-          sh 'dotnet --info'
+          bat 'dotnet --info'
         }
       }
     }
