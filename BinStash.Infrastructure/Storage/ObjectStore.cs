@@ -13,36 +13,23 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.Buffers.Binary;
-using System.Collections.Concurrent;
-using System.IO.Hashing;
-using System.IO.MemoryMappedFiles;
-using BinStash.Core.Serialization.Utils;
-using BinStash.Core.Types;
-using BinStash.Infrastructure.Helper;
+using BinStash.Contracts.Hashing;
+using BinStash.Infrastructure.Storage.Indexing;
+using BinStash.Infrastructure.Storage.Stats;
 using Blake3;
-using ZstdNet;
 
 namespace BinStash.Infrastructure.Storage;
 
-public static class ObjectStoreManager
-{
-    private static readonly ConcurrentDictionary<string, ObjectStore> ObjectStores = new();
-    
-    public static ObjectStore GetOrCreateChunkStorage(string basePath)
-    {
-        if (string.IsNullOrEmpty(basePath))
-            throw new ArgumentException("Base path cannot be null or empty.", nameof(basePath));
-        
-        return ObjectStores.GetOrAdd(basePath, path => new ObjectStore(path));
-    }
-}
-
+/// <summary>
+/// High-level API for chunk, file-definition and release-package storage.
+/// </summary>
 public class ObjectStore
 {
-    private readonly string _BasePath;
-    private readonly long _MaxPackSize = 4L * 1024 * 1024 * 1024; // 4 GiB max pack file size
-    private readonly Dictionary<string, ChunkFileHandler> _FileHandlers = new();
+    private const long MaxPackSize = 4L * 1024 * 1024 * 1024; // 4 GiB max pack file size
+    
+    private readonly string _basePath;
+    private readonly Dictionary<string, IndexedPackFileHandler> _chunkFileHandlers = new();
+    private readonly Dictionary<string, IndexedPackFileHandler> _fileDefinitionFileHandlers = new();
 
     public ObjectStore(string basePath)
     {
@@ -51,7 +38,7 @@ public class ObjectStore
         
         Directory.CreateDirectory(basePath);
 
-        _BasePath = basePath;
+        _basePath = basePath;
         InitializeFileHandlers();
     }
 
@@ -62,31 +49,75 @@ public class ObjectStore
             var prefix = i.ToString("x3");
             // The folder structure will look like:
             // basePath/
-            //   Chunks/
+            //   (Chunks|FileDefs)/
             //     00/
             //       index00x.idx
-            _FileHandlers[prefix] = new ChunkFileHandler(Path.Combine(_BasePath, "Chunks", prefix[..2]), prefix, _MaxPackSize);
+            //       chunks00x-n.pack
+            _chunkFileHandlers[prefix] = new IndexedPackFileHandler(Path.Combine(_basePath, "Chunks", prefix[..2]), "chunks", prefix, MaxPackSize, ComputeHash);
+            _fileDefinitionFileHandlers[prefix] = new IndexedPackFileHandler(Path.Combine(_basePath, "FileDefs", prefix[..2]), "fileDefs", prefix, MaxPackSize, ComputeHash);
         }
     }
+    
+    public async Task<bool> RebuildStorageAsync()
+    {
+        var tasks = new List<Task<bool>>();
+        /*foreach (var handler in _chunkFileHandlers.Values)
+        {
+            tasks.Add(handler.RebuildPackFilesAsync());
+        }
+        foreach (var handler in _fileDefinitionFileHandlers.Values)
+        {
+            tasks.Add(handler.RebuildPackFilesAsync());
+        }
+        var results = await Task.WhenAll(tasks);
+        if (!results.All(r => r))
+            return false;
+        tasks.Clear();*/
+        var results = Array.Empty<bool>();
+        foreach (var handler in _chunkFileHandlers.Values)
+        {
+            tasks.Add(handler.RebuildIndexFile());
+        }
+        foreach (var handler in _fileDefinitionFileHandlers.Values)
+        {
+            tasks.Add(handler.RebuildIndexFile());
+        }
+        results = await Task.WhenAll(tasks);
+        
+        return results.All(r => r);
+    }
 
-    public async Task WriteChunkAsync(byte[] chunkData)
+    public async Task<int> WriteChunkAsync(byte[] chunkData)
     {
         var hash = ComputeHash(chunkData);
         var stringHash = hash.ToHexString();
         var prefix = stringHash[..3];
-        await _FileHandlers[prefix].WriteChunkAsync(hash, chunkData);
+        return await _chunkFileHandlers[prefix].WriteIndexedDataAsync(hash, chunkData);
     }
 
     public async Task<byte[]> ReadChunkAsync(string hash)
     {
         var prefix = hash[..3];
-        return await _FileHandlers[prefix].ReadChunkAsync(Hash32.FromHexString(hash));
+        return await _chunkFileHandlers[prefix].ReadIndexedDataAsync(Hash32.FromHexString(hash));
+    }
+    
+    public async Task<int> WriteFileDefinitionAsync(Hash32 fileHash, byte[] fileDefinitionData)
+    {
+        var stringHash = fileHash.ToHexString();
+        var prefix = stringHash[..3];
+        return await _fileDefinitionFileHandlers[prefix].WriteIndexedDataAsync(fileHash, fileDefinitionData);
+    }
+    
+    public Task<byte[]> ReadFileDefinitionAsync(string hash)
+    {
+        var prefix = hash[..3];
+        return _fileDefinitionFileHandlers[prefix].ReadIndexedDataAsync(Hash32.FromHexString(hash));
     }
 
     public async Task WriteReleasePackageAsync(byte[] releasePackageData)
     {
         var hash = ComputeHash(releasePackageData).ToHexString();
-        var folder = Path.Join(_BasePath, "Releases", hash[..3]);
+        var folder = Path.Join(_basePath, "Releases", hash[..3]);
         Directory.CreateDirectory(folder);
         var filePath = Path.Join(folder, $"{hash}.rdef");
         await File.WriteAllBytesAsync(filePath, releasePackageData);
@@ -94,13 +125,25 @@ public class ObjectStore
 
     public async Task<byte[]> ReadReleasePackageAsync(string hash)
     {
-        var folder = Path.Join(_BasePath, "Releases", hash[..3]);
+        var folder = Path.Join(_basePath, "Releases", hash[..3]);
         if (!Directory.Exists(folder))
             throw new DirectoryNotFoundException(folder);
         var filePath = Path.Join(folder, $"{hash}.rdef");
         if (!File.Exists(filePath))
             throw new FileNotFoundException(filePath);
         return await File.ReadAllBytesAsync(filePath);
+    }
+    
+    public Task<bool> DeleteReleasePackageAsync(string hash)
+    {
+        var folder = Path.Join(_basePath, "Releases", hash[..3]);
+        if (!Directory.Exists(folder))
+            throw new DirectoryNotFoundException(folder);
+        var filePath = Path.Join(folder, $"{hash}.rdef");
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException(filePath);
+        File.Delete(filePath);
+        return Task.FromResult(true);
     }
     
     private static Hash32 ComputeHash(byte[] data)
@@ -114,7 +157,7 @@ public class ObjectStore
         var stats = new StorageStatistics();
         var prefixCounts = new Dictionary<string, int>();
     
-        foreach (var kvp in _FileHandlers)
+        foreach (var kvp in _chunkFileHandlers)
         {
             var handler = kvp.Value;
             var prefix = kvp.Key;
@@ -134,298 +177,5 @@ public class ObjectStore
 
         stats.PrefixChunkCounts = prefixCounts;
         return stats;
-    }
-}
-
-internal class ChunkFileHandler
-{
-    private readonly long _MaxPackFileSize;
-    private readonly string _IndexFilePath;
-    private readonly string _DataFilePrefix;
-    private readonly SemaphoreSlim _PackFileLock = new(1, 1);
-    private readonly SemaphoreSlim _IndexFileLock = new(1, 1);
-    private readonly Dictionary<Hash32, (int fileNo, long offset, int length)> _Index = new();
-    
-    private int _currentFileNumber = int.MinValue;
-
-    public ChunkFileHandler(string directoryPath, string prefix, long maxPackFileSize)
-    {
-        _MaxPackFileSize = maxPackFileSize;
-        Directory.CreateDirectory(directoryPath);
-        _IndexFilePath = Path.Combine(directoryPath, $"index{prefix}.idx");
-        _DataFilePrefix = Path.Combine(directoryPath, $"chunks{prefix}");
-        LoadIndex();
-    }
-
-    private void LoadIndex()
-    {
-        if (!File.Exists(_IndexFilePath)) return;
-
-        _IndexFileLock.Wait();
-
-        try
-        {
-            var indexLength = new FileInfo(_IndexFilePath).Length;
-            using var mmf = MemoryMappedFile.CreateFromFile(_IndexFilePath, FileMode.Open);
-            using var accessor = mmf.CreateViewAccessor();
-            long position = 0;
-            while (position < indexLength)
-            {
-                var hash = new byte[32];
-                accessor.ReadArray(position, hash, 0, 32);
-                position += 32;
-
-                var fileNo = VarIntUtils.ReadVarInt<int>(accessor, ref position);
-                var offset = VarIntUtils.ReadVarInt<long>(accessor, ref position);
-                var length = VarIntUtils.ReadVarInt<int>(accessor, ref position);
-
-                _Index[new Hash32(hash)] = (fileNo, offset, length);
-            }
-        }
-        finally
-        {
-            _IndexFileLock.Release();
-        }
-    }
-    
-    private void SaveIndexEntry(Hash32 hash, int fileNumber, long offset, int length)
-    {
-        _IndexFileLock.Wait();
-
-        try
-        {
-            using var writer = new BinaryWriter(File.Open(_IndexFilePath, FileMode.Append, FileAccess.Write, FileShare.Read));
-            writer.Write(hash.GetBytes());
-            VarIntUtils.WriteVarInt(writer, fileNumber);
-            VarIntUtils.WriteVarInt(writer, offset);
-            VarIntUtils.WriteVarInt(writer, length);
-            writer.Flush();
-        }
-        finally
-        {
-            _IndexFileLock.Release();
-        }
-    }
-    
-    public Dictionary<Hash32, (int fileNo, long offset, int length)> GetIndexSnapshot()
-    {
-        return new(_Index);
-    }
-    
-    public int CountDataFiles()
-    {
-        var count = 0;
-        for (var i = 0; ; i++)
-        {
-            var path = $"{_DataFilePrefix}-{i}.pack";
-            if (!File.Exists(path))
-                break;
-            count++;
-        }
-        return count;
-    }
-    
-    public int GetEstimatedUncompressedSize((int fileNo, long offset, int length) entry)
-    {
-        _PackFileLock.Wait();
-        try
-        {
-            var path = $"{_DataFilePrefix}-{entry.fileNo}.pack";
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            fs.Seek(entry.offset + 5, SeekOrigin.Begin); // Skip Magic (4) + Version (1)
-            Span<byte> lenBuf = stackalloc byte[4];
-            fs.ReadExactly(lenBuf);
-            return BinaryPrimitives.ReadInt32LittleEndian(lenBuf);
-        }
-        catch
-        {
-            return 0; // On failure, ignore
-        }
-        finally
-        {
-            _PackFileLock.Release();
-        }
-    }
-    
-    public async Task WriteChunkAsync(Hash32 hash, byte[] chunkData)
-    {
-        // quick check without lock
-        if (_Index.ContainsKey(hash))
-            return;
-        
-        await _PackFileLock.WaitAsync();
-        try
-        {
-            // double-check
-            if (_Index.ContainsKey(hash))
-                return;
-
-            await using var dataStream = GetWritableDataFile(out var fileNo);
-            var (offset, length) = await PackFileEntry.WriteAsync(dataStream, chunkData);
-
-            _Index[hash] = (fileNo, offset, length);
-            SaveIndexEntry(hash, fileNo, offset, length);
-        }
-        finally
-        {
-            _PackFileLock.Release();
-        }
-    }
-
-    public async Task<byte[]> ReadChunkAsync(Hash32 hash)
-    {
-        await _PackFileLock.WaitAsync();
-        try
-        {
-            if (!_Index.TryGetValue(hash, out var entry))
-                throw new KeyNotFoundException("Chunk not found.");
-
-            var path = $"{_DataFilePrefix}-{entry.fileNo}.pack";
-            await using var dataStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            dataStream.Seek(entry.offset, SeekOrigin.Begin);
-            return await PackFileEntry.ReadAsync(dataStream) ?? throw new InvalidDataException("Failed to read chunk data.");
-        }
-        finally
-        {
-            _PackFileLock.Release();
-        }
-    }
-
-    private FileStream GetWritableDataFile(out int fileNumber)
-    {
-        // If we haven't determined the current file number yet, do so now
-        if (_currentFileNumber == int.MinValue)
-        {
-            for (fileNumber = 0; ; fileNumber++)
-            {
-                var path = $"{_DataFilePrefix}-{fileNumber}.pack";
-                var info = new FileInfo(path);
-                if (!info.Exists || info.Length < _MaxPackFileSize)
-                {
-                    _currentFileNumber = fileNumber;
-                    return new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
-                }
-            }
-        }
-        
-        // Check if the current file has reached the max size
-        if (new FileInfo($"{_DataFilePrefix}-{_currentFileNumber}.pack").Length >= _MaxPackFileSize)
-        {
-            // If so, increment to the next file number
-            _currentFileNumber++;
-        }
-        
-        // Return a stream to the current file
-        fileNumber = _currentFileNumber;
-        return new FileStream($"{_DataFilePrefix}-{fileNumber}.pack", FileMode.Append, FileAccess.Write, FileShare.Read);
-    }
-}
-
-internal static class PackFileEntry
-{
-    private const int HeaderSize = 21;
-    private const uint Magic = 0x4B435342; // ASCII "BSCK" => "BinStash Chunk" / Little-endian encoded
-    private const byte Version = 1;
-    
-    public static async Task<(long, int)> WriteAsync(Stream output, byte[] data, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
-        
-        var offset = output.Position;
-        
-        var compressedData = CompressData(data);
-        var compressedDataChecksum = XxHash3.HashToUInt64(compressedData);
-        var uncompressedLength = data.Length;
-        var compressedLength = compressedData.Length;
-        
-        Span<byte> header = stackalloc byte[HeaderSize];
-        BinaryPrimitives.WriteUInt32LittleEndian(header[..4], Magic);              // 0–3
-        header[4] = Version;                                                       // 4
-        BinaryPrimitives.WriteUInt32LittleEndian(header[5..9], (uint)uncompressedLength); // 5–8
-        BinaryPrimitives.WriteUInt32LittleEndian(header[9..13], (uint)compressedLength);  // 9–12
-        BinaryPrimitives.WriteUInt64LittleEndian(header[13..21], compressedDataChecksum); // 13–20
-
-        await output.WriteAsync(header.ToArray(), ct);
-        await output.WriteAsync(compressedData.AsMemory(0, compressedLength), ct);
-        await output.FlushAsync(ct);
-        
-        return (offset, (int)(output.Position - offset));
-    }
-    
-    public static async Task<byte[]?> ReadAsync(Stream input, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
-
-        var headerBuf = new byte[HeaderSize];
-        var read = await input.ReadAsync(headerBuf.AsMemory(0, HeaderSize), ct);
-        if (read == 0) return null;
-        if (read != HeaderSize) throw new InvalidDataException("Incomplete header");
-
-        var magic = BinaryPrimitives.ReadUInt32LittleEndian(headerBuf.AsSpan(0, 4));
-        if (magic != Magic) throw new InvalidDataException("Bad magic");
-
-        var version = headerBuf[4];
-        if (version != Version) throw new NotSupportedException($"Unsupported version {version}");
-
-        var uncompressedLength = (int)BinaryPrimitives.ReadUInt32LittleEndian(headerBuf.AsSpan(5, 4));
-        var compressedLength = (int)BinaryPrimitives.ReadUInt32LittleEndian(headerBuf.AsSpan(9, 4));
-        var expectedChecksum = BinaryPrimitives.ReadUInt64LittleEndian(headerBuf.AsSpan(13, 8));
-
-        var compressed = new byte[compressedLength];
-        var totalRead = 0;
-        while (totalRead < compressedLength)
-        {
-            var r = await input.ReadAsync(compressed.AsMemory(totalRead, compressedLength - totalRead), ct);
-            if (r == 0) throw new EndOfStreamException("Unexpected EOF in chunk");
-            totalRead += r;
-        }
-        
-        var actualChecksum = XxHash3.HashToUInt64(compressed);
-        if (actualChecksum != expectedChecksum)
-            throw new InvalidDataException("Checksum mismatch – data corrupted");
-
-        return DecompressData(compressed);
-    }
-    
-    private static byte[] CompressData(byte[] data)
-    {
-        using var compressor = new Compressor();
-        return compressor.Wrap(data);
-    }
-
-    private static byte[] DecompressData(byte[] compressedData)
-    {
-        using var decompressor = new Decompressor();
-        return decompressor.Unwrap(compressedData);
-    }
-}
-
-public class StorageStatistics
-{
-    public int TotalChunks { get; set; }
-    public long TotalCompressedSize { get; set; }
-    public long TotalUncompressedSize { get; set; }
-    public double CompressionRatio => TotalUncompressedSize == 0 ? 1 : (double)TotalUncompressedSize / TotalCompressedSize;
-    public int TotalFiles { get; set; }
-    public double AvgCompressedChunkSize => TotalChunks == 0 ? 0 : (double)TotalCompressedSize / TotalChunks;
-    public double AvgUncompressedChunkSize => TotalChunks == 0 ? 0 : (double)TotalUncompressedSize / TotalChunks;
-    public Dictionary<string, int> PrefixChunkCounts { get; set; } = new();
-    
-    public Dictionary<string, object> ToDictionary()
-    {
-        return new Dictionary<string, object>
-        {
-            { "TotalPackFiles", TotalFiles },
-            { "TotalChunks", TotalChunks },
-            { "AvgChunksPerPackFile", $"{(TotalFiles == 0 ? 0 : (double)TotalChunks / TotalFiles):0.00}" },
-            { "TotalCompressedSize", BytesConverter.BytesToHuman(TotalCompressedSize) },
-            { "TotalUncompressedSize", BytesConverter.BytesToHuman(TotalUncompressedSize) },
-            { "CompressionRatio", $"{CompressionRatio:0.00}" },
-            { "AvgCompressedChunkSize", BytesConverter.BytesToHuman((long)AvgCompressedChunkSize) },
-            { "AvgUncompressedChunkSize", BytesConverter.BytesToHuman((long)AvgUncompressedChunkSize) },
-            { "SpaceSavings", $"{(TotalUncompressedSize == 0 ? 0 : (double)(TotalUncompressedSize - TotalCompressedSize) / TotalUncompressedSize * 100):0.00}%" },
-            { "long.MaxValue in storage", $"{BytesConverter.BytesToHuman(long.MaxValue)}" },
-            //{ "PrefixChunkCounts", PrefixChunkCounts }
-        };
     }
 }

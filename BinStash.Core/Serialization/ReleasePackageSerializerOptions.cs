@@ -21,4 +21,5 @@ public class ReleasePackageSerializerOptions
     
     public bool EnableCompression { get; set; } = true;
     public int CompressionLevel { get; set; } = 9;
+    public bool LinkToFileDefinitions { get; set; } = true;
 }

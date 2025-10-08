@@ -14,8 +14,8 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.Delta;
+using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
-using BinStash.Core.Types;
 using DeltaChunkRef = BinStash.Contracts.Delta.DeltaChunkRef;
 
 namespace BinStash.Server.Helpers;
@@ -77,8 +77,8 @@ public static class DeltaCalculator
                 files.Add(new DeltaFile(
                     (singleComponent != null ? file.Name : Path.Combine(component.Name, file.Name)).Replace('\\', '/'),
                     totalSize,
-                    oldHash != null ? new Hash8(oldHash.Value).ToHexString() : string.Empty,
-                    new Hash8(file.Hash).ToHexString(),
+                    oldHash != null ? oldHash.Value.ToHexString() : string.Empty,
+                    file.Hash.ToHexString(),
                     chunkRefs
                 ));
             }

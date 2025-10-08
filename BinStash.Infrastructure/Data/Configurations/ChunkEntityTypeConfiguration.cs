@@ -13,8 +13,8 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
 using BinStash.Core.Entities;
-using BinStash.Core.Types;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -39,5 +39,6 @@ public class ChunkEntityTypeConfiguration : IEntityTypeConfiguration<Chunk>
             .IsRequired();
         builder.Property(c => c.ChunkStoreId).IsRequired();
         builder.Property(c => c.Length).IsRequired();
+        builder.Property(c => c.CompressedLength).IsRequired().HasDefaultValue(0);
     }
 }

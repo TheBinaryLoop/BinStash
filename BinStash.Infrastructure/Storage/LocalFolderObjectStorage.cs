@@ -13,45 +13,67 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
 using BinStash.Core.Storage;
 
 namespace BinStash.Infrastructure.Storage;
 
 public class LocalFolderObjectStorage : IObjectStorage
 {
-    private readonly ObjectStore _ObjectStore;
+    private readonly ObjectStore _objectStore;
     
     public LocalFolderObjectStorage(string basePath)
     {
         if (!Directory.Exists(basePath))
             Directory.CreateDirectory(basePath);
-        _ObjectStore = ObjectStoreManager.GetOrCreateChunkStorage(basePath);
+        _objectStore = ObjectStoreManager.GetOrCreateChunkStorage(basePath);
     }
 
-    public async Task<bool> StoreChunkAsync(string key, byte[] data)
+    public Task<bool> RebuildStorageAsync()
     {
-        await _ObjectStore.WriteChunkAsync(data);
-        return true;
+        return _objectStore.RebuildStorageAsync();
+    }
+    
+    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data)
+    {
+        var bytesWritten = await _objectStore.WriteChunkAsync(data);
+        return (true, bytesWritten);
     }
 
-    public async Task<byte[]?> RetrieveChunkAsync(string key)
+    public Task<byte[]?> RetrieveChunkAsync(string key)
     {
-        return await _ObjectStore.ReadChunkAsync(key); 
+        return _objectStore.ReadChunkAsync(key)!;
+    }
+
+    public async Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, byte[] data)
+    {
+        var bytesWritten = await _objectStore.WriteFileDefinitionAsync(fileHash, data);
+        return (true, bytesWritten);
+    }
+
+    public Task<byte[]?> RetrieveFileDefinitionAsync(string key)
+    {
+        return _objectStore.ReadFileDefinitionAsync(key)!;
     }
 
     public async Task<bool> StoreReleasePackageAsync(byte[] packageData)
     {
-        await _ObjectStore.WriteReleasePackageAsync(packageData);
+        await _objectStore.WriteReleasePackageAsync(packageData);
         return true;
     }
 
     public async Task<byte[]?> RetrieveReleasePackageAsync(string key)
     {
-        return await _ObjectStore.ReadReleasePackageAsync(key);
+        return await _objectStore.ReadReleasePackageAsync(key);
+    }
+    
+    public async Task<bool> DeleteReleasePackageAsync(string packageId)
+    {
+        return await _objectStore.DeleteReleasePackageAsync(packageId);
     }
 
     public Task<Dictionary<string, object>> GetStorageStatsAsync()
     {
-        return Task.FromResult(_ObjectStore.GetStatistics().ToDictionary());
+        return Task.FromResult(_objectStore.GetStatistics().ToDictionary());
     }
 }

@@ -30,14 +30,18 @@ public abstract class ReleasePackageSerializerBase
     private static byte Bits32(uint max) => max == 0 ? (byte)0 : (byte)(BitOperations.Log2(max) + 1);
     private static byte Bits64(ulong max) => max == 0 ? (byte)0 : (byte)(BitOperations.Log2(max) + 1);
     
+    protected static readonly Dictionary<byte, byte[]> ZstDicts = new()
+    {
+        //{ 0x03, File.ReadAllBytes(@"C:\Tmp\dict_sample\strings-64.dict") }
+    };
     
-    private static readonly RecyclableMemoryStreamManager _rms =
+    private static readonly RecyclableMemoryStreamManager RecyclableMemoryStreamManager =
         new(new RecyclableMemoryStreamManager.Options(blockSize: 128 * 1024, largeBufferMultiple: 1024 * 1024, maximumBufferSize: 16 * 1024 * 1024, maximumSmallPoolFreeBytes: 256L * 1024 * 1024, maximumLargePoolFreeBytes: 512L * 1024 * 1024));
     
     protected static async Task WriteSectionAsync(Stream baseStream, byte id, Action<BinaryWriter> write, bool enableCompression, int compressionLevel, CancellationToken ct)
     {
-        var pos = baseStream.Position;
-        await using var ms = _rms.GetStream();
+        var streamPosition = baseStream.Position;
+        await using var ms = RecyclableMemoryStreamManager.GetStream();
         var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
         write(w);
         w.Flush();
@@ -46,8 +50,9 @@ public abstract class ReleasePackageSerializerBase
         
         if (enableCompression)
         {
-            await using var compressed = _rms.GetStream();
-            await using (var z = new CompressionStream(compressed, new CompressionOptions(compressionLevel)))
+            await using var compressed = RecyclableMemoryStreamManager.GetStream();
+            var compOptions = ZstDicts.TryGetValue(id, out var zstDict) ? new CompressionOptions(zstDict, compressionLevel) : new CompressionOptions(compressionLevel);
+            await using (var z = new CompressionStream(compressed, compOptions))
                 await ms.CopyToAsync(z, 1 << 20, ct);  
 
             compressed.Position = 0;
@@ -66,53 +71,8 @@ public abstract class ReleasePackageSerializerBase
             VarIntUtils.WriteVarInt(writer, (ulong)ms.Length);
             await ms.CopyToAsync(baseStream, ct);
         }
-        var endPos = baseStream.Position;
-        var written = endPos - pos;
-        Debug.WriteLine("Wrote section {0:X2} at {1}, {2} bytes", id, pos, written);
-    }
-    
-    protected static void WriteChunkRefs(BinaryWriter w, List<DeltaChunkRef> chunks)
-    {
-        VarIntUtils.WriteVarInt(w, (uint)chunks.Count);
-        
-        if (chunks.Count == 0)
-        {
-            w.Write((byte)0); // bitsDelta
-            w.Write((byte)0); // bitsOffset
-            w.Write((byte)0); // bitsLength
-            VarIntUtils.WriteVarInt(w, 0u); // packed length
-            return;
-        }
-        
-        var maxDelta  = chunks.Max(c => c.DeltaIndex);
-        var maxOffset = (uint)chunks.Max(c => c.Offset);
-        var maxLength = (uint)chunks.Max(c => c.Length);
-        
-        // Calculate bit widths for delta index, offset and length
-        var bitsDelta = Bits32(maxDelta);
-        var bitsOffset = Bits64(maxOffset);
-        var bitsLength = Bits64(maxLength);
 
-        // Write bit widths
-        w.Write(bitsDelta);
-        w.Write(bitsOffset);
-        w.Write(bitsLength);
-
-        // Write bit-packed chunk data
-        var bw = new BitWriter();
-        
-        // Write fields in fixed order per entry
-        foreach (var c in chunks)
-        {
-            if (bitsDelta  != 0) bw.WriteBits(c.DeltaIndex, bitsDelta);
-            if (bitsOffset != 0) bw.WriteBits(c.Offset, bitsOffset);
-            if (bitsLength != 0) bw.WriteBits(c.Length, bitsLength);
-        }
-
-        // Flush to a byte[] and write length + data
-        var packed = bw.ToArray(); // returns a fresh array sized to exact byte count
-        VarIntUtils.WriteVarInt(w, (uint)packed.Length);
-        w.Write(packed);
+        //Console.WriteLine($"Section {id:X} (P: {streamPosition}, L: {baseStream.Position - streamPosition}{(enableCompression ? $", R: {ms.Length}" : "")})");
     }
 
     protected static List<DeltaChunkRef> ReadChunkRefs(BinaryReader r)

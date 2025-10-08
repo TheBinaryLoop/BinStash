@@ -15,7 +15,7 @@
 
 using System.Collections.Concurrent;
 using System.IO.MemoryMappedFiles;
-using BinStash.Core.Types;
+using BinStash.Contracts.Hashing;
 
 namespace BinStash.Core.Chunking;
 

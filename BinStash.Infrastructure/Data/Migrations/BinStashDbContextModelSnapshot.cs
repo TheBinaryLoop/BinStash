@@ -30,8 +30,13 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.Property<byte[]>("Checksum")
                         .HasColumnType("bytea");
 
-                    b.Property<long>("Length")
-                        .HasColumnType("bigint");
+                    b.Property<int>("CompressedLength")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("Length")
+                        .HasColumnType("integer");
 
                     b.HasKey("ChunkStoreId", "Checksum");
 
@@ -64,6 +69,109 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.ToTable("ChunkStores", (string)null);
                 });
 
+            modelBuilder.Entity("BinStash.Core.Entities.FileDefinition", b =>
+                {
+                    b.Property<Guid>("ChunkStoreId")
+                        .HasColumnType("uuid");
+
+                    b.Property<byte[]>("Checksum")
+                        .HasColumnType("bytea");
+
+                    b.Property<long>("Length")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ChunkStoreId", "Checksum");
+
+                    b.ToTable("FileDefinitions", null, t =>
+                        {
+                            t.HasCheckConstraint("chk_file_definitions_checksum_len", "octet_length(\"Checksum\") = 32");
+                        });
+                });
+
+            modelBuilder.Entity("BinStash.Core.Entities.IngestSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ChunksSeenNew")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("ChunksSeenTotal")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("ChunksSeenUnique")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("DataSizeTotal")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L);
+
+                    b.Property<long>("DataSizeUnique")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L);
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FilesSeenNew")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("FilesSeenTotal")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("FilesSeenUnique")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTimeOffset>("LastUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<int>("MetadataSize")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<Guid>("RepoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RepoId");
+
+                    b.HasIndex("State");
+
+                    b.ToTable("IngestSessions", (string)null);
+                });
+
             modelBuilder.Entity("BinStash.Core.Entities.Release", b =>
                 {
                     b.Property<Guid>("Id")
@@ -81,12 +189,17 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text");
 
-                    b.Property<string>("ReleaseDefinitionChecksum")
+                    b.Property<byte[]>("ReleaseDefinitionChecksum")
                         .IsRequired()
-                        .HasColumnType("char(64)");
+                        .HasColumnType("bytea");
 
                     b.Property<Guid>("RepoId")
                         .HasColumnType("uuid");
+
+                    b.Property<byte>("SerializerVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((byte)0);
 
                     b.Property<string>("Version")
                         .IsRequired()
@@ -98,6 +211,69 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.HasIndex("RepoId");
 
                     b.ToTable("Releases", (string)null);
+                });
+
+            modelBuilder.Entity("BinStash.Core.Entities.ReleaseMetrics", b =>
+                {
+                    b.Property<Guid>("ReleaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ChunksInRelease")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("ComponentsInRelease")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+                    b.Property<int>("FilesInRelease")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<Guid>("IngestSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("MetaBytesFull")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("MetaBytesFullDiff")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("NewChunks")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<long>("NewCompressedBytes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L);
+
+                    b.Property<decimal>("TotalUncompressedSize")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(20,0)")
+                        .HasDefaultValue(0m);
+
+                    b.HasKey("ReleaseId");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("IngestSessionId")
+                        .IsUnique();
+
+                    b.ToTable("ReleaseMetrics", (string)null);
                 });
 
             modelBuilder.Entity("BinStash.Core.Entities.Repository", b =>
@@ -168,6 +344,17 @@ namespace BinStash.Infrastructure.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("BinStash.Core.Entities.IngestSession", b =>
+                {
+                    b.HasOne("BinStash.Core.Entities.Repository", "Repository")
+                        .WithMany()
+                        .HasForeignKey("RepoId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Repository");
+                });
+
             modelBuilder.Entity("BinStash.Core.Entities.Release", b =>
                 {
                     b.HasOne("BinStash.Core.Entities.Repository", "Repository")
@@ -177,6 +364,17 @@ namespace BinStash.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Repository");
+                });
+
+            modelBuilder.Entity("BinStash.Core.Entities.ReleaseMetrics", b =>
+                {
+                    b.HasOne("BinStash.Core.Entities.IngestSession", "IngestSession")
+                        .WithOne()
+                        .HasForeignKey("BinStash.Core.Entities.ReleaseMetrics", "IngestSessionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("IngestSession");
                 });
 
             modelBuilder.Entity("BinStash.Core.Entities.Repository", b =>

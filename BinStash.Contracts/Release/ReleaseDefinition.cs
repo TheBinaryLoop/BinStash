@@ -13,6 +13,8 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
+
 namespace BinStash.Contracts.Release;
 
 public enum ListOp : byte { Keep = 0, Del = 1, Ins = 2 }
@@ -49,7 +51,7 @@ public class ReleaseStats
 public class ReleaseFile
 {
     public string Name { get; set; } = string.Empty;
-    public ulong Hash { get; set; }
+    public Hash32 Hash { get; set; }
     public List<DeltaChunkRef> Chunks { get; set; } = [];
 }
 

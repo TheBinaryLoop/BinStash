@@ -13,9 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.Diagnostics.CodeAnalysis;
-
-namespace BinStash.Core.Types;
+namespace BinStash.Contracts.Hashing;
 
 public readonly struct Hash32 : IEquatable<Hash32>, IComparable<Hash32>
 {
@@ -50,13 +48,12 @@ public readonly struct Hash32 : IEquatable<Hash32>, IComparable<Hash32>
     
     public static bool operator ==(Hash32 left, Hash32 right) => left.Equals(right);
     public static bool operator !=(Hash32 left, Hash32 right) => !left.Equals(right);
-
-    public override bool Equals([NotNullWhen(true)] object? obj)
+    
+    public override bool Equals(object? obj)
     {
-        if (obj is Hash32 other) return Equals(other);
-        return base.Equals(obj);
+        return obj is Hash32 other && Equals(other);
     }
-
+    
     public bool Equals(Hash32 other) => _h0 == other._h0 && _h1 == other._h1 && _h2 == other._h2 && _h3 == other._h3;
     public int CompareTo(Hash32 other)
     {

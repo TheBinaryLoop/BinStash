@@ -13,15 +13,22 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
+
 namespace BinStash.Core.Storage;
 
 public interface IObjectStorage
 {
-    Task<bool> StoreChunkAsync(string key, byte[] data);
+    Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data);
     Task<byte[]?> RetrieveChunkAsync(string key);
+    
+    Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, byte[] data);
+    Task<byte[]?> RetrieveFileDefinitionAsync(string key);
     
     Task<bool> StoreReleasePackageAsync(byte[] packageData);
     Task<byte[]?> RetrieveReleasePackageAsync(string key);
+    Task<bool> DeleteReleasePackageAsync(string packageId);
 
+    Task<bool> RebuildStorageAsync();
     Task<Dictionary<string, object>> GetStorageStatsAsync();
 }

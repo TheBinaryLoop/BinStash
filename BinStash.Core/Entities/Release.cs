@@ -13,6 +13,8 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
+
 namespace BinStash.Core.Entities;
 
 public class Release
@@ -26,6 +28,8 @@ public class Release
     
     public string? Notes { get; set; }
     
-    public string ReleaseDefinitionChecksum { get; set; } = null!;
+    public Hash32 ReleaseDefinitionChecksum { get; set; }
     public string? CustomProperties { get; set; } = null;
+
+    public required byte SerializerVersion { get; set; }
 }

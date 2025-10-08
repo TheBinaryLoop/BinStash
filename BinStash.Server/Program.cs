@@ -26,6 +26,9 @@ public static class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
+        builder.Services.AddSystemd();
+        builder.Services.AddWindowsService();
+        
         // Add services to the container.
         builder.Services.AddResponseCompression();
         builder.Services.AddProblemDetails();
