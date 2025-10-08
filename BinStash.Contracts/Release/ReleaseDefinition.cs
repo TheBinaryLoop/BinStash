@@ -100,7 +100,7 @@ public sealed class ComponentInsertPayload
 public sealed class FileInsertPayload
 {
     public string Name { get; set; } = string.Empty;
-    public ulong Hash { get; set; }
+    public Hash32 Hash { get; set; }
     public List<DeltaChunkRef> Chunks { get; set; } = new(); // DeltaIndex is CHILD after patch
 }
 
@@ -109,8 +109,7 @@ public sealed class FileListEdit
 {
     public List<(ListOp Op, uint Len)> Runs { get; set; } = new();
     public List<FileInsertPayload> Insert { get; set; } = new();
-    // Optional: separate “Modify”s for kept files that changed content:
-    public List<(string Name, byte[]? Hash, List<DeltaChunkRef>? Chunks)> Modifies { get; set; } = new();
+    public List<(string Name, Hash32? Hash, List<DeltaChunkRef>? Chunks)> Modifies { get; set; } = new();
 }
 
 public class ReleasePackagePatch
@@ -131,9 +130,9 @@ public class ReleasePackagePatch
     // File list script per kept component (keyed by component name)
     public Dictionary<string, FileListEdit> FileEdits { get; set; } = new(StringComparer.Ordinal);
     
-    public int ChunkFinalCount { get; set; }  
-    public List<byte[]> ChunkInsertDict { get; set; } = new();
-    public List<(byte Op, uint Len)> ChunkRuns { get; set; } = new(); // Op: 0=keep, 1=delete, 2=insert
+    public int FileHashFinalCount { get; set; }  
+    public List<byte[]> FileHashInsertDict { get; set; } = new();
+    public List<(byte Op, uint Len)> FileHashRuns { get; set; } = new(); // Op: 0=keep, 1=delete, 2=insert
     public List<PatchContentIdEntry> ContentIdDelta { get; set; } = new();
 }
 

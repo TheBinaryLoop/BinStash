@@ -315,13 +315,15 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                     break;
                 case 0x02: // Section: 0x02 - Chunk table / File definitions
                     if (linkToFileDefinitions)
+                    {
                         fileHashesMap = ChecksumCompressor.TransposeDecompress(s).Select((x, i) => (x, i)).ToDictionary(x => x.i, x => new Hash32(x.x));
+                    }
                     else
                     {
-                    using var nds = new NonDisposingStream(s);
-                    package.Chunks.AddRange(ChecksumCompressor.TransposeDecompress(nds).Select(x => new ChunkInfo(x)));
+                        using var nds = new NonDisposingStream(s);
+                        package.Chunks.AddRange(ChecksumCompressor.TransposeDecompress(nds).Select(x => new ChunkInfo(x)));
+                    }
                     break;
-                }
                 case 0x03: // Section: 0x03 - String table
                     var entryCount = VarIntUtils.ReadVarInt<uint>(r);
                     for (var i = 0; i < entryCount; i++)
