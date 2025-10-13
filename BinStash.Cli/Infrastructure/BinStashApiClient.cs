@@ -150,9 +150,9 @@ public class BinStashApiClient
         }
     }
     
-    public async Task UploadFileDefinitionsAsync(Guid ingestSessionId, Guid chunkStoreId, IEnumerable<Hash32> chunkHashes, Dictionary<Hash32, (List<Hash32> Chunks, long Length)> fileDefinitionsToUpload, int batchSize = 1000, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
+    public async Task UploadFileDefinitionsAsync(Guid ingestSessionId, Guid chunkStoreId, Dictionary<Hash32, (List<Hash32> Chunks, long Length)> fileDefinitionsToUpload, int batchSize = 1000, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
     { 
-        var allChunks = chunkHashes.ToList();
+        var allChunks = fileDefinitionsToUpload.Values.SelectMany(x => x.Chunks).Distinct().ToList();
         var total = allChunks.Count;
         var uploaded = 0;
 
@@ -219,7 +219,7 @@ public class BinStashApiClient
         // Parse Location header
         var locationHeader = response.Headers
             .FirstOrDefault(h => h.Key.Equals("Location", StringComparison.OrdinalIgnoreCase))
-            .Value.ToString();
+            .Value.FirstOrDefault()?.ToString();
         
         if (string.IsNullOrWhiteSpace(locationHeader))
         {
