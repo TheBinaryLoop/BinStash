@@ -299,8 +299,10 @@ public static class ReleaseEndpoints
                 //var totalSize = componentFile.Chunks.Sum(c => (long)c.Length);
                 // TODO: Remove component name from the path if component is set
                 var relativePath = componentFile.Name.Replace('\\', '/');
-                if (component != null)
+                if (component != null && relativePath.StartsWith($"{componentName}/", StringComparison.OrdinalIgnoreCase))
                     relativePath = relativePath.Replace($"{componentName}/", string.Empty);
+                else if (component == null && !relativePath.StartsWith($"{componentName}/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(componentName))
+                    relativePath = Path.Combine(componentName, relativePath).Replace('\\', '/');
                 
                 var totalSize = fileStats[componentFile.Hash].First().Length;
                 
