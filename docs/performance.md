@@ -1,6 +1,6 @@
 # Performance & Storage Optimization
 
-BinStash is designed for petabyte-scale storage of release packages by aggressively optimizing data layout and deduplication.
+BinStash is designed for large-scale storage of release packages by aggressively optimizing data layout and deduplication.
 
 ---
 

@@ -71,8 +71,19 @@ See [`docs/cli-reference.md`](docs/cli-reference.md) for details.
 
 - Chunks are stored in `.pack` files grouped by BLAKE3 prefix
 - Each `.pack` entry includes:
-    - Magic header (`BSCK`)
+    - Magic header (`BSPK`)
     - Compressed + uncompressed length
+    - xxHash3 checksum
+- An `.idx` file tracks chunk offset and length for fast reads
+- Files rotate at 4 GiB for performance and portability
+
+### 📂 File Definition Storage
+
+- Chunks are stored in `.pack` files grouped by BLAKE3 prefix
+- Each `.pack` entry includes:
+    - Magic header (`BSPK`)
+    - Compressed + uncompressed length
+      - Data: Transpose-compressed chunk-hashes
     - xxHash3 checksum
 - An `.idx` file tracks chunk offset and length for fast reads
 - Files rotate at 4 GiB for performance and portability
@@ -80,10 +91,8 @@ See [`docs/cli-reference.md`](docs/cli-reference.md) for details.
 ### 🧬 Release Format
 
 `.rdef` files include:
-- Transpose-compressed chunk table
+- Transpose-compressed file hash table
 - Tokenized component + file name strings
-- Bit-packed delta chunk references
-- Shared chunk lists with dedupe-aware lookup
 - Zstd compression on all sections
 
 More: [`docs/file-format.md`](docs/file-format.md)
