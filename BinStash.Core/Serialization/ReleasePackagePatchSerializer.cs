@@ -129,8 +129,30 @@ public abstract class ReleasePackagePatchSerializer : ReleasePackageSerializerBa
             }
         }, options.EnableCompression, options.CompressionLevel, cancellationToken);
 
-        // 0x04: Components/files
+        // Section: 0x04 - Custom Properties Delta
         await WriteSectionAsync(stream, 0x04, w =>
+        {
+            VarIntUtils.WriteVarInt(w, (uint)patch.CustomPropertiesDelta.Count);
+            foreach (var e in patch.CustomPropertiesDelta)
+            {
+                w.Write((byte)e.Op);
+
+                // Key (tokenized against patch-local table)
+                var keyTokens = substr.Tokenize(e.Key);
+                WriteTokenSequence(w, keyTokens);
+
+                // Value only for Add/Modify
+                if (e.Op != PatchOperation.Remove)
+                {
+                    var valTokens = substr.Tokenize(e.Value ?? string.Empty);
+                    WriteTokenSequence(w, valTokens);
+                }
+            }
+        }, options.EnableCompression, options.CompressionLevel, cancellationToken);
+
+        
+        // 0x05: Components/files
+        await WriteSectionAsync(stream, 0x05, w =>
         {
             // Component inserts (full payloads)
             VarIntUtils.WriteVarInt(w, (uint)patch.ComponentInsert.Count);
@@ -295,7 +317,24 @@ public abstract class ReleasePackagePatchSerializer : ReleasePackageSerializerBa
                     break;
                 }
 
-                case 0x04: // components/files
+                case 0x04: // Custom Properties Delta
+                {
+                    var count = VarIntUtils.ReadVarInt<uint>(r);
+                    patch.CustomPropertiesDelta = new List<PatchPropertyEntry>(checked((int)count));
+                    for (var i = 0; i < count; i++)
+                    {
+                        var op = (PatchOperation)r.ReadByte();
+                        var key = ReadTokenizedStringWithTable(r, patchStringTable);
+                        string? value = null;
+                        if (op != PatchOperation.Remove)
+                            value = ReadTokenizedStringWithTable(r, patchStringTable);
+
+                        patch.CustomPropertiesDelta.Add(new PatchPropertyEntry(op, key, value));
+                    }
+                    break;
+                }
+                
+                case 0x05: // components/files
                 { 
                     Span<byte> hashBuffer = stackalloc byte[32];
                     // Inserts

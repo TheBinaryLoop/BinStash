@@ -185,7 +185,7 @@ public class TestReleasePackagePatchCommand : ICommand
             { diff = $"Chunk checksum mismatch at index {i}"; return false; }
         }
 
-        if (a.StringTable.Count != b.StringTable.Count) { diff = $"StringTable count differs"; return false; }
+        if (a.StringTable.Count != b.StringTable.Count) { diff = $"StringTable count differs. A: {a.StringTable.Count}; B: {b.StringTable.Count}"; return false; }
         for (int i = 0; i < a.StringTable.Count; i++)
         {
             if (a.StringTable[i] != b.StringTable[i])

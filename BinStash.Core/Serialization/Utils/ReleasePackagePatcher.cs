@@ -147,9 +147,27 @@ public static class ReleasePackagePatcher
                 };
             }
         }
+        
+        var pk = parent.CustomProperties;
+        var ck = child.CustomProperties;
 
-        // 4) No content-IDs/chunks in v2
-        patch.ContentIdDelta.Clear();
+        // Adds & Modifies
+        foreach (var (key, childVal) in ck)
+        {
+            if (!pk.TryGetValue(key, out var parentVal))
+            {
+                patch.CustomPropertiesDelta.Add(new PatchPropertyEntry(PatchOperation.Add, key, childVal));
+            }
+            else if (!StringComparer.Ordinal.Equals(parentVal, childVal))
+            {
+                patch.CustomPropertiesDelta.Add(new PatchPropertyEntry(PatchOperation.Modify, key, childVal));
+            }
+        }
+
+        // Removes
+        foreach (var key in pk.Keys)
+            if (!ck.ContainsKey(key))
+                patch.CustomPropertiesDelta.Add(new PatchPropertyEntry(PatchOperation.Remove, key, null));
 
         return patch;
     }
@@ -159,11 +177,30 @@ public static class ReleasePackagePatcher
         // 0) clone so we don't mutate the caller's instance
         var rp = DeepClone(baseRelease);
 
-        // 1) String table: apply delta (IDs are within each table), then normalize from content
-        ApplyStringTableDelta(rp.StringTable, patch.StringTableDelta);
-        RebuildStringTable(rp);
+        // 1) Apply CustomProperties delta FIRST (affects tokens)
+        if (patch.CustomPropertiesDelta.Count > 0)
+        {
+            foreach (var e in patch.CustomPropertiesDelta)
+            {
+                switch (e.Op)
+                {
+                    case PatchOperation.Add:
+                    case PatchOperation.Modify:
+                        rp.CustomProperties[e.Key] = e.Value ?? string.Empty;
+                        break;
+                    case PatchOperation.Remove:
+                        rp.CustomProperties.Remove(e.Key);
+                        break;
+                    default:
+                        throw new InvalidOperationException($"Unknown property op: {e.Op}");
+                }
+            }
+        }
 
-        // 2) Components (runs + inserts)
+        // 2) Apply string-table delta next (IDs are table-local), then rebuild from content
+        ApplyStringTableDelta(rp.StringTable, patch.StringTableDelta);
+
+        // 3) Components (runs + inserts)
         if (patch.ComponentRuns.Count > 0 || patch.ComponentInsert.Count > 0)
         {
             var compScript = new EditScript<ComponentInsertPayload>
@@ -190,7 +227,7 @@ public static class ReleasePackagePatcher
             );
         }
 
-        // 3) Per-component file scripts (for kept components)
+        // 4) Per-component file scripts (for kept components)
         if (patch.FileEdits.Count > 0)
         {
             var compByName = rp.Components.ToDictionary(c => c.Name, StringComparer.Ordinal);
@@ -237,7 +274,8 @@ public static class ReleasePackagePatcher
         // 4) File-hash dictionary edit script is not required to realize the child in-memory model.
         //    (Your v2 serializer recomputes it during serialization.) Safe to ignore here.
 
-        // 5) ContentIdDelta is unused in v2 (intentionally ignored)
+        // 5) Now that content & properties are final, rebuild the token table to mirror the serializer
+        RebuildStringTable(rp);
 
         // 6) Header/meta + simple stats
         rp.Version   = patch.Version;

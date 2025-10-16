@@ -84,7 +84,7 @@ public class ChunkRef
     public int Length { get; set; }
 }
 
-
+public record PatchPropertyEntry(PatchOperation Op, string Key, string? Value);
 public record PatchStringEntry(PatchOperation Op, ushort Id, string? Value);
 public record PatchChunkEntry(PatchOperation Op, byte[] Hash);
 public record PatchContentIdEntry(PatchOperation Op, ulong ContentId, List<DeltaChunkRef>? Chunks);
@@ -133,7 +133,7 @@ public class ReleasePackagePatch
     public int FileHashFinalCount { get; set; }  
     public List<byte[]> FileHashInsertDict { get; set; } = new();
     public List<(byte Op, uint Len)> FileHashRuns { get; set; } = new(); // Op: 0=keep, 1=delete, 2=insert
-    public List<PatchContentIdEntry> ContentIdDelta { get; set; } = new();
+    public List<PatchPropertyEntry> CustomPropertiesDelta { get; set; } = new();
 }
 
 public enum PatchOperation : byte
