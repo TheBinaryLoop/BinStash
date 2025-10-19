@@ -16,77 +16,107 @@
 using BinStash.Contracts.Delta;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
+using BinStash.Core.Entities;
 using DeltaChunkRef = BinStash.Contracts.Delta.DeltaChunkRef;
 
 namespace BinStash.Server.Helpers;
 
 public static class DeltaCalculator
 {
-    public static (DeltaManifest manifest, List<string> newChunkChecksums) ComputeChunkDeltaManifest(ReleasePackage oldRelease, ReleasePackage newRelease, string? singleComponent)
+    public static (DeltaManifest manifest, List<Hash32> newChunkChecksums, List<Hash32> newFileChecksums) ComputeDeltaManifest(List<(string Component, ReleaseFile File)> oldFiles, List<(string Component, ReleaseFile File)> newFiles, Dictionary<Hash32, List<(Hash32 Hash, int Length)>> fileChunkMap, List<Chunk> chunkInfos)
     {
-        // Map: index → checksum
-        var oldChunkMap = oldRelease.Chunks
-            .Select((c, i) => new { Index = i, Checksum = Convert.ToHexStringLower(c.Checksum) })
-            .ToDictionary(x => x.Index, x => x.Checksum);
+        // Fast lookup for lengths if a tuple carries Length = -1
+        var lengthByChecksum = chunkInfos
+            .GroupBy(c => c.Checksum)
+            .ToDictionary(g => g.Key, g => g.First().Length);
 
-        var newChunkMap = newRelease.Chunks
-            .Select((c, i) => new { Index = i, Checksum = Convert.ToHexStringLower(c.Checksum) })
-            .ToDictionary(x => x.Index, x => x.Checksum);
+        static int ResolveLen(Hash32 hash, int provided, Dictionary<Hash32, int> lengthByChecksum)
+            => provided >= 0 ? provided : (lengthByChecksum.GetValueOrDefault(hash, 0));
 
-        var oldChecksumSet = oldChunkMap.Values.ToHashSet();
-        var newChunks = new HashSet<string>();
+        var newChunks = new List<Hash32>();
+        var newFileChecksums = new List<Hash32>();
+        var singleComponentRequested = newFiles.Select(f => f.Component).Distinct().Count() == 1;
         var files = new List<DeltaFile>();
-        
-        if (singleComponent != null)
-        {
-            // Filter components if single component is specified
-            newRelease.Components = newRelease.Components
-                .Where(c => c.Name.Equals(singleComponent, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-        }
 
-        foreach (var component in newRelease.Components)
+        foreach (var entry in newFiles)
         {
-            foreach (var file in component.Files)
+            var relPath = (singleComponentRequested ? entry.File.Name : Path.Combine(entry.Component, entry.File.Name)).Replace('\\', '/');
+
+            // Look up matching old file (same component + name)
+            var oldEntry = oldFiles.FirstOrDefault(x => x.Component == entry.Component && x.File.Name == entry.File.Name);
+
+            // No old file: entirely new
+            if (oldEntry is (null, null))
             {
-                var chunkRefs = new List<DeltaChunkRef>();
-                long totalSize = 0;
-
-                foreach (var chunk in ChunkRefHelper.ConvertDeltaToChunkRefs(file.Chunks))
-                {
-                    var checksum = newChunkMap[chunk.Index];
-                    var source = oldChecksumSet.Contains(checksum) ? "existing" : "new";
-
-                    chunkRefs.Add(new DeltaChunkRef(
-                        chunk.Index,
-                        chunk.Offset,
-                        checksum,
-                        chunk.Length,
-                        source
-                    ));
-
-                    totalSize += chunk.Length;
-
-                    if (source == "new")
-                        newChunks.Add(checksum);
-                }
-                
-                // Get the old file hash from the old release if it exists
-                var oldHash = oldRelease.Components.FirstOrDefault(x => x.Name == component.Name)?.Files.FirstOrDefault(x => x.Name == file.Name)?.Hash;
-
-                files.Add(new DeltaFile(
-                    (singleComponent != null ? file.Name : Path.Combine(component.Name, file.Name)).Replace('\\', '/'),
-                    totalSize,
-                    oldHash != null ? oldHash.Value.ToHexString() : string.Empty,
-                    file.Hash.ToHexString(),
-                    chunkRefs
-                ));
+                var sizeNew = fileChunkMap[entry.File.Hash].Sum(t => (long)ResolveLen(t.Hash, t.Length, lengthByChecksum));
+                files.Add(new DeltaFile(relPath, sizeNew, /*oldHash*/ null, entry.File.Hash, "new", new List<DeltaChunkRef>()));
+                newFileChecksums.Add(entry.File.Hash);
+                continue;
             }
+
+            // Unchanged file: keep
+            if (entry.File.Hash == oldEntry.File!.Hash)
+            {
+                var sizeKeep = fileChunkMap[entry.File.Hash].Sum(t => (long)ResolveLen(t.Hash, t.Length, lengthByChecksum));
+                files.Add(new DeltaFile(relPath, sizeKeep, oldEntry.File.Hash, entry.File.Hash, "keep", new List<DeltaChunkRef>()));
+                continue;
+            }
+
+            // Changed file: compute delta with duplicate support
+            var oldList = fileChunkMap[oldEntry.File.Hash];          // List<(Hash, Len)>
+            var newList = fileChunkMap[entry.File.Hash];
+
+            // Build a multiset (bag) of old chunks: Hash32 -> count
+            var oldCounts = new Dictionary<Hash32, int>();
+            foreach (var (h, _) in oldList)
+                oldCounts[h] = oldCounts.TryGetValue(h, out var c) ? c + 1 : 1;
+
+            var chunkRefs = new List<DeltaChunkRef>(newList.Count);
+            long totalSize = 0;
+            var i = 0;
+
+            foreach (var (hash, lenProvided) in newList)
+            {
+                var len = ResolveLen(hash, lenProvided, lengthByChecksum);
+
+                string source;
+                if (oldCounts.TryGetValue(hash, out var cnt) && cnt > 0)
+                {
+                    source = "existing";
+                    oldCounts[hash] = cnt - 1; // consume one instance
+                }
+                else
+                {
+                    source = "new";
+                    newChunks.Add(hash);
+                }
+
+                chunkRefs.Add(new DeltaChunkRef(
+                    /*index*/ i,
+                    /*offset*/ totalSize,
+                    /*checksum*/ hash,
+                    /*length*/ len,
+                    /*source*/ source
+                ));
+
+                totalSize += len;
+                i++;
+            }
+
+            files.Add(new DeltaFile(
+                relPath,
+                totalSize,
+                oldEntry.File.Hash,
+                entry.File.Hash,
+                "modified",
+                chunkRefs
+            ));
         }
 
-        return (
-            new DeltaManifest(oldRelease.ReleaseId, newRelease.ReleaseId, files.Where(x => x.Chunks.Any(chunkRef => chunkRef.Source == "new")).ToList()),
-            newChunks.ToList()
-        );
+        // Most callers want unique checksums to fetch; dedupe here.
+        var uniqueNew = newChunks.Distinct().ToList();
+        var uniqueNewFileChecksums = newFileChecksums.Distinct().ToList();
+        return (new DeltaManifest(string.Empty, string.Empty, files), uniqueNew, uniqueNewFileChecksums);
     }
+
 }
