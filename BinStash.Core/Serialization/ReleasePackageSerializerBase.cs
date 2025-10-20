@@ -14,7 +14,6 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Buffers;
-using System.Numerics;
 using System.Text;
 using BinStash.Contracts.Release;
 using BinStash.Core.Serialization.Utils;
@@ -25,17 +24,12 @@ namespace BinStash.Core.Serialization;
 
 public abstract class ReleasePackageSerializerBase
 {
-    protected static readonly Dictionary<byte, byte[]> ZstDicts = new()
-    {
-        //{ 0x03, File.ReadAllBytes(@"C:\Tmp\dict_sample\strings-64.dict") }
-    };
     
     private static readonly RecyclableMemoryStreamManager RecyclableMemoryStreamManager =
         new(new RecyclableMemoryStreamManager.Options(blockSize: 128 * 1024, largeBufferMultiple: 1024 * 1024, maximumBufferSize: 16 * 1024 * 1024, maximumSmallPoolFreeBytes: 256L * 1024 * 1024, maximumLargePoolFreeBytes: 512L * 1024 * 1024));
     
     protected static async Task WriteSectionAsync(Stream baseStream, byte id, Action<BinaryWriter> write, bool enableCompression, int compressionLevel, CancellationToken ct)
     {
-        var streamPosition = baseStream.Position;
         await using var ms = RecyclableMemoryStreamManager.GetStream();
         var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
         write(w);
@@ -46,7 +40,7 @@ public abstract class ReleasePackageSerializerBase
         if (enableCompression)
         {
             await using var compressed = RecyclableMemoryStreamManager.GetStream();
-            var compOptions = ZstDicts.TryGetValue(id, out var zstDict) ? new CompressionOptions(zstDict, compressionLevel) : new CompressionOptions(compressionLevel);
+            var compOptions = new CompressionOptions(compressionLevel);
             await using (var z = new CompressionStream(compressed, compOptions))
                 await ms.CopyToAsync(z, 1 << 20, ct);  
 
@@ -66,8 +60,6 @@ public abstract class ReleasePackageSerializerBase
             VarIntUtils.WriteVarInt(writer, (ulong)ms.Length);
             await ms.CopyToAsync(baseStream, ct);
         }
-
-        //Console.WriteLine($"Section {id:X} (P: {streamPosition}, L: {baseStream.Position - streamPosition}{(enableCompression ? $", R: {ms.Length}" : "")})");
     }
 
     protected static List<DeltaChunkRef> ReadChunkRefs(BinaryReader r)

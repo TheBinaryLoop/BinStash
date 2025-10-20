@@ -73,7 +73,6 @@ public class ObjectStore
         if (!results.All(r => r))
             return false;
         tasks.Clear();*/
-        var results = Array.Empty<bool>();
         foreach (var handler in _chunkFileHandlers.Values)
         {
             tasks.Add(handler.RebuildIndexFile());
@@ -82,7 +81,7 @@ public class ObjectStore
         {
             tasks.Add(handler.RebuildIndexFile());
         }
-        results = await Task.WhenAll(tasks);
+        var results = await Task.WhenAll(tasks);
         
         return results.All(r => r);
     }

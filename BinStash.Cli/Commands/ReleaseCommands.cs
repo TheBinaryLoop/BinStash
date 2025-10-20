@@ -245,12 +245,12 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                         }
                         var fileHash = hasher.Finalize();
                         
-                        fileHashes.AddOrUpdate(new Hash32(fileHash.AsSpan()), [file], (key, list) =>
+                        fileHashes.AddOrUpdate(new Hash32(fileHash.AsSpan()), [file], (_, list) =>
                         {
                             list.Add(file);
                             return list;
                         });
-                        fileStats.AddOrUpdate(new Hash32(fileHash.AsSpan()), fsIn.Length, (key, old) => old);
+                        fileStats.AddOrUpdate(new Hash32(fileHash.AsSpan()), fsIn.Length, (_, old) => old);
 
                         var releaseFile = new ReleaseFile
                         {

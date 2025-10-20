@@ -42,7 +42,7 @@ public static class DeltaCalculator
         {
             var relPath = (singleComponentRequested ? entry.File.Name : Path.Combine(entry.Component, entry.File.Name)).Replace('\\', '/');
 
-            // Look up matching old file (same component + name)
+            // Look up the matching old file (same component and name)
             var oldEntry = oldFiles.FirstOrDefault(x => x.Component == entry.Component && x.File.Name == entry.File.Name);
 
             // No old file: entirely new
@@ -63,7 +63,7 @@ public static class DeltaCalculator
             }
 
             // Changed file: compute delta with duplicate support
-            var oldList = fileChunkMap[oldEntry.File.Hash];          // List<(Hash, Len)>
+            var oldList = fileChunkMap[oldEntry.File.Hash];
             var newList = fileChunkMap[entry.File.Hash];
 
             // Build a multiset (bag) of old chunks: Hash32 -> count
@@ -118,5 +118,4 @@ public static class DeltaCalculator
         var uniqueNewFileChecksums = newFileChecksums.Distinct().ToList();
         return (new DeltaManifest(string.Empty, string.Empty, files), uniqueNew, uniqueNewFileChecksums);
     }
-
 }

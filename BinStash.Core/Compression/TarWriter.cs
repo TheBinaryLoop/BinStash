@@ -111,7 +111,7 @@ public sealed class TarWriter : IDisposable, IAsyncDisposable
         if (prefix != null)
             WriteString(prefix, 345, 155);
 
-        var checksum = buffer.Sum(b => (int)b);
+        var checksum = buffer.Sum(b => b);
         WriteOctal(checksum, 148, 8);
 
         return buffer;

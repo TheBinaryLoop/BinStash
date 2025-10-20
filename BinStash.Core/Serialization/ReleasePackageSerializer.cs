@@ -14,7 +14,6 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Buffers;
-using System.Collections;
 using System.Text;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
@@ -197,7 +196,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                 for (var j = 0; j < fileCount; j++)
                 {
                     var mappedTokens = fileTokenLists[j]
-                        .Select(t => (id: newIdOfOrig[checked((uint)t.id)], sep: t.sep))
+                        .Select(t => (id: newIdOfOrig[checked((uint)t.id)], t.sep))
                         .ToList();
                     entries.Add((mappedTokens, package.Components[i].Files[j]));
                 }
@@ -274,13 +273,13 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         var version = reader.ReadByte();
         return version switch
         {
-            1 => DeserializeV1Async(reader, stream, cancellationToken),
-            2 => DeserializeV2Async(reader, stream, cancellationToken),
+            1 => DeserializeV1Async(reader, stream),
+            2 => DeserializeV2Async(reader, stream),
             _ => throw new NotSupportedException($"Unsupported version {version}")
         };
     }
 
-    private static Task<ReleasePackage> DeserializeV1Async(BinaryReader reader, Stream stream, CancellationToken cancellationToken)
+    private static Task<ReleasePackage> DeserializeV1Async(BinaryReader reader, Stream stream)
     {
         var flags = reader.ReadByte();
         var isCompressed = (flags & CompressionFlag) != 0;
@@ -297,7 +296,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         while (stream.Position < stream.Length)
         {
             var sectionId = reader.ReadByte();
-            var sectionFlags = reader.ReadByte(); // Currently unused, reserved for future use
+            _ = reader.ReadByte(); // Section flags: Currently unused, reserved for future use
             var sectionSize = VarIntUtils.ReadVarInt<uint>(reader);
             //Console.WriteLine($"Section {sectionId:X2} ({sectionSize} bytes) at {stream.Position}");
             
@@ -410,7 +409,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         return Task.FromResult(package);
     }
 
-    private static Task<ReleasePackage> DeserializeV2Async(BinaryReader reader, Stream stream, CancellationToken cancellationToken)
+    private static Task<ReleasePackage> DeserializeV2Async(BinaryReader reader, Stream stream)
     {
         var flags = reader.ReadByte();
         var isCompressed = (flags & CompressionFlag) != 0;
@@ -422,7 +421,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         while (stream.Position < stream.Length)
         {
             var sectionId = reader.ReadByte();
-            var sectionFlags = reader.ReadByte(); // Currently unused, reserved for future use
+            _ = reader.ReadByte(); // Section Flags: Currently unused, reserved for future use
             var sectionSize = VarIntUtils.ReadVarInt<uint>(reader);
 
             using var s = GetSectionStream(sectionId, stream, sectionSize, isCompressed);
@@ -560,8 +559,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
     private static Stream GetSectionStream(byte sectionId, Stream stream, uint sectionSize, bool isCompressed)
     {
         var slice = new BoundedStream(stream, (int)sectionSize);
-        var decompOptions = ZstDicts.TryGetValue(sectionId, out var dict) ? new DecompressionOptions(dict) : null;
-        var s = (Stream)(isCompressed ? new DecompressionStream(slice, decompOptions) : slice);
+        var s = (Stream)(isCompressed ? new DecompressionStream(slice) : slice);
         return s;
     }
 

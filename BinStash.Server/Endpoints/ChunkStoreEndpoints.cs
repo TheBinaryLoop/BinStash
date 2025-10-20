@@ -525,7 +525,7 @@ public static class ChunkStoreEndpoints
 
         var results = await Task.WhenAll(writeTasks);
 
-        if (results.Any(r => r == false))
+        if (results.Any(r => !r))
             return Results.Problem("Some chunks failed checksum or storage.");
 
         

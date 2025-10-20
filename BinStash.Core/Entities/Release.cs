@@ -29,7 +29,7 @@ public class Release
     public string? Notes { get; set; }
     
     public Hash32 ReleaseDefinitionChecksum { get; set; }
-    public string? CustomProperties { get; set; } = null;
+    public string? CustomProperties { get; set; }
 
     public required byte SerializerVersion { get; set; }
 }
