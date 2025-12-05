@@ -62,7 +62,7 @@ pipeline {
           project: env.SOLUTION,
           configuration: env.BUILD_CONFIG,
           noBuild: true,
-          logger: 'trx;LogFileName=test_results.trx',
+          logger: 'nunit',
           sdk: 'dotnet-9.0'
         )
 
@@ -73,7 +73,8 @@ pipeline {
       }
       post {
         // If you enabled Option B above, publish TRX:
-        always { junit allowEmptyResults: true, testResults: '**/TestResults/*.trx' }
+        //always { junit allowEmptyResults: true, testResults: '**/TestResults/*.trx' }
+        always { nunit testResultsPattern: '**/TestResults/*.xml' }
         success { echo '✅ Tests passed' }
       }
     }
