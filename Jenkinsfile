@@ -15,7 +15,7 @@ pipeline {
   }
 
   parameters {
-    booleanParam(name: 'RUN_TESTS', defaultValue: false,  description: 'Run unit tests')
+    booleanParam(name: 'RUN_TESTS', defaultValue: true,  description: 'Run unit tests')
   }
 
   stages {
@@ -58,21 +58,21 @@ pipeline {
     stage('Test') {
       when { expression { params.RUN_TESTS } }
       steps {
-        dotnetTest(
-          project: env.SOLUTION,
-          configuration: env.BUILD_CONFIG,
-          noBuild: true,
-          sdk: 'dotnet-9.0'
-        )
+        // dotnetTest(
+        //   project: env.SOLUTION,
+        //   configuration: env.BUILD_CONFIG,
+        //   noBuild: true,
+        //   sdk: 'dotnet-9.0'
+        // )
 
         // Option B (optional): also produce TRX for JUnit if you want test reports in Jenkins UI
-        // withDotNet(sdk: 'dotnet-9.0') {
-        //   sh 'dotnet test "$SOLUTION" -c "$BUILD_CONFIG" --no-build --logger "trx;LogFileName=test_results.trx"'
-        // }
+        withDotNet(sdk: 'dotnet-9.0') {
+          sh 'dotnet test "$SOLUTION" -c "$BUILD_CONFIG" --no-build --logger "trx;LogFileName=test_results.trx"'
+        }
       }
       post {
         // If you enabled Option B above, publish TRX:
-        // always { junit allowEmptyResults: true, testResults: '**/TestResults/*.trx' }
+        always { junit allowEmptyResults: true, testResults: '**/TestResults/*.trx' }
         success { echo '✅ Tests passed' }
       }
     }
