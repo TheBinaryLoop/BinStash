@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   tools {
-    dotnetsdk 'dotnet-9.0'
+    dotnetsdk 'dotnet-lts'
   }
 
   options {
@@ -10,7 +10,7 @@ pipeline {
   }
 
   environment {
-    SOLUTION     = 'BinStash.sln'
+    SOLUTION     = 'BinStash.slnx'
     BUILD_CONFIG = 'Release'
   }
 
@@ -28,7 +28,7 @@ pipeline {
     stage('SDK Info') {
       steps {
         // The SDK is on PATH via the 'tools { dotnetsdk ... }' directive
-        withDotNet(sdk: 'dotnet-9.0') {
+        withDotNet(sdk: 'dotnet-lts') {
           bat 'dotnet --info'
         }
       }
@@ -38,7 +38,7 @@ pipeline {
       steps {
         dotnetRestore(
           project: env.SOLUTION,
-          sdk: 'dotnet-9.0',
+          sdk: 'dotnet-lts',
           showSdkInfo: true // prints dotnet --info before the command
         )
       }
@@ -50,7 +50,7 @@ pipeline {
           project: env.SOLUTION,
           configuration: env.BUILD_CONFIG,
           noRestore: true,
-          sdk: 'dotnet-9.0'
+          sdk: 'dotnet-lts'
         )
       }
     }
@@ -63,7 +63,7 @@ pipeline {
           configuration: env.BUILD_CONFIG,
           noBuild: true,
           logger: 'xunit',
-          sdk: 'dotnet-9.0'
+          sdk: 'dotnet-lts'
         )
 
         // Option B (optional): also produce TRX for JUnit if you want test reports in Jenkins UI
@@ -86,7 +86,7 @@ pipeline {
       dotnetBuild(
         // dummy no-op call solely to access the 'shutDownBuildServers' option
         project: '.', // ignored for shutdown
-        sdk: 'dotnet-9.0',
+        sdk: 'dotnet-lts',
         shutDownBuildServers: true
       ) // :contentReference[oaicite:1]{index=1}
     }
