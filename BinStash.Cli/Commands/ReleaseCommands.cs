@@ -68,11 +68,13 @@ public class ReleasesListCommand : AuthenticatedCommandBase
         }
                 
         var releases = await client.GetReleasesForRepoAsync(repository.Id);
-        if (releases == null || releases.Count == 0)
+        releases ??= new List<ReleaseSummaryDto>();
+        if (releases.Count == 0)
         {
             await console.Output.WriteLineAsync("No releases found.");
             return;
         }
+        releases.Sort((x, y) => y.CreatedAt.CompareTo(x.CreatedAt));
         await console.Output.WriteLineAsync("Available releases:");
         foreach (var release in releases)
         {
@@ -364,7 +366,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 {
                     ctx.Status("Uploading file definitions...");
                     sw.Restart();
-                    await client.UploadFileDefinitionsAsync(ingestSessionId, chunkStore.Id, uniqueChecksums, fileHashChunkMaps.ToDictionary(x => x.Key, x => (Chunks: x.Value.Select(v =>  v.Checksum).ToList(), Length: fileStats[x.Key])), progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing file definitions to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
+                    await client.UploadFileDefinitionsAsync(ingestSessionId, chunkStore.Id, fileHashChunkMaps.ToDictionary(x => x.Key, x => (Chunks: x.Value.Select(v =>  v.Checksum).ToList(), Length: fileStats[x.Key])), progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing file definitions to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
                     WriteLogMessage(ansiConsole, $"All file definitions uploaded to the chunk store in [darkorange]{sw.Elapsed}[/]");
                 }
 

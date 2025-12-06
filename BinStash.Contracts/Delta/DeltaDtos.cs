@@ -13,12 +13,14 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
+
 namespace BinStash.Contracts.Delta;
 
 public record DeltaChunkRef(
     int Index,
     long Offset,
-    string Checksum,
+    Hash32 Checksum,
     int Length,
     string Source
 );
@@ -26,9 +28,10 @@ public record DeltaChunkRef(
 public record DeltaFile(
     string Path,
     long Size,
-    string OldHash,
-    string NewHash,
-    List<DeltaChunkRef> Chunks
+    Hash32? OldHash,
+    Hash32 NewHash,
+    string Source,
+    List<DeltaChunkRef>? Chunks
 );
 
 public record DeltaManifest(

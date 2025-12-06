@@ -13,8 +13,12 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace BinStash.Contracts.Hashing;
 
+[JsonConverter(typeof(Hash32TypeConverter))]
 public readonly struct Hash32 : IEquatable<Hash32>, IComparable<Hash32>
 {
     private readonly ulong _h0, _h1, _h2, _h3; // pack 32 bytes into 4x ulong
@@ -79,4 +83,19 @@ public readonly struct Hash32 : IEquatable<Hash32>, IComparable<Hash32>
     }
     
     public string ToHexString() => Convert.ToHexStringLower(GetBytes());
+}
+
+public sealed class Hash32TypeConverter : JsonConverter<Hash32>
+{
+    public override Hash32 Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var hex = reader.GetString();
+        if (hex == null) throw new JsonException("Expected string for Hash32");
+        return Hash32.FromHexString(hex);
+    }
+
+    public override void Write(Utf8JsonWriter writer, Hash32 value, JsonSerializerOptions options)
+    {
+        writer.WriteStringValue(value.ToHexString());
+    }
 }

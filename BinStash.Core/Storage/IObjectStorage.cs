@@ -27,6 +27,7 @@ public interface IObjectStorage
     
     Task<bool> StoreReleasePackageAsync(byte[] packageData);
     Task<byte[]?> RetrieveReleasePackageAsync(string key);
+    Task<bool> DeleteReleasePackageAsync(string packageId);
 
     Task<bool> RebuildStorageAsync();
     Task<Dictionary<string, object>> GetStorageStatsAsync();

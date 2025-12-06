@@ -20,55 +20,60 @@ namespace BinStash.Infrastructure.Storage;
 
 public class LocalFolderObjectStorage : IObjectStorage
 {
-    private readonly ObjectStore _ObjectStore;
+    private readonly ObjectStore _objectStore;
     
     public LocalFolderObjectStorage(string basePath)
     {
         if (!Directory.Exists(basePath))
             Directory.CreateDirectory(basePath);
-        _ObjectStore = ObjectStoreManager.GetOrCreateChunkStorage(basePath);
+        _objectStore = ObjectStoreManager.GetOrCreateChunkStorage(basePath);
     }
 
     public Task<bool> RebuildStorageAsync()
     {
-        return _ObjectStore.RebuildStorageAsync();
+        return _objectStore.RebuildStorageAsync();
     }
     
     public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data)
     {
-        var bytesWritten = await _ObjectStore.WriteChunkAsync(data);
+        var bytesWritten = await _objectStore.WriteChunkAsync(data);
         return (true, bytesWritten);
     }
 
     public Task<byte[]?> RetrieveChunkAsync(string key)
     {
-        return _ObjectStore.ReadChunkAsync(key)!;
+        return _objectStore.ReadChunkAsync(key)!;
     }
 
     public async Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, byte[] data)
     {
-        var bytesWritten = await _ObjectStore.WriteFileDefinitionAsync(fileHash, data);
+        var bytesWritten = await _objectStore.WriteFileDefinitionAsync(fileHash, data);
         return (true, bytesWritten);
     }
 
     public Task<byte[]?> RetrieveFileDefinitionAsync(string key)
     {
-        return _ObjectStore.ReadFileDefinitionAsync(key)!;
+        return _objectStore.ReadFileDefinitionAsync(key)!;
     }
 
     public async Task<bool> StoreReleasePackageAsync(byte[] packageData)
     {
-        await _ObjectStore.WriteReleasePackageAsync(packageData);
+        await _objectStore.WriteReleasePackageAsync(packageData);
         return true;
     }
 
     public async Task<byte[]?> RetrieveReleasePackageAsync(string key)
     {
-        return await _ObjectStore.ReadReleasePackageAsync(key);
+        return await _objectStore.ReadReleasePackageAsync(key);
+    }
+    
+    public async Task<bool> DeleteReleasePackageAsync(string packageId)
+    {
+        return await _objectStore.DeleteReleasePackageAsync(packageId);
     }
 
     public Task<Dictionary<string, object>> GetStorageStatsAsync()
     {
-        return Task.FromResult(_ObjectStore.GetStatistics().ToDictionary());
+        return Task.FromResult(_objectStore.GetStatistics().ToDictionary());
     }
 }

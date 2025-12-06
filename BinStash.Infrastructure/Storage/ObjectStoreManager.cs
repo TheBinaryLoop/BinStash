@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -13,20 +13,20 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Core.Entities;
+using System.Collections.Concurrent;
 
-public class ReleaseMetrics
+namespace BinStash.Infrastructure.Storage;
+
+/// <summary>
+/// Provides cached access to object stores rooted at base paths.
+/// </summary>
+public static class ObjectStoreManager
 {
-    public Guid ReleaseId { get; set; }
-    public Guid IngestSessionId { get; set; }
-    public virtual IngestSession IngestSession { get; set; } = null!;
-    public DateTimeOffset CreatedAt { get; set; }
-    public int ChunksInRelease { get; set; }
-    public int NewChunks { get; set; }
-    public ulong TotalUncompressedSize { get; set; }
-    public long NewCompressedBytes { get; set; }
-    public int MetaBytesFull { get; set; }
-    public int MetaBytesFullDiff { get; set; }
-    public int ComponentsInRelease { get; set; }
-    public int FilesInRelease { get; set; }
+    private static readonly ConcurrentDictionary<string, ObjectStore> ObjectStores = new();
+    
+    public static ObjectStore GetOrCreateChunkStorage(string basePath)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(basePath);
+        return ObjectStores.GetOrAdd(basePath, path => new ObjectStore(path));
+    }
 }

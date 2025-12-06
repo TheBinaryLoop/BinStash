@@ -39,5 +39,6 @@ public class ChunkEntityTypeConfiguration : IEntityTypeConfiguration<Chunk>
             .IsRequired();
         builder.Property(c => c.ChunkStoreId).IsRequired();
         builder.Property(c => c.Length).IsRequired();
+        builder.Property(c => c.CompressedLength).IsRequired().HasDefaultValue(0);
     }
 }

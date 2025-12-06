@@ -60,18 +60,36 @@ public class RepoAddCommand : AuthenticatedCommandBase
     [CommandOption("description", 'd', Description = "Description of the repository")]
     public string? Description { get; init; }
     
-    [CommandOption("chunk-store", 'c', Description = "Chunk store ID for the repository", IsRequired = true)]
-    public Guid ChunkStoreId { get; set; }
+    [CommandOption("chunk-store", 'c', Description = "Chunk store for the repository", IsRequired = true)]
+    public string ChunkStoreName { get; set; } = string.Empty;
     
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
         var client = new BinStashApiClient(GetUrl());
         
+        var chunkStores = await client.GetChunkStoresAsync();
+        if (chunkStores == null || chunkStores.Count == 0)
+        {
+            await console.Output.WriteLineAsync("No chunk stores available. Please create a chunk store before adding a repository.");
+            return;
+        }
+        
+        var chunkStore = chunkStores.FirstOrDefault(cs => cs.Name.Equals(ChunkStoreName, StringComparison.OrdinalIgnoreCase));
+        if (chunkStore == null)
+        {
+            await console.Output.WriteLineAsync("Chunk store not found. Available chunk stores:");
+            foreach (var cs in chunkStores)
+            {
+                await console.Output.WriteLineAsync($"- {cs.Name} (ID: {cs.Id})");
+            }
+            return;
+        }
+        
         var createDto = new CreateRepositoryDto
         {
             Name = Name,
             Description = string.IsNullOrWhiteSpace(Description) ? null : Description,
-            ChunkStoreId = ChunkStoreId
+            ChunkStoreId = chunkStore.Id
         };
         
         var repo = await client.CreateRepositoryAsync(createDto);

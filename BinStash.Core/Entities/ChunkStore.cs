@@ -129,6 +129,14 @@ public class ChunkStore
 
         return await _storage.RetrieveReleasePackageAsync(packageId);
     }
+    
+    public async Task<bool> DeleteReleasePackageAsync(string packageId)
+    {
+        if (_storage == null)
+            throw new InvalidOperationException("Chunk storage is not initialized.");
+        
+        return await _storage.DeleteReleasePackageAsync(packageId);
+    }
 }
 
 public enum ChunkStoreType
