@@ -36,7 +36,7 @@ public class RepoListCommand : AuthenticatedCommandBase
 {
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var client = new BinStashApiClient(GetUrl());
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
         var repos = await client.GetRepositoriesAsync();
         if (repos == null || repos.Count == 0)
         {
@@ -65,7 +65,7 @@ public class RepoAddCommand : AuthenticatedCommandBase
     
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var client = new BinStashApiClient(GetUrl());
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
         
         var chunkStores = await client.GetChunkStoresAsync();
         if (chunkStores == null || chunkStores.Count == 0)

@@ -62,16 +62,37 @@ public abstract class AuthenticatedCommandBase : UrlCommandBase
     [CommandOption("token", 't', Description = "Authentication token for the BinStash server.")]
     public string? Token { get; set; }
 
+    protected Func<string> AuthTokenFactory { get; private set; } = () => string.Empty;
+
     protected override async ValueTask<bool> PreCheckAsync(IConsole console)
     {
         if (!await base.PreCheckAsync(console))
             return false;
 
-        /*if (string.IsNullOrWhiteSpace(Token))
+        var http = new HttpClient { BaseAddress = new Uri(GetUrl()) };
+        var auth = new Auth.AuthService(http);
+
+        try
+        {
+            var accessToken = await auth.GetValidAccessTokenAsync();
+            if (!string.IsNullOrWhiteSpace(accessToken))
+            {
+                await console.Output.WriteLineAsync("Using stored authentication token.");
+                Token = accessToken;
+                AuthTokenFactory = () => auth.GetValidAccessTokenAsync().Result;
+            }
+        }
+        catch (Exception ex)
+        {
+            await console.Error.WriteLineAsync($"Authentication failed: {ex.Message}");
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(Token))
         {
             await console.Error.WriteLineAsync("The authentication token must be provided.");
             return false;
-        }*/
+        }
 
         return true;
     }

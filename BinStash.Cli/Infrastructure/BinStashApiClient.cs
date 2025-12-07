@@ -35,10 +35,12 @@ namespace BinStash.Cli.Infrastructure;
 public class BinStashApiClient
 {
     private readonly HttpClient _httpClient;
+    private readonly Func<string> _authTokenFactory;
     private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy = HttpPolicyExtensions.HandleTransientHttpError().OrResult(msg => msg.StatusCode == HttpStatusCode.TooManyRequests).WaitAndRetryAsync(5, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
 
-    public BinStashApiClient(string rootUrl)
+    public BinStashApiClient(string rootUrl, Func<string> authTokenFactory = null!)
     {
+        _authTokenFactory = authTokenFactory ?? (() => string.Empty);
         // Wire it into the handler pipeline manually
         var sockets = new SocketsHttpHandler
         {
@@ -54,7 +56,13 @@ public class BinStashApiClient
         
         _httpClient = new HttpClient(policyHandler)
         {
-            BaseAddress = new Uri(rootUrl)
+            BaseAddress = new Uri(rootUrl),
+            DefaultRequestHeaders =
+            {
+                { "Accept", "application/json" },
+                { "User-Agent", "BinStash.Cli/1.0" },
+                { "Authorization", $"Bearer {_authTokenFactory()}" }
+            }
         };
     }
     

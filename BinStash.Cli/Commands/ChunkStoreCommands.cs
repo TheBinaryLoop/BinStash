@@ -37,7 +37,7 @@ public class ChunkStoreListCommand : AuthenticatedCommandBase
 {
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var client = new BinStashApiClient(GetUrl());
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
         var chunkStores = await client.GetChunkStoresAsync();
         if (chunkStores == null || chunkStores.Count == 0)
         {
@@ -78,7 +78,7 @@ public class ChunkStoreAddCommand : AuthenticatedCommandBase
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var client = new BinStashApiClient(GetUrl());
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
         
         if (ChunkStoreType == ChunkStoreType.Local && string.IsNullOrWhiteSpace(ChunkStoreLocalPath))
         {
@@ -142,7 +142,7 @@ public class ChunkStoreShowCommand : AuthenticatedCommandBase
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var client = new BinStashApiClient(GetUrl());
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
         var chunkStore = await client.GetChunkStoreAsync(Id);
         
         if (chunkStore == null)

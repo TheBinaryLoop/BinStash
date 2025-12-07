@@ -19,14 +19,23 @@ namespace BinStash.Cli.Auth;
 
 public class AuthService(HttpClient http)
 {
-    public async Task<TokenInfo> LoginAsync(string username, string password)
+    private record TokenResponse(string accessToken, string refreshToken, long expiresIn);
+
+    public async Task<TokenInfo> LoginAsync(string email, string password)
     {
-        var response = await http.PostAsJsonAsync("/auth/login", new { username, password });
+        var now = DateTimeOffset.UtcNow;
+        var response = await http.PostAsJsonAsync("/api/auth/login", new { email, password });
         response.EnsureSuccessStatusCode();
 
-        var token = await response.Content.ReadFromJsonAsync<TokenInfo>();
-        await CredentialStore.SaveAsync(http.BaseAddress!, token!);
-        return token!;
+        var token = await response.Content.ReadFromJsonAsync<TokenResponse>();
+        var tokenInfo = new TokenInfo
+        {
+            AccessToken = token!.accessToken,
+            RefreshToken = token.refreshToken,
+            ExpiresAt = now.AddSeconds(token.expiresIn).UtcDateTime
+        };
+        await CredentialStore.SaveAsync(http.BaseAddress!, tokenInfo);
+        return tokenInfo;
     }
 
     public void Logout()
@@ -51,9 +60,17 @@ public class AuthService(HttpClient http)
 
     private async Task<TokenInfo> RefreshAsync(string refreshToken)
     {
-        var response = await http.PostAsJsonAsync("/auth/refresh", new { refreshToken });
+        var now = DateTimeOffset.UtcNow;
+
+        var response = await http.PostAsJsonAsync("/api/auth/refresh", new { refreshToken });
         response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadFromJsonAsync<TokenInfo>() ?? throw new Exception("Failed to refresh token");
+        var token = await response.Content.ReadFromJsonAsync<TokenResponse>();
+        return new TokenInfo
+        {
+            AccessToken = token!.accessToken,
+            RefreshToken = token.refreshToken,
+            ExpiresAt = now.AddSeconds(token.expiresIn).UtcDateTime
+        };
     }
 }

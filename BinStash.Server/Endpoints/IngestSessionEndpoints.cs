@@ -24,7 +24,8 @@ public static class IngestSessionEndpoints
     public static RouteGroupBuilder MapIngestSessionEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/ingest")
-            .WithTags("Ingest Sessions");
+            .WithTags("Ingest Sessions")
+            .RequireAuthorization();
         
         group.MapPost("/sessions", CreateIngestSessionAsync)
             .WithName("CreateIngestSession")

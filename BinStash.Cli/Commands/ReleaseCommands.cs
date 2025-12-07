@@ -48,7 +48,7 @@ public class ReleasesListCommand : AuthenticatedCommandBase
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var client = new BinStashApiClient(GetUrl());
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
         var repositories = await client.GetRepositoriesAsync();
         if (repositories == null || repositories.Count == 0)
         {
@@ -138,7 +138,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
         var fileHashChunkMaps = new ConcurrentDictionary<Hash32, List<ChunkMapEntry>>();
         var fileEntries = new ConcurrentBag<(ReleaseFile File, List<ChunkMapEntry> Entries, Component Component)>();
         
-        var client = new BinStashApiClient(GetUrl());
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
         
         var ansiConsole = AnsiConsole.Create(new AnsiConsoleSettings
         {
@@ -501,7 +501,7 @@ public class ReleaseDownloadCommand : AuthenticatedCommandBase
         if (!string.IsNullOrEmpty(Version) && string.IsNullOrEmpty(RepositoryName)) throw new CommandException("You must specify a repository name when providing a version.");
         if (string.IsNullOrWhiteSpace(TargetFolder)) throw new CommandException("You must specify a target directory.");
         
-        var client = new BinStashApiClient(GetUrl());
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
 
         ReleaseSummaryDto? release = null;
         

@@ -36,7 +36,8 @@ public static class ReleaseEndpoints
     public static RouteGroupBuilder MapReleaseEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/releases")
-            .WithTags("Releases");
+            .WithTags("Releases")
+            .RequireAuthorization();
 
         group.MapPost("/", CreateReleaseAsync)
             .WithDescription("Create a new release for a repository.")

@@ -26,7 +26,8 @@ public static class RepositoryEndpoints
     public static RouteGroupBuilder MapRepositoryEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/repositories")
-            .WithTags("Repositories");
+            .WithTags("Repositories")
+            .RequireAuthorization();
 
         group.MapPost("/", CreateRepositoryAsync)
             .WithDescription("Create a new repository.")
