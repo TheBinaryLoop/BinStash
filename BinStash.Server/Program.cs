@@ -13,10 +13,15 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Text;
+using BinStash.Core.Auth.Tokens;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Auth.Tokens;
 using BinStash.Server.Extensions;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 
 namespace BinStash.Server;
@@ -31,8 +36,28 @@ public static class Program
         builder.Services.AddWindowsService();
         
         // Add services to the container.
+        builder.Services.AddScoped<ITokenService, TokenService>();
         builder.Services.AddResponseCompression();
         builder.Services.AddProblemDetails();
+        
+        builder.Services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuer = builder.Configuration["Auth:Jwt:Issuer"],
+                    ValidateAudience = false,
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Auth:Jwt:Key"] ?? "dev-only-change-me")),
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromMinutes(1)
+                };
+            });
         builder.Services.AddAuthorization();
 
         builder.Services.AddDbContext<BinStashDbContext>((_, optionsBuilder) => optionsBuilder.UseNpgsql(builder.Configuration.GetConnectionString("BinStashDb"))/*.EnableSensitiveDataLogging()*/);
@@ -67,6 +92,7 @@ public static class Program
 
         app.UseHttpsRedirection();
         app.UseResponseCompression();
+        app.UseAuthentication();
         app.UseAuthorization();
         app.MapAllEndpoints();
         

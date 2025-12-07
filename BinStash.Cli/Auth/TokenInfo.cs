@@ -17,9 +17,9 @@ namespace BinStash.Cli.Auth;
 
 public class TokenInfo
 {
-    public required string AccessToken { get; set; }
-    public required string RefreshToken { get; set; }
-    public DateTime ExpiresAt { get; set; }
+    public required string AccessToken { get; init; }
+    public required string RefreshToken { get; init; }
+    public DateTime ExpiresAt { get; init; }
 
     public bool IsExpired() => DateTime.UtcNow >= ExpiresAt;
 }

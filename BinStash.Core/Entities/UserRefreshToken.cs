@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -13,27 +13,21 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.Text.Json;
-using KeySharp;
+using Microsoft.AspNetCore.Identity;
 
-namespace BinStash.Cli.Auth;
+namespace BinStash.Core.Entities;
 
-public class SecureTokenStore
+public class UserRefreshToken
 {
-    public TokenInfo? Load(string service)
-    {
-        var json = Keyring.GetPassword("BinStash", service, Environment.UserName);
-        return json == null ? null : JsonSerializer.Deserialize<TokenInfo>(json);
-    }
-    
-    public void Save(string service, TokenInfo token)
-    {
-        var json = JsonSerializer.Serialize(token);
-        Keyring.SetPassword("BinStash", service, Environment.UserName, json);
-    }
+    public Guid Id { get; set; }
 
-    public void Clear(string service)
-    {
-        Keyring.DeletePassword("BinStash", service, Environment.UserName);
-    }
+    public Guid UserId { get; set; }
+    public virtual IdentityUser<Guid> User { get; set; } = null!;
+
+    public required string Token { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+    
+    public virtual bool IsActive => RevokedAt == null && ExpiresAt > DateTime.UtcNow;
 }

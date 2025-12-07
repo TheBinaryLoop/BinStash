@@ -17,35 +17,26 @@ using System.Net.Http.Json;
 
 namespace BinStash.Cli.Auth;
 
-public class AuthService
+public class AuthService(HttpClient http)
 {
-    private readonly HttpClient _Http;
-    private readonly SecureTokenStore _Store;
-
-    public AuthService(HttpClient http, SecureTokenStore? store = null)
-    {
-        _Http = http;
-        _Store = store ?? new SecureTokenStore();
-    }
-
     public async Task<TokenInfo> LoginAsync(string username, string password)
     {
-        var response = await _Http.PostAsJsonAsync("/auth/login", new { username, password });
+        var response = await http.PostAsJsonAsync("/auth/login", new { username, password });
         response.EnsureSuccessStatusCode();
 
         var token = await response.Content.ReadFromJsonAsync<TokenInfo>();
-        _Store.Save(_Http.BaseAddress!.Host, token!);
+        await CredentialStore.SaveAsync(http.BaseAddress!, token!);
         return token!;
     }
 
     public void Logout()
     {
-        _Store.Clear(_Http.BaseAddress!.Host);
+        CredentialStore.ClearAll();
     }
 
     public async Task<string> GetValidAccessTokenAsync()
     {
-        var token = _Store.Load(_Http.BaseAddress!.Host);
+        var token = await CredentialStore.LoadAsync(http.BaseAddress!);
         if (token == null)
             throw new InvalidOperationException("Not logged in.");
 
@@ -54,13 +45,13 @@ public class AuthService
 
         // Try refresh
         var refreshed = await RefreshAsync(token.RefreshToken);
-        _Store.Save(_Http.BaseAddress!.Host, refreshed);
+        await CredentialStore.SaveAsync(http.BaseAddress!, refreshed);
         return refreshed.AccessToken;
     }
 
     private async Task<TokenInfo> RefreshAsync(string refreshToken)
     {
-        var response = await _Http.PostAsJsonAsync("/auth/refresh", new { refreshToken });
+        var response = await http.PostAsJsonAsync("/auth/refresh", new { refreshToken });
         response.EnsureSuccessStatusCode();
 
         return await response.Content.ReadFromJsonAsync<TokenInfo>() ?? throw new Exception("Failed to refresh token");

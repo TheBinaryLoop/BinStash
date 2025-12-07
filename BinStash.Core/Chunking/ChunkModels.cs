@@ -39,21 +39,6 @@ public enum ChunkAnalysisTarget
     ChunkCount
 }
 
-public class AnalysisStats
-{
-    public string FilePath { get; set; } = null!;
-    public List<int> ChunkSizes { get; set; } = new();
-    public int TotalChunks { get; set; }
-    public int Min { get; set; }
-    public int Max { get; set; }
-    public int Avg { get; set; }
-
-    public double StdDev =>
-        ChunkSizes.Count == 0
-            ? 0
-            : Math.Sqrt(ChunkSizes.Average(x => Math.Pow(x - Avg, 2)));
-}
-
 /// <summary>
 /// Holds the result of a chunk size recommendation analysis.
 /// </summary>

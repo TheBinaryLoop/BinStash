@@ -35,7 +35,8 @@ public static class ChunkStoreEndpoints
         // TODO: Add ProducesError
         
         var group = app.MapGroup("/api/chunkstores")
-            .WithTags("ChunkStore");
+            .WithTags("ChunkStore")
+            .RequireAuthorization();
             //.WithDescription("Endpoints for managing chunk stores. Chunk stores are used to store chunks of data that are referenced by repositories. They can be local or remote, and support various chunking algorithms.");
 
         group.MapPost("/", CreateChunkStoreAsync)

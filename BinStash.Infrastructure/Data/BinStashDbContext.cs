@@ -20,7 +20,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Infrastructure.Data;
 
-public class BinStashDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityRole<Guid>, Guid>
+public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
+    : IdentityDbContext<IdentityUser<Guid>, IdentityRole<Guid>, Guid>(options)
 {
     public DbSet<IngestSession> IngestSessions { get; set; }
     public DbSet<ChunkStore> ChunkStores { get; set; }
@@ -29,9 +30,8 @@ public class BinStashDbContext : IdentityDbContext<IdentityUser<Guid>, IdentityR
     public DbSet<ReleaseMetrics> ReleaseMetrics { get; set; }
     public DbSet<Chunk> Chunks { get; set; }
     public DbSet<FileDefinition> FileDefinitions { get; set; }
+    public DbSet<UserRefreshToken> UserRefreshTokens { get; set; }
 
-    public BinStashDbContext(DbContextOptions<BinStashDbContext> options) : base(options) {}
-    
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(BinStashDbContext).Assembly);

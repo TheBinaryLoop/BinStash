@@ -13,19 +13,11 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Server.Endpoints;
 using Microsoft.AspNetCore.Identity;
 
-namespace BinStash.Server.Extensions;
+namespace BinStash.Core.Auth.Tokens;
 
-public static class EndpointRouteBuilderExtensions
+public interface ITokenService
 {
-    public static void MapAllEndpoints(this IEndpointRouteBuilder app)
-    {
-        app.MapIdentityEndpoints<IdentityUser<Guid>>();
-        app.MapChunkStoreEndpoints();
-        app.MapIngestSessionEndpoints();
-        app.MapRepositoryEndpoints();
-        app.MapReleaseEndpoints();
-    }
+    Task<(string accessToken, string refreshToken)> CreateTokensAsync(IdentityUser<Guid> user);
 }
