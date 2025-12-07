@@ -13,15 +13,39 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace BinStash.Cli.Auth;
 
 internal static class CredentialStore
 {
     private record AuthFile(Dictionary<string, TokenInfo> Hosts);
+    
+    private const string ProtectorPurpose = "BinStash.Cli.Auth.CredentialStore";
+
+    private static readonly Lazy<IDataProtector> DataProtector = new(() =>
+    {
+        // Windows: %APPDATA%\BinStash\Cli
+        // Linux:   ~/.config/BinStash/Cli
+        // macOS:   ~/Library/Application Support/BinStash/Cli
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var rootDir = Path.Combine(appData, "BinStash", "Cli");
+        Directory.CreateDirectory(rootDir);
+
+        var keysDir = Path.Combine(rootDir, "keys");
+        Directory.CreateDirectory(keysDir);
+
+        var provider = DataProtectionProvider.Create(new DirectoryInfo(keysDir), options =>
+        {
+            options.SetApplicationName("BinStash");
+        });
+
+        return provider.CreateProtector(ProtectorPurpose);
+    });
+    
+    private static IDataProtector Protector => DataProtector.Value;
     
     private static string GetCredFilePath()
     {
@@ -81,10 +105,7 @@ internal static class CredentialStore
             return new AuthFile(new Dictionary<string, TokenInfo>(StringComparer.OrdinalIgnoreCase));
 
         var protectedBytes = await File.ReadAllBytesAsync(path);
-        var plaintext = ProtectedData.Unprotect(
-            protectedBytes,
-            optionalEntropy: null,
-            scope: DataProtectionScope.CurrentUser);
+        var plaintext = Protector.Unprotect(protectedBytes);
 
         var json = Encoding.UTF8.GetString(plaintext);
 
@@ -101,10 +122,7 @@ internal static class CredentialStore
 
         var plaintext = Encoding.UTF8.GetBytes(json);
 
-        var protectedBytes = ProtectedData.Protect(
-            plaintext,
-            optionalEntropy: null,
-            scope: DataProtectionScope.CurrentUser);
+        var protectedBytes = Protector.Protect(plaintext);
 
         await File.WriteAllBytesAsync(GetCredFilePath(), protectedBytes);
     }

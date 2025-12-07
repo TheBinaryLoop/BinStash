@@ -22,9 +22,9 @@ public static class Program
     public static async Task<int> Main() =>
         await new CliApplicationBuilder()
             .AddCommandsFromThisAssembly()
-            #if DEBUG
+#if DEBUG
             .AllowDebugMode()
-            #endif
+#endif
             .Build()
             .RunAsync();
 }
