@@ -63,7 +63,8 @@ pipeline {
           configuration: env.BUILD_CONFIG,
           noBuild: true,
           logger: 'xunit',
-          sdk: 'dotnet-lts'
+          sdk: 'dotnet-lts',
+          shutDownBuildServers: true
         )
 
         // Option B (optional): also produce TRX for JUnit if you want test reports in Jenkins UI
@@ -80,16 +81,16 @@ pipeline {
     }
   }
   post {
-    always {
+    //always {
       // Recommended by the plugin to avoid lingering build servers on agents
       // (shuts down MSBuild/Roslyn servers that may keep the build "hanging")
-      dotnetBuild(
+    //  dotnetBuild(
         // dummy no-op call solely to access the 'shutDownBuildServers' option
-        project: '.', // ignored for shutdown
-        sdk: 'dotnet-lts',
-        shutDownBuildServers: true
-      ) // :contentReference[oaicite:1]{index=1}
-    }
+    //    project: '.', // ignored for shutdown
+    //    sdk: 'dotnet-lts',
+    //    shutDownBuildServers: true
+    //  ) // :contentReference[oaicite:1]{index=1}
+    //}
     success { echo "✅ Build completed for ${env.SOLUTION} (${env.BUILD_CONFIG})." }
     failure { echo "❌ Build failed. Check logs." }
   }
