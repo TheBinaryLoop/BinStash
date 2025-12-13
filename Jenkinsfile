@@ -85,7 +85,7 @@ pipeline {
       // (shuts down MSBuild/Roslyn servers that may keep the build "hanging")
       dotnetBuild(
         // dummy no-op call solely to access the 'shutDownBuildServers' option
-        project: env.SOLUTION, // ignored for shutdown
+        project: '.', // ignored for shutdown
         sdk: 'dotnet-lts',
         shutDownBuildServers: true
       ) // :contentReference[oaicite:1]{index=1}

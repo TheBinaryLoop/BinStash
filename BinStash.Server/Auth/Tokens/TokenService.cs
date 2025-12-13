@@ -79,7 +79,7 @@ public class TokenService : ITokenService
         _db.UserRefreshTokens.Add(refreshToken);
         await _db.SaveChangesAsync();
 
-        return (accessToken, $"{refreshToken.Id}.{rawRefreshToken}");
+        return (accessToken, $"{Convert.ToHexStringLower(refreshToken.Id.ToByteArray())}.{rawRefreshToken}");
     }
     
     private static string GenerateSecureToken()

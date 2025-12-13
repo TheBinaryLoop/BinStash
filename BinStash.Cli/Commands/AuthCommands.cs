@@ -39,10 +39,7 @@ public class AuthLoginCommand : UrlCommandBase
         var email = AnsiConsole.Prompt(
             new TextPrompt<string>("Email:")
                 .PromptStyle("green")
-                .Validate(email =>
-                {
-                    return email.Contains("@") ? ValidationResult.Success() : ValidationResult.Error("[red]Invalid email address[/]");
-                })
+                .Validate(email => email.Contains("@") ? ValidationResult.Success() : ValidationResult.Error("[red]Invalid email address[/]"))
         );
 
         var password = AnsiConsole.Prompt(

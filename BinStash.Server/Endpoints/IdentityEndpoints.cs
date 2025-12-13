@@ -45,9 +45,9 @@ public static class IdentityEndpoints
         string? confirmEmailEndpointName = null;
         
         var group = app.MapGroup("/api/auth")
-            .WithTags("Authentication");
-        //.WithDescription("Endpoints for managing chunk stores. Chunk stores are used to store chunks of data that are referenced by repositories. They can be local or remote, and support various chunking algorithms.");
-
+            .WithTags("Authentication")
+            .WithDescription("Endpoints for authenticating users.");
+        
         group.MapPost("/register", async Task<Results<Ok, ValidationProblem>>
             ([FromBody] RegisterRequest registration, HttpContext context, [FromServices] IServiceProvider sp) =>
         {
@@ -137,7 +137,7 @@ public static class IdentityEndpoints
             if (refreshTokenSplits.Length != 2)
                 return TypedResults.Problem("Invalid refresh token.", statusCode: StatusCodes.Status400BadRequest);
             
-            var tokenGuid = Guid.Parse(refreshTokenSplits[0]);
+            var tokenGuid = new Guid(Convert.FromHexString(refreshTokenSplits[0]));
             
             var db = sp.GetRequiredService<BinStashDbContext>();
             var tokenService = sp.GetRequiredService<ITokenService>();
