@@ -281,10 +281,8 @@ public class BinStashApiClient
         if (!string.IsNullOrWhiteSpace(component))
             query["component"] = component;
 
-        uriBuilder.Query = query.ToString();
-        Console.WriteLine(uriBuilder.ToString());
         var request = new HttpRequestMessage(HttpMethod.Get, uriBuilder.ToString());
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
         
         await using var fsOut = File.OpenWrite(downloadPath);
