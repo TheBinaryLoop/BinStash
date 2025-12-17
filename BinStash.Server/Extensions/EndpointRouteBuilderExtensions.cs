@@ -27,5 +27,6 @@ public static class EndpointRouteBuilderExtensions
         app.MapIngestSessionEndpoints();
         app.MapRepositoryEndpoints();
         app.MapReleaseEndpoints();
+        app.MapTenantEndpoints();
     }
 }

@@ -101,6 +101,8 @@ public class AuthListCommand : ICommand
         foreach (var (host, token) in hosts)
         {
             await console.Output.WriteLineAsync($"- {host} (expires {token.ExpiresAt:u})");
+            await console.Output.WriteLineAsync($"\t- AccessToken: {token.AccessToken}");
+            await console.Output.WriteLineAsync($"\t- RefreshToken: {token.RefreshToken}");
         }
     }
 }

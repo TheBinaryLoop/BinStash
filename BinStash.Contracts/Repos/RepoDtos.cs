@@ -44,3 +44,5 @@ public class RepositoryDedupeConfigDto
     public int? ShiftCount { get; set; }
     public int? BoundaryCheckBytes { get; set; }
 }
+
+public record RepositoryAccessDto(short SubjectType, Guid SubjectId, string Role, DateTimeOffset GrantedAt);

@@ -29,5 +29,5 @@ public class UserRefreshToken
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? RevokedAt { get; set; }
     
-    public virtual bool IsActive => RevokedAt == null && ExpiresAt > DateTime.UtcNow;
+    public bool IsActive => RevokedAt == null && ExpiresAt > DateTime.UtcNow;
 }

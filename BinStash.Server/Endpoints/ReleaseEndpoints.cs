@@ -19,13 +19,17 @@ using System.Text.Json;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
+using BinStash.Core.Auth.Repository;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Extensions;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
+using BinStash.Server.Auth;
+using BinStash.Server.Extensions;
 using BinStash.Server.Helpers;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using ZstdNet;
 
@@ -37,7 +41,9 @@ public static class ReleaseEndpoints
     {
         var group = app.MapGroup("/api/releases")
             .WithTags("Releases")
-            .RequireAuthorization();
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .RequireAuthorization(new AuthorizeAttribute { AuthenticationSchemes = AuthDefaults.AuthenticationScheme });
 
         group.MapPost("/", CreateReleaseAsync)
             .WithDescription("Create a new release for a repository.")
@@ -46,26 +52,30 @@ public static class ReleaseEndpoints
             .Produces(StatusCodes.Status201Created)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
-            .Produces(StatusCodes.Status409Conflict);
+            .Produces(StatusCodes.Status409Conflict)
+            .RequireRepoPermission(RepositoryPermission.Write);
         
         group.MapGet("/{id:guid}", GetReleaseByIdAsync)
             .WithDescription("Get a release by ID.")
             .WithSummary("Get Release")
             .Produces<ReleaseSummaryDto>()
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Read);
 
         group.MapGet("/{id:guid}/properties", GetReleaseCustomPropertiesAsync)
             .WithDescription("Get custom properties of a release.")
             .WithSummary("Get Release Custom Properties")
             .Produces<string>()
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Read);
         
         group.MapGet("/{id:guid}/download", GetReleaseDownloadAsync)
             .WithDescription("Download a release package.")
             .WithSummary("Download Release")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status404NotFound)
-            .Produces(StatusCodes.Status400BadRequest);
+            .Produces(StatusCodes.Status400BadRequest)
+            .RequireRepoPermission(RepositoryPermission.Read);
         
         // TODO: DELETE /api/releases/{id:guid}
 
@@ -126,7 +136,7 @@ public static class ReleaseEndpoints
         releasePackage.CreatedAt = createdAt;
         releasePackage.ReleaseId = releaseId.ToString();
         releasePackage.RepoId = repo.Id.ToString();
-
+        
         await using var releasePackageStream = new MemoryStream();
         await ReleasePackageSerializer.SerializeAsync(releasePackageStream, releasePackage);
         var releasePackageData = releasePackageStream.ToArray();
@@ -154,6 +164,9 @@ public static class ReleaseEndpoints
         
         ingestSession.State = IngestSessionState.Completed;
         ingestSession.CompletedAt = DateTimeOffset.UtcNow;
+
+        var chunkHashes = releasePackage.Chunks.Select(ci => ci.Checksum).Select(x => new Hash32(x)).ToList();
+        var rawSize = await db.Chunks.Where(c => chunkHashes.Contains(c.Checksum)).SumAsync(x => x.Length);
         
         var releaseMetrics = new ReleaseMetrics
         {
@@ -162,7 +175,7 @@ public static class ReleaseEndpoints
             CreatedAt = release.CreatedAt,
             ChunksInRelease = releasePackage.Chunks.Count,
             NewChunks = ingestSession.ChunksSeenNew,
-            TotalUncompressedSize = releasePackage.Stats.RawSize,
+            TotalUncompressedSize = (ulong)rawSize,
             NewCompressedBytes = ingestSession.DataSizeUnique,
             MetaBytesFull = ingestSession.MetadataSize,
             MetaBytesFullDiff = 0, // Set if we save a patch/diff instead of the full release definition

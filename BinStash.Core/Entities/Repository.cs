@@ -22,5 +22,8 @@ public class Repository
     public string? Description { get; set; }
     public Guid ChunkStoreId { get; set; }
     public virtual required ChunkStore ChunkStore { get; set; }
+    public Guid TenantId { get; set; }
+    public Tenant Tenant { get; set; } = null!;
+    public DateTimeOffset CreatedAt { get; set; }
     public virtual ICollection<Release> Releases { get; set; } = new List<Release>();
 }

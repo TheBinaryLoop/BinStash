@@ -292,7 +292,7 @@ public class BinStashApiClient
         uriBuilder.Query = query.ToString();
         Console.WriteLine(uriBuilder.ToString());
         var request = new HttpRequestMessage(HttpMethod.Get, uriBuilder.ToString());
-        var response = await _httpClient.SendAsync(request);
+        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
         
         await using var fsOut = File.OpenWrite(downloadPath);
@@ -306,9 +306,9 @@ public class BinStashApiClient
     
     #region Ingestion Session
     
-    public async Task<Guid> CreateIngestSessionAsync(Guid repoId)
+    public async Task<Guid> CreateIngestSessionAsync(Guid repoId, string intendedRelease)
     { 
-        var response = await PostAsJsonAsync<CreateIngestSessionResponse>("api/ingest/sessions", new CreateIngestSessionRequest(repoId));
+        var response = await PostAsJsonAsync<CreateIngestSessionResponse>($"/repositories/{repoId}/ingest/sessions", new CreateIngestSessionRequest($"BinStash.Cli/{Environment.Version}", intendedRelease));
         if (response == null)
             throw new InvalidOperationException("Failed to create ingest session: No response from server.");
         if (response.SessionId == Guid.Empty)

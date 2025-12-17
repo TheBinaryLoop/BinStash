@@ -15,8 +15,15 @@
 
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repos;
+using BinStash.Core.Auth;
+using BinStash.Core.Auth.Repository;
+using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Auth;
+using BinStash.Server.Context;
+using BinStash.Server.Extensions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Server.Endpoints;
@@ -25,45 +32,115 @@ public static class RepositoryEndpoints
 {
     public static RouteGroupBuilder MapRepositoryEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/repositories")
+        var group = app.MapGroup("/api/tenants/{tenantId:guid}/repositories")
             .WithTags("Repositories")
-            .RequireAuthorization();
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .RequireAuthorization(new AuthorizeAttribute { AuthenticationSchemes = AuthDefaults.AuthenticationScheme });
 
+        var tenantFromHostGroup = app.MapGroup("/api/repositories")
+            .WithTags("Repositories")
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .RequireAuthorization(new AuthorizeAttribute { AuthenticationSchemes = AuthDefaults.AuthenticationScheme });
+        
+        MapGroup(group);
+        MapGroup(tenantFromHostGroup);
+
+        return group;
+    }
+
+    private static void MapGroup(RouteGroupBuilder group)
+    {
         group.MapPost("/", CreateRepositoryAsync)
             .WithDescription("Create a new repository.")
             .WithSummary("Create Repository")
             .Produces<RepositorySummaryDto>(StatusCodes.Status201Created)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status409Conflict)
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Admin);
         
         group.MapGet("/", ListRepositoriesAsync)
             .WithDescription("List all repositories.")
             .WithSummary("List Repositories")
             .Produces<IEnumerable<RepositorySummaryDto>>()
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireTenantPermission(TenantPermission.Member);
         
-        group.MapGet("/{id:guid}", GetRepositoryByIdAsync)
+        group.MapGet("/{repoId:guid}", GetRepositoryByIdAsync)
             .WithDescription("Get a repository by ID.")
             .WithSummary("Get Repository")
             .Produces<RepositorySummaryDto>()
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Read);
         
-        group.MapGet("/{id:guid}/config", GetRepositoryConfigAsync)
+        group.MapGet("/{repoId:guid}/access", GetRepositoryMemberAccessInfosAsync)
+            .WithDescription("Get access control information for a repository.")
+            .WithSummary("Get Repository Access Info")
+            .Produces<List<RepositoryAccessDto>>()
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Admin);
+        
+        group.MapPost("/{repoId:guid}/access", SetRepositoryMemberAccessInfosAsync)
+            .WithDescription("Set access control information for a repository.")
+            .WithSummary("Set Repository Access Info")
+            .Produces<RepositoryAccessDto>()
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Admin);
+        
+        group.MapDelete("/{repoId:guid}/access/{subjectType}/{subjectId}", DeleteRepositoryMemberAccessAsync)
+            .WithDescription("Delete access control information for a repository.")
+            .WithSummary("Delete Repository Access Info")
+            .RequireRepoPermission(RepositoryPermission.Admin);
+        
+        group.MapGet("/{repoId:guid}/config", GetRepositoryConfigAsync)
             .WithDescription("Get the configuration of a repository.")
             .WithSummary("Get Repository Config")
             .Produces<RepositoryConfigDto>()
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Read);
         
-        group.MapGet("/{id:guid}/releases", GetReleasesForRepositoryAsync)
+        group.MapGet("/{repoId:guid}/releases", GetReleasesForRepositoryAsync)
             .WithDescription("Get all releases for a repository.")
             .WithSummary("Get Repository Releases")
             .Produces<IEnumerable<ReleaseSummaryDto>>()
-            .Produces(StatusCodes.Status404NotFound);
-
-        return group;
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Read);
     }
-    
+
+    private static async Task<IResult> SetRepositoryMemberAccessInfosAsync(Guid repoId, RepositoryAccessDto request, HttpContext context, TenantContext tenantContext, BinStashDbContext db)
+    {
+        var repo = await db.Repositories.Where(r => r.TenantId == tenantContext.TenantId).FirstOrDefaultAsync(r => r.Id == repoId);
+        if (repo == null)
+            return Results.NotFound();
+
+        var roleAssignment = await db.RepositoryRoleAssignments
+            .FirstOrDefaultAsync(x => x.RepositoryId == repo.Id && x.SubjectType == (SubjectType)request.SubjectType && x.SubjectId == request.SubjectId);
+
+        if (roleAssignment != null)
+        {
+            roleAssignment.RoleName = request.Role;
+            roleAssignment.GrantedAt = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            roleAssignment = new RepositoryRoleAssignment
+            {
+                RepositoryId = repo.Id,
+                SubjectType = (SubjectType)request.SubjectType,
+                SubjectId = request.SubjectId,
+                RoleName = request.Role,
+                GrantedAt = DateTimeOffset.UtcNow
+            };
+            await db.RepositoryRoleAssignments.AddAsync(roleAssignment);
+        }
+
+        await db.SaveChangesAsync();
+
+        return Results.Ok(new RepositoryAccessDto((short)roleAssignment.SubjectType, roleAssignment.SubjectId, roleAssignment.RoleName, roleAssignment.GrantedAt));
+    }
+
     private static async Task<IResult> CreateRepositoryAsync(CreateRepositoryDto dto, BinStashDbContext db)
     {
         if (string.IsNullOrWhiteSpace(dto.Name))
@@ -100,9 +177,10 @@ public static class RepositoryEndpoints
         });
     }
     
-    private static async Task<IResult> ListRepositoriesAsync(BinStashDbContext db)
+    private static async Task<IResult> ListRepositoriesAsync(BinStashDbContext db, TenantContext tenantContext)
     {
         var repos = await db.Repositories
+            .Where(r => r.TenantId == tenantContext.TenantId)
             .Select(r => new RepositorySummaryDto
             {
                 Id = r.Id,
@@ -115,9 +193,9 @@ public static class RepositoryEndpoints
         return Results.Ok(repos);
     }
     
-    private static async Task<IResult> GetRepositoryByIdAsync(Guid id, BinStashDbContext db)
+    private static async Task<IResult> GetRepositoryByIdAsync(Guid repoId, BinStashDbContext db, TenantContext tenantContext)
     {
-        var repo = await db.Repositories.FindAsync(id);
+        var repo = await db.Repositories.Where(r => r.TenantId == tenantContext.TenantId).FirstOrDefaultAsync(r => r.Id == repoId);
         if (repo == null)
             return Results.NotFound();
 
@@ -130,9 +208,39 @@ public static class RepositoryEndpoints
         });
     }
     
-    private static async Task<IResult> GetRepositoryConfigAsync(Guid id, BinStashDbContext db)
+    private static async Task<IResult> GetRepositoryMemberAccessInfosAsync(Guid repoId, BinStashDbContext db, HttpContext context, TenantContext tenantContext)
     {
-        var repo = await db.Repositories.AsNoTracking().Include(x => x.ChunkStore).FirstOrDefaultAsync(x => x.Id == id);
+        var repo = await db.Repositories.Where(r => r.TenantId == tenantContext.TenantId).FirstOrDefaultAsync(r => r.Id == repoId);
+        if (repo == null)
+            return Results.NotFound();
+
+        var accessInfos = await db.RepositoryRoleAssignments.Where(x => x.RepositoryId == repo.Id).Select(x => new RepositoryAccessDto((short)x.SubjectType, x.SubjectId, x.RoleName, x.GrantedAt)).ToListAsync();
+        var tenantAdmins = await db.TenantRoleAssignments.Where(x => x.TenantId == tenantContext.TenantId && x.RoleName == "TenantAdmin").Select(x => new RepositoryAccessDto((short)SubjectType.User, x.UserId, "TenantAdmin", x.GrantedAt)).ToListAsync();
+        
+        accessInfos.AddRange(tenantAdmins);
+
+        return Results.Ok(accessInfos);
+    }
+    
+    private static async Task<IResult> DeleteRepositoryMemberAccessAsync(Guid repoId, SubjectType subjectType, Guid subjectId, BinStashDbContext db, HttpContext context, TenantContext tenantContext)
+    {
+        var repo = await db.Repositories.Where(r => r.TenantId == tenantContext.TenantId).FirstOrDefaultAsync(r => r.Id == repoId);
+        if (repo == null)
+            return Results.NotFound();
+        
+        var roleAssignment = await db.RepositoryRoleAssignments.FirstOrDefaultAsync(x => x.RepositoryId == repo.Id && x.SubjectType == subjectType && x.SubjectId == subjectId);
+        if (roleAssignment == null)
+            return Results.NotFound();
+        
+        db.RepositoryRoleAssignments.Remove(roleAssignment);
+        await db.SaveChangesAsync();
+        
+        return Results.NoContent();
+    }
+    
+    private static async Task<IResult> GetRepositoryConfigAsync(Guid repoId, BinStashDbContext db, TenantContext tenantContext)
+    {
+        var repo = await db.Repositories.AsNoTracking().Include(x => x.ChunkStore).FirstOrDefaultAsync(r => r.TenantId == tenantContext.TenantId && r.Id == repoId);
         if (repo == null)
             return Results.NotFound();
 
@@ -150,9 +258,9 @@ public static class RepositoryEndpoints
         });
     }
 
-    private static async Task<IResult> GetReleasesForRepositoryAsync(Guid id, BinStashDbContext db)
+    private static async Task<IResult> GetReleasesForRepositoryAsync(Guid repoId, BinStashDbContext db, TenantContext tenantContext)
     {
-        var repo = await db.Repositories.AsNoTracking().Include(x => x.Releases).FirstOrDefaultAsync(x => x.Id == id);
+        var repo = await db.Repositories.AsNoTracking().Include(x => x.Releases).FirstOrDefaultAsync(r => r.TenantId == tenantContext.TenantId && r.Id == repoId);
         if (repo == null)
             return Results.NotFound();
 

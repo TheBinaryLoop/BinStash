@@ -14,11 +14,23 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Text;
+using BinStash.Core.Auth;
+using BinStash.Core.Auth.Repository;
+using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Auth.Tokens;
+using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Auth;
+using BinStash.Server.Auth.ApiKeys;
+using BinStash.Server.Auth.Repository;
+using BinStash.Server.Auth.Tenant;
 using BinStash.Server.Auth.Tokens;
+using BinStash.Server.Context;
 using BinStash.Server.Extensions;
+using BinStash.Server.Middlewares;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -57,12 +69,34 @@ public static class Program
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.FromMinutes(1)
                 };
-            });
-        builder.Services.AddAuthorization();
+            })
+            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthHandler>("ApiKey", _ => { });
+        builder.Services.AddAuthorization(options =>
+        {
+            options.AddPolicy("Permission:Tenant:Admin", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.Admin)));
+            options.AddPolicy("Permission:Tenant:Member", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.Member)));
+            
+            options.AddPolicy("Permission:Repo:Admin", p => p.AddRequirements(new RepositoryPermissionRequirement(RepositoryPermission.Admin)));
+            options.AddPolicy("Permission:Repo:Write", p => p.AddRequirements(new RepositoryPermissionRequirement(RepositoryPermission.Write)));
+            options.AddPolicy("Permission:Repo:Read", p => p.AddRequirements(new RepositoryPermissionRequirement(RepositoryPermission.Read)));
+            
+            
+            options.AddPolicy("Permission:Release:List", p => p.RequireClaim("Permission", "Release:List"));
+        });
+        builder.Services.AddScoped<IAuthorizationHandler, RepositoryPermissionHandler>();
+        builder.Services.AddScoped<IAuthorizationHandler, TenantPermissionHandler>();
+        
+        builder.Services.AddScoped<IPasswordHasher<ApiKey>, PasswordHasher<ApiKey>>();
 
         builder.Services.AddDbContext<BinStashDbContext>((_, optionsBuilder) => optionsBuilder.UseNpgsql(builder.Configuration.GetConnectionString("BinStashDb"))/*.EnableSensitiveDataLogging()*/);
 
         builder.Services.AddIdentityApiEndpoints<IdentityUser<Guid>>().AddEntityFrameworkStores<BinStashDbContext>();
+        
+        builder.Services.AddScoped<TenantContext>();
+        builder.Services.AddScoped<ITenantContext>(sp => sp.GetRequiredService<TenantContext>());
+
+        builder.Services.AddProblemDetails();
+
         
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
         builder.Services.AddOpenApi();
@@ -92,6 +126,8 @@ public static class Program
 
         app.UseHttpsRedirection();
         app.UseResponseCompression();
+        app.UseStatusCodePages();
+        app.UseMiddleware<TenantResolutionMiddleware>();
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapAllEndpoints();

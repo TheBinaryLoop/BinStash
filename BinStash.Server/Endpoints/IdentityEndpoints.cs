@@ -26,7 +26,6 @@ using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace BinStash.Server.Endpoints;
 
@@ -36,8 +35,8 @@ public static class IdentityEndpoints
     
     public static RouteGroupBuilder MapIdentityEndpoints<TUser>(this IEndpointRouteBuilder app) where TUser : class, new()
     {
-        var timeProvider = app.ServiceProvider.GetRequiredService<TimeProvider>();
-        var bearerTokenOptions = app.ServiceProvider.GetRequiredService<IOptionsMonitor<BearerTokenOptions>>();
+        //var timeProvider = app.ServiceProvider.GetRequiredService<TimeProvider>();
+        //var bearerTokenOptions = app.ServiceProvider.GetRequiredService<IOptionsMonitor<BearerTokenOptions>>();
         var emailSender = app.ServiceProvider.GetRequiredService<IEmailSender<TUser>>();
         var linkGenerator = app.ServiceProvider.GetRequiredService<LinkGenerator>();
         
@@ -207,8 +206,8 @@ public static class IdentityEndpoints
             }
             else
             {
-                // As with Identity UI, email and user name are one and the same. So when we update the email,
-                // we need to update the user name.
+                // As with Identity UI, email and username are one and the same. So when we update the email,
+                // we need to update the username.
                 result = await userManager.ChangeEmailAsync(user, changedEmail, code);
 
                 if (result.Succeeded)
@@ -258,7 +257,7 @@ public static class IdentityEndpoints
                 await emailSender.SendPasswordResetCodeAsync(user, resetRequest.Email, HtmlEncoder.Default.Encode(code));
             }
 
-            // Don't reveal that the user does not exist or is not confirmed, so don't return a 200 if we would have
+            // Don't reveal that the user does not exist or is not confirmed, so don't return a 200 if we had
             // returned a 400 for an invalid code given a valid user email.
             return TypedResults.Ok();
         });
@@ -272,7 +271,7 @@ public static class IdentityEndpoints
 
             if (user is null || !(await userManager.IsEmailConfirmedAsync(user)))
             {
-                // Don't reveal that the user does not exist or is not confirmed, so don't return a 200 if we would have
+                // Don't reveal that the user does not exist or is not confirmed, so don't return a 200 if we had
                 // returned a 400 for an invalid code given a valid user email.
                 return CreateValidationProblem(IdentityResult.Failed(userManager.ErrorDescriber.InvalidToken()));
             }

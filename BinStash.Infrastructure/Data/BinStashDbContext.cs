@@ -23,15 +23,23 @@ namespace BinStash.Infrastructure.Data;
 public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     : IdentityDbContext<IdentityUser<Guid>, IdentityRole<Guid>, Guid>(options)
 {
-    public DbSet<IngestSession> IngestSessions { get; set; }
+    public DbSet<ApiKey> ApiKeys { get; set; }
+    public DbSet<Chunk> Chunks { get; set; }
     public DbSet<ChunkStore> ChunkStores { get; set; }
-    public DbSet<Repository> Repositories { get; set; }
+    public DbSet<FileDefinition> FileDefinitions { get; set; }
+    public DbSet<IngestSession> IngestSessions { get; set; }
     public DbSet<Release> Releases { get; set; }
     public DbSet<ReleaseMetrics> ReleaseMetrics { get; set; }
-    public DbSet<Chunk> Chunks { get; set; }
-    public DbSet<FileDefinition> FileDefinitions { get; set; }
+    public DbSet<Repository> Repositories { get; set; }
+    public DbSet<RepositoryRoleAssignment> RepositoryRoleAssignments { get; set; }
+    public DbSet<ServiceAccount> ServiceAccounts { get; set; }
+    public DbSet<Tenant> Tenants { get; set; }
+    public DbSet<TenantMember> TenantMembers { get; set; }
+    public DbSet<TenantRoleAssignment> TenantRoleAssignments { get; set; }
+    public DbSet<UserGroup> UserGroups { get; set; }
+    public DbSet<UserGroupMember> UserGroupMembers { get; set; }
     public DbSet<UserRefreshToken> UserRefreshTokens { get; set; }
-
+    
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(BinStashDbContext).Assembly);

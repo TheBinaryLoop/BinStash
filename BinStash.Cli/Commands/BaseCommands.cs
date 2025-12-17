@@ -53,6 +53,8 @@ public abstract class UrlCommandBase : CommandBase
     protected override ValueTask<bool> PreCheckAsync(IConsole console)
     {
         // Default checks that all commands inherit
+        if (string.IsNullOrWhiteSpace(Url)) 
+            return new(false);
         return new(true);
     }
 }   
@@ -62,12 +64,17 @@ public abstract class AuthenticatedCommandBase : UrlCommandBase
     [CommandOption("token", 't', Description = "Authentication token for the BinStash server.")]
     public string? Token { get; set; }
 
+    [CommandOption("no-auth", 'n', Description = "Disable authentication.")]
+    public bool NoAuth { get; set; }
+
     protected Func<string> AuthTokenFactory { get; private set; } = () => string.Empty;
 
     protected override async ValueTask<bool> PreCheckAsync(IConsole console)
     {
         if (!await base.PreCheckAsync(console))
             return false;
+        
+        if (NoAuth) return true;
 
         var http = new HttpClient { BaseAddress = new Uri(GetUrl()) };
         var auth = new Auth.AuthService(http);
