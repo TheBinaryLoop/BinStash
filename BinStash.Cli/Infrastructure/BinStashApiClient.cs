@@ -20,7 +20,7 @@ using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Ingest;
 using BinStash.Contracts.Release;
-using BinStash.Contracts.Repos;
+using BinStash.Contracts.Repo;
 using BinStash.Core.Chunking;
 using BinStash.Core.Compression;
 using BinStash.Core.Serialization;

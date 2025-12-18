@@ -16,7 +16,7 @@
 
 namespace BinStash.Core.Entities;
 
-public enum IngestSessionState
+public enum IngestSessionState : short
 {
     Created = 0,
     InProgress = 1,

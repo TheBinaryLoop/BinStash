@@ -14,7 +14,7 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.Release;
-using BinStash.Contracts.Repos;
+using BinStash.Contracts.Repo;
 using BinStash.Core.Auth;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;

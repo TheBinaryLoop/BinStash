@@ -24,6 +24,7 @@ using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using BinStash.Server.Auth;
+using BinStash.Server.Context;
 using BinStash.Server.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -54,6 +55,12 @@ public static class IngestSessionEndpoints
             .RequireRepoPermission(RepositoryPermission.Write)
             .RequireValidIngestSession();
         
+        session.MapGet("/", GetSessionStatsAsync)
+            .WithDescription("Gets statistics about the ingest session.")
+            .WithSummary("Get Ingest Session Stats")
+            .Produces<IngestSessionStatsDto>()
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status400BadRequest);
         session.MapPost("/files/missing", GetMissingFileDefinitionsAsync)
             .WithDescription("Gets a list of missing file definitions in the chunk store.")
             .WithSummary("Get Missing File Definitions")
@@ -84,14 +91,16 @@ public static class IngestSessionEndpoints
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status400BadRequest);
+        //session.MapPost("/finalize", FinalizeIngestSessionAsync)
+        //    .WithDescription("Finalizes the ingest session.")
+        //    .WithSummary("Finalize Ingest Session")
+        //    .Produces(StatusCodes.Status200OK)
+        //    .Produces(StatusCodes.Status404NotFound)
+        //    .Produces(StatusCodes.Status400BadRequest)
+        //    .RequireRepoPermission(RepositoryPermission.Write);
         
         /*group.MapPost("/start", IngestSessionHandlers.StartIngestSession);
-        group.MapPost("/{sessionId}/finish", IngestSessionHandlers.FinishIngestSession);
-        group.MapPost("/{sessionId}/abort", IngestSessionHandlers.AbortIngestSession);
-        group.MapGet("/{sessionId}", IngestSessionHandlers.GetIngestSessionInfo);
-        group.MapGet("/{sessionId}/chunks/{chunkChecksum}", IngestSessionHandlers.CheckChunkExists);
-        group.MapPut("/{sessionId}/chunks/{chunkChecksum}", IngestSessionHandlers.UploadChunk);
-        group.MapPost("/{sessionId}/release", IngestSessionHandlers.UploadReleaseDefinition);*/
+        group.MapPost("/{sessionId}/abort", IngestSessionHandlers.AbortIngestSession);*/
         return group;
     }
 
@@ -119,6 +128,17 @@ public static class IngestSessionEndpoints
         
         // return new session ID and expiry time (30 minutes from now)
         return Results.Json(new CreateIngestSessionResponse(session.Id, session.ExpiresAt), statusCode: 201);
+    }
+    
+    private static async Task<IResult> GetSessionStatsAsync(Guid repoId, Guid sessionId, BinStashDbContext db, HttpContext context, TenantContext tenantContext)
+    {
+        var ingestSession = await db.IngestSessions.FindAsync(sessionId);
+        if (ingestSession == null || ingestSession.RepoId != repoId)
+            return Results.NotFound();
+        
+        var stats = new IngestSessionStatsDto(ingestSession.Id, (short)ingestSession.State, ingestSession.StartedAt, 0);
+        
+        return Results.Json(stats);
     }
     
     private static async Task<IResult> GetMissingFileDefinitionsAsync(Guid repoId, Guid ingestSessionId, HttpRequest request, BinStashDbContext db)

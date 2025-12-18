@@ -27,10 +27,11 @@ public class ApiKeyEntityTypeConfiguration : IEntityTypeConfiguration<ApiKey>
         
         builder.HasKey(a => a.Id);
         
-        builder.Property(a => a.ServiceAccountId).IsRequired();
+        builder.Property(a => a.SubjectType).IsRequired();
+        builder.Property(a => a.SubjectId).IsRequired();
         builder.Property(a => a.SecretHash).IsRequired().HasMaxLength(256);
         builder.Property(a => a.DisplayName).IsRequired().HasMaxLength(256);
         builder.Property(a => a.CreatedAt).IsRequired().HasDefaultValueSql("now() at time zone 'utc'");
-        builder.Property(a => a.Scopes).IsRequired().HasColumnType("jsonb");
+        builder.Property(a => a.Scopes).IsRequired();
     }
 }

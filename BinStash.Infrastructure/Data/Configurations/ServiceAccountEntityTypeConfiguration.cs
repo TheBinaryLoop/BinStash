@@ -36,6 +36,5 @@ public class ServiceAccountEntityTypeConfiguration : IEntityTypeConfiguration<Se
         builder.HasIndex(sa => sa.TenantId);
         
         builder.HasOne(sa => sa.Tenant).WithMany().HasForeignKey(sa => sa.TenantId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasMany(sa => sa.ApiKeys).WithOne(ak => ak.ServiceAccount).HasForeignKey(ak => ak.ServiceAccountId).IsRequired();
     }
 }

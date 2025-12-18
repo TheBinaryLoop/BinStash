@@ -14,7 +14,7 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Cli.Infrastructure;
-using BinStash.Contracts.Repos;
+using BinStash.Contracts.Repo;
 using CliFx;
 using CliFx.Attributes;
 using CliFx.Exceptions;

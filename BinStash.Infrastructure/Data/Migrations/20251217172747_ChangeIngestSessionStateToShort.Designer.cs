@@ -3,6 +3,7 @@ using System;
 using BinStash.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace BinStash.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(BinStashDbContext))]
-    partial class BinStashDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251217172747_ChangeIngestSessionStateToShort")]
+    partial class ChangeIngestSessionStateToShort
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -28,7 +31,7 @@ namespace BinStash.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
+                    b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("now() at time zone 'utc'");
@@ -38,32 +41,26 @@ namespace BinStash.Infrastructure.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
-                    b.Property<DateTimeOffset?>("ExpiresAt")
+                    b.Property<DateTime?>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTimeOffset?>("LastUsedAt")
+                    b.Property<DateTime?>("LastUsedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTimeOffset?>("RevokedAt")
+                    b.Property<DateTime?>("RevokedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.PrimitiveCollection<string[]>("Scopes")
                         .IsRequired()
-                        .HasColumnType("text[]");
+                        .HasColumnType("jsonb");
 
                     b.Property<string>("SecretHash")
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
-                    b.Property<Guid?>("ServiceAccountId")
+                    b.Property<Guid>("ServiceAccountId")
                         .HasColumnType("uuid");
-
-                    b.Property<Guid>("SubjectId")
-                        .HasColumnType("uuid");
-
-                    b.Property<short>("SubjectType")
-                        .HasColumnType("smallint");
 
                     b.HasKey("Id");
 
@@ -779,9 +776,13 @@ namespace BinStash.Infrastructure.Data.Migrations
 
             modelBuilder.Entity("BinStash.Core.Entities.ApiKey", b =>
                 {
-                    b.HasOne("BinStash.Core.Entities.ServiceAccount", null)
+                    b.HasOne("BinStash.Core.Entities.ServiceAccount", "ServiceAccount")
                         .WithMany("ApiKeys")
-                        .HasForeignKey("ServiceAccountId");
+                        .HasForeignKey("ServiceAccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ServiceAccount");
                 });
 
             modelBuilder.Entity("BinStash.Core.Entities.ChunkStore", b =>

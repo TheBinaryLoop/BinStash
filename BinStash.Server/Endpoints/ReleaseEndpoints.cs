@@ -18,7 +18,7 @@ using System.Text;
 using System.Text.Json;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
-using BinStash.Contracts.Repos;
+using BinStash.Contracts.Repo;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;

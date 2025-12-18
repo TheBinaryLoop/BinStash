@@ -17,6 +17,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using BinStash.Core.Auth;
 using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
@@ -25,19 +26,13 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace BinStash.Server.Auth.Tokens;
 
-public class TokenService : ITokenService
+public class TokenService(
+    IConfiguration configuration,
+    BinStashDbContext db,
+    IPasswordHasher<IdentityUser<Guid>> userPasswordHasher,
+    IPasswordHasher<ApiKey> apiKeyPasswordHasher)
+    : ITokenService
 {
-    private readonly BinStashDbContext _db;
-    private readonly IConfiguration _configuration;
-    private readonly IPasswordHasher<IdentityUser<Guid>> _passwordHasher;
-
-    public TokenService(IConfiguration configuration, BinStashDbContext db, IPasswordHasher<IdentityUser<Guid>> passwordHasher)
-    {
-        _configuration = configuration;
-        _db = db;
-        _passwordHasher = passwordHasher;
-    }
-    
     public async Task<(string accessToken, string refreshToken)> CreateTokensAsync(IdentityUser<Guid> user)
     {
         var now = DateTime.UtcNow;
@@ -50,11 +45,11 @@ public class TokenService : ITokenService
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
-        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Auth:Jwt:Key"]!));
+        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["Auth:Jwt:Key"]!));
         var creds = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
 
         var jwt = new JwtSecurityToken(
-            issuer: _configuration["Auth:Jwt:Issuer"]!,
+            issuer: configuration["Auth:Jwt:Issuer"]!,
             audience: null, // not validating audience
             claims: claims,
             notBefore: now,
@@ -65,7 +60,7 @@ public class TokenService : ITokenService
         var accessToken = new JwtSecurityTokenHandler().WriteToken(jwt);
         
         var rawRefreshToken = GenerateSecureToken();
-        var tokenHash = _passwordHasher.HashPassword(user, rawRefreshToken);
+        var tokenHash = userPasswordHasher.HashPassword(user, rawRefreshToken);
 
         // generate refresh token
         var refreshToken = new UserRefreshToken
@@ -77,12 +72,34 @@ public class TokenService : ITokenService
             ExpiresAt = now.AddDays(30),
         };
 
-        _db.UserRefreshTokens.Add(refreshToken);
-        await _db.SaveChangesAsync();
+        db.UserRefreshTokens.Add(refreshToken);
+        await db.SaveChangesAsync();
 
         return (accessToken, $"{Convert.ToHexStringLower(refreshToken.Id.ToByteArray())}.{rawRefreshToken}");
     }
-    
+
+    public async Task<(ApiKey apiKey, string rawApiKey)> CreateApiKeyAsync(SubjectType subjectType, Guid subjectId, string name, DateTimeOffset? requestExpiresAt)
+    {
+        var rawApiKey = GenerateSecureToken();
+        var apiKey = new ApiKey
+        {
+            Id = Guid.CreateVersion7(),
+            SubjectType = subjectType,
+            SubjectId = subjectId,
+            DisplayName = name,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        if (requestExpiresAt.HasValue) 
+            apiKey.ExpiresAt = requestExpiresAt.Value;
+        
+        var apiKeyHash = apiKeyPasswordHasher.HashPassword(apiKey, rawApiKey);
+        apiKey.SecretHash = apiKeyHash;
+        
+        db.ApiKeys.Add(apiKey);
+        await db.SaveChangesAsync();
+        return (apiKey, rawApiKey);
+    }
+
     private static string GenerateSecureToken()
     {
         var bytes = RandomNumberGenerator.GetBytes(64);

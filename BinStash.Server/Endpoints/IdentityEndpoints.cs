@@ -17,7 +17,9 @@ using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
+using BinStash.Contracts.Auth;
 using BinStash.Core.Auth.Tokens;
+using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -127,6 +129,15 @@ public static class IdentityEndpoints
                 RefreshToken = refreshToken,
                 ExpiresIn = 15 * 60 // 15 minutes
             });
+        });
+        
+        group.MapPost("/machine/token", async Task<Results<IResult, EmptyHttpResult, ProblemHttpResult>>
+            ([FromBody] MachineTokenLoginRequest login, [FromServices] IServiceProvider sp) =>
+        {
+            var db = sp.GetRequiredService<BinStashDbContext>();
+            var hasher = sp.GetRequiredService<IPasswordHasher<ApiKey>>();
+
+            return TypedResults.NotFound("Not implemented");
         });
 
         group.MapPost("/refresh", async Task<Results<Ok<AccessTokenResponse>, UnauthorizedHttpResult, ProblemHttpResult, ChallengeHttpResult>>

@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using BinStash.Core.Auth;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
 using Microsoft.AspNetCore.Authentication;
@@ -30,13 +31,22 @@ public class ApiKeyAuthHandler(
 
         var secret = parts[1];
 
-        var key = await db.Set<ApiKey>()
-            .Include(k => k.ServiceAccount)
+        var key = await db.ApiKeys
             .SingleOrDefaultAsync(k => k.Id == keyId);
-
-        if (key is null || !key.IsActive || key.ServiceAccount.Disabled)
+        
+        if (key is null || !key.IsActive)
             return AuthenticateResult.Fail("API key revoked/expired.");
 
+        return AuthenticateResult.Fail("Not implemented.");
+        // TODO: Implement api keys for users and service accounts
+        
+        var subject = key.SubjectType switch
+        {
+            SubjectType.ServiceAccount => "service_account",
+            _ => "unknown"
+        };
+        
+        
         var verified = hasher.VerifyHashedPassword(key, key.SecretHash, secret);
         if (verified == PasswordVerificationResult.Failed)
             return AuthenticateResult.Fail("Invalid API key.");
@@ -46,7 +56,7 @@ public class ApiKeyAuthHandler(
 
         var claims = new List<Claim>
         {
-            new(ClaimTypes.NameIdentifier, key.ServiceAccountId.ToString()),
+            new(ClaimTypes.NameIdentifier, key.SubjectId.ToString()),
             new("auth_type", "machine"),
         };
 

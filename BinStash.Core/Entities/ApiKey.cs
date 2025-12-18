@@ -13,22 +13,24 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Auth;
+
 namespace BinStash.Core.Entities;
 
 public class ApiKey
 {
     public Guid Id { get; set; }
-    public Guid ServiceAccountId { get; set; }
-    public ServiceAccount ServiceAccount { get; set; } = null!;
+    public SubjectType SubjectType { get; set; }
+    public Guid SubjectId { get; set; }
 
     // Identity-style hashed secret
     public string SecretHash { get; set; } = null!;
 
     public string DisplayName { get; set; } = null!;
-    public DateTime CreatedAt { get; set; }
-    public DateTime? LastUsedAt { get; set; }
-    public DateTime? ExpiresAt { get; set; }
-    public DateTime? RevokedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? LastUsedAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
 
     // Optional: scoping
     public string[] Scopes { get; set; } = []; // use jsonb in postgres

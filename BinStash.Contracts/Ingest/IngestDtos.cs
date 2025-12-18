@@ -17,3 +17,4 @@ namespace BinStash.Contracts.Ingest;
 
 public record CreateIngestSessionRequest(string ClientVersion, string IntendedRelease);
 public record CreateIngestSessionResponse(Guid SessionId, DateTimeOffset ExpiresAt);
+public record IngestSessionStatsDto(Guid SessionId, short State, DateTimeOffset StartedAt, long UploadedBytes);
