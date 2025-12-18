@@ -10,8 +10,9 @@ pipeline {
   }
 
   environment {
-    SOLUTION     = 'BinStash.sln'
+    SOLUTION = 'BinStash.sln'
     BUILD_CONFIG = 'Release'
+    MSBUILDDISABLENODEREUSE = 1
   }
 
   parameters {
@@ -39,7 +40,7 @@ pipeline {
         dotnetRestore(
           project: env.SOLUTION,
           sdk: 'dotnet-lts',
-          showSdkInfo: true // prints dotnet --info before the command
+          showSdkInfo: false // prints dotnet --info before the command
         )
       }
     }
@@ -63,33 +64,17 @@ pipeline {
           configuration: env.BUILD_CONFIG,
           noBuild: true,
           logger: 'xunit',
-          sdk: 'dotnet-lts'
+          sdk: 'dotnet-lts',
+          shutDownBuildServers: true
         )
-
-        // Option B (optional): also produce TRX for JUnit if you want test reports in Jenkins UI
-        // withDotNet(sdk: 'dotnet-9.0') {
-        //   sh 'dotnet test "$SOLUTION" -c "$BUILD_CONFIG" --no-build --logger "trx;LogFileName=test_results.trx"'
-        // }
       }
       post {
-        // If you enabled Option B above, publish TRX:
-        //always { junit allowEmptyResults: true, testResults: '**/TestResults/*.trx' }
         always { xunit checksName: '', tools: [xUnitDotNet(excludesPattern: '', pattern: '**/TestResults/*.xml', stopProcessingIfError: true)] }
         success { echo '✅ Tests passed' }
       }
     }
   }
   post {
-    always {
-      // Recommended by the plugin to avoid lingering build servers on agents
-      // (shuts down MSBuild/Roslyn servers that may keep the build "hanging")
-      dotnetBuild(
-        // dummy no-op call solely to access the 'shutDownBuildServers' option
-        project: env.SOLUTION, // ignored for shutdown
-        sdk: 'dotnet-lts',
-        shutDownBuildServers: true
-      ) // :contentReference[oaicite:1]{index=1}
-    }
     success { echo "✅ Build completed for ${env.SOLUTION} (${env.BUILD_CONFIG})." }
     failure { echo "❌ Build failed. Check logs." }
   }
