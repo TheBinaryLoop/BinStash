@@ -13,8 +13,11 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Contracts.Tenant;
+using BinStash.Core.Entities;
 
-public record UpdateTenantMemberRolesDto(List<string> Roles);
-public record TenantMemberDto(Guid TenantId, Guid UserId, List<string> Roles);
-public record InviteTenantMemberDto(string Email, List<string> Roles);
+namespace BinStash.Core.Auth.Tenant;
+
+public interface ITenantEmailSender
+{
+    Task SendMemberInvitationEmailAsync(BinStashUser inviter, Entities.Tenant tenant, string email, string invitationLink);
+}

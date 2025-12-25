@@ -13,8 +13,9 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Contracts.Tenant;
+namespace BinStash.Infrastructure.Templates;
 
-public record UpdateTenantMemberRolesDto(List<string> Roles);
-public record TenantMemberDto(Guid TenantId, Guid UserId, List<string> Roles);
-public record InviteTenantMemberDto(string Email, List<string> Roles);
+public interface IEmailTemplateRenderer
+{
+    string Render(string templateName, object model);
+}

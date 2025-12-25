@@ -13,8 +13,18 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Contracts.Tenant;
+using BinStash.Core.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
-public record UpdateTenantMemberRolesDto(List<string> Roles);
-public record TenantMemberDto(Guid TenantId, Guid UserId, List<string> Roles);
-public record InviteTenantMemberDto(string Email, List<string> Roles);
+namespace BinStash.Infrastructure.Data.Configurations;
+
+public class UserEntityTypeConfiguration : IEntityTypeConfiguration<BinStashUser>
+{
+    public void Configure(EntityTypeBuilder<BinStashUser> builder)
+    {
+        builder.Property(u => u.FirstName).IsRequired().HasMaxLength(128);
+        builder.Property(u => u.MiddleName).HasMaxLength(128);
+        builder.Property(u => u.LastName).IsRequired().HasMaxLength(128);
+    }
+}

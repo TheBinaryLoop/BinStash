@@ -14,19 +14,22 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Text;
-using BinStash.Core.Auth;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
-using BinStash.Server.Auth;
+using BinStash.Infrastructure.Email.Brevo;
+using BinStash.Infrastructure.Templates;
 using BinStash.Server.Auth.ApiKeys;
 using BinStash.Server.Auth.Repository;
 using BinStash.Server.Auth.Tenant;
 using BinStash.Server.Auth.Tokens;
+using BinStash.Server.Configuration.Tenancy;
 using BinStash.Server.Context;
+using BinStash.Server.Email;
 using BinStash.Server.Extensions;
+using BinStash.Server.HostedServices;
 using BinStash.Server.Middlewares;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -47,8 +50,17 @@ public static class Program
         builder.Services.AddSystemd();
         builder.Services.AddWindowsService();
         
+        // Configuration
+        builder.Services.Configure<TenancyOptions>(builder.Configuration.GetSection("Tenancy"));
+        
         // Add services to the container.
+        builder.Services.AddSingleton<IEmailTemplateRenderer, EmailTemplateRenderer>(_ => new EmailTemplateRenderer(typeof(EmailTemplateRenderer).Assembly, "BinStash.Infrastructure"));
+        builder.Services.AddHttpClient<BrevoApiClient>();
+        builder.Services.AddTransient<BrevoApiClient>();
+        builder.Services.AddTransient<IEmailSender<BinStashUser>, BrevoEmailSender>();
+        builder.Services.AddTransient<ITenantEmailSender, BrevoEmailSender>();
         builder.Services.AddScoped<ITokenService, TokenService>();
+        builder.Services.AddScoped<TenantJoinService>();
         builder.Services.AddResponseCompression();
         builder.Services.AddProblemDetails();
         
@@ -90,12 +102,24 @@ public static class Program
 
         builder.Services.AddDbContext<BinStashDbContext>((_, optionsBuilder) => optionsBuilder.UseNpgsql(builder.Configuration.GetConnectionString("BinStashDb"))/*.EnableSensitiveDataLogging()*/);
 
-        builder.Services.AddIdentityApiEndpoints<IdentityUser<Guid>>().AddEntityFrameworkStores<BinStashDbContext>();
+        builder.Services.AddIdentityApiEndpoints<BinStashUser>(options =>
+            {
+                options.SignIn.RequireConfirmedAccount = true;
+                options.SignIn.RequireConfirmedEmail = true;
+                options.User.RequireUniqueEmail = true;
+                options.Lockout.AllowedForNewUsers = true;
+                options.Lockout.MaxFailedAccessAttempts = 5;
+                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+            })
+            .AddEntityFrameworkStores<BinStashDbContext>();
         
         builder.Services.AddScoped<TenantContext>();
         builder.Services.AddScoped<ITenantContext>(sp => sp.GetRequiredService<TenantContext>());
 
         builder.Services.AddProblemDetails();
+        
+        // Hosted services
+        builder.Services.AddHostedService<SingleTenantBootstrapper>();
 
         
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi

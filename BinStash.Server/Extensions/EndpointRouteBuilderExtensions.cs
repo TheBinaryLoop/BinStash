@@ -14,7 +14,6 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Server.Endpoints;
-using Microsoft.AspNetCore.Identity;
 
 namespace BinStash.Server.Extensions;
 
@@ -22,7 +21,7 @@ public static class EndpointRouteBuilderExtensions
 {
     public static void MapAllEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapIdentityEndpoints<IdentityUser<Guid>>();
+        app.MapIdentityEndpoints();
         app.MapChunkStoreEndpoints();
         app.MapIngestSessionEndpoints();
         app.MapRepositoryEndpoints();

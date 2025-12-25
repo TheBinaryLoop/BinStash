@@ -29,7 +29,7 @@ namespace BinStash.Server.Auth.Tokens;
 public class TokenService(
     IConfiguration configuration,
     BinStashDbContext db,
-    IPasswordHasher<IdentityUser<Guid>> userPasswordHasher,
+    IPasswordHasher<BinStashUser> userPasswordHasher,
     IPasswordHasher<ApiKey> apiKeyPasswordHasher)
     : ITokenService
 {
@@ -60,7 +60,7 @@ public class TokenService(
         var accessToken = new JwtSecurityTokenHandler().WriteToken(jwt);
         
         var rawRefreshToken = GenerateSecureToken();
-        var tokenHash = userPasswordHasher.HashPassword(user, rawRefreshToken);
+        var tokenHash = userPasswordHasher.HashPassword((BinStashUser)user, rawRefreshToken);
 
         // generate refresh token
         var refreshToken = new UserRefreshToken

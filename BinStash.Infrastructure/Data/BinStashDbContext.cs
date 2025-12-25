@@ -21,7 +21,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BinStash.Infrastructure.Data;
 
 public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
-    : IdentityDbContext<IdentityUser<Guid>, IdentityRole<Guid>, Guid>(options)
+    : IdentityDbContext<BinStashUser, IdentityRole<Guid>, Guid>(options)
 {
     public DbSet<ApiKey> ApiKeys { get; set; }
     public DbSet<Chunk> Chunks { get; set; }
@@ -35,6 +35,7 @@ public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     public DbSet<ServiceAccount> ServiceAccounts { get; set; }
     public DbSet<Tenant> Tenants { get; set; }
     public DbSet<TenantMember> TenantMembers { get; set; }
+    public DbSet<TenantMemberInvitation> TenantMemberInvitations { get; set; }
     public DbSet<TenantRoleAssignment> TenantRoleAssignments { get; set; }
     public DbSet<UserGroup> UserGroups { get; set; }
     public DbSet<UserGroupMember> UserGroupMembers { get; set; }
@@ -42,7 +43,7 @@ public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.ApplyConfigurationsFromAssembly(typeof(BinStashDbContext).Assembly);
         base.OnModelCreating(modelBuilder);
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(BinStashDbContext).Assembly);
     }
 }

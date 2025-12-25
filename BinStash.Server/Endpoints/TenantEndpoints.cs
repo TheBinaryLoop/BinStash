@@ -14,6 +14,7 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Security.Claims;
+using System.Text;
 using BinStash.Contracts.Tenant;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Entities;
@@ -22,12 +23,17 @@ using BinStash.Server.Auth;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Server.Endpoints;
 
 public static class TenantEndpoints
-{
+{ 
+    // We'll figure out a unique endpoint name based on the final route pattern during endpoint generation.
+    private static string? acceptInvitationEndpointName;
+    
     public static RouteGroupBuilder MapTenantEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/tenants")
@@ -61,9 +67,36 @@ public static class TenantEndpoints
             .RequireTenantPermission(TenantPermission.Admin);
         
         // POST /api/tenants/{tenantId}/invitations
-        // - Permission: TenantAdmin
-        // - Why: invite flow is the typical SaaS onboarding mechanism; avoids public registration.
-        // - When: admin invites a coworker by email.
+                // - Permission: TenantAdmin
+                // - Why: invite flow is the typical SaaS onboarding mechanism; avoids public registration.
+                // - When: admin invites a coworker by email.
+        group.MapPost("/current/invatations", InviteMemberAsync)
+            .WithDescription("Invite a member to a tenant.")
+            .WithSummary("Invite Tenant Member")
+            .RequireTenantPermission(TenantPermission.Admin);
+        explicitTenantGroup.MapPost("/invitations", InviteMemberAsync)
+            .WithDescription("Invite a member to a tenant.")
+            .WithSummary("Invite Tenant Member")
+            .RequireTenantPermission(TenantPermission.Admin);
+        
+        
+        // GET /api/tenants/{tenantId}/invitations/{code}/accept
+        // - Permission: Public or Authenticated - Evaluate which fits better
+        // - Why: accepts invite and creates membership or routes to registration if user not found.
+        // - When: user clicks the link from the email; CLI can accept with code.
+        // Returns: membership summary
+        // { "tenantId": "...", "userId": "...", "roles": ["Member"] }
+        
+        group.MapGet("/current/invitations/{code}/accept", AcceptInvitationAsync)
+            .WithDescription("Accept an invitation to join the current tenant.")
+            .WithSummary("Accept Tenant Invitation")
+            .AllowAnonymous()
+            .Add(endpointBuilder =>
+            {
+                var finalPattern = ((RouteEndpointBuilder)endpointBuilder).RoutePattern.RawText;
+                acceptInvitationEndpointName = $"{nameof(MapTenantEndpoints)}-{finalPattern}";
+                endpointBuilder.Metadata.Add(new EndpointNameMetadata(acceptInvitationEndpointName));
+            });;
         
         // POST /api/tenants/{tenantId}/invitations/{code}/accept
         // - Permission: Public or Authenticated - Evaluate which fits better
@@ -197,6 +230,98 @@ public static class TenantEndpoints
             return Results.NotFound("Tenant not found.");
         
         return Results.Ok(tenant);
+    }
+    
+    private static async Task<IResult> InviteMemberAsync(InviteTenantMemberDto request, HttpContext context, BinStashDbContext db, TenantContext tenantContext, UserManager<BinStashUser> userManager, ITenantEmailSender emailSender, LinkGenerator linkGenerator)
+    {
+        var tenant = await db.Tenants.FindAsync(tenantContext.TenantId);
+        if (tenant == null)
+            return Results.NotFound("Tenant not found.");
+        
+        var userIdStr = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
+        if (!Guid.TryParse(userIdStr, out var userId))
+            return Results.BadRequest();
+        
+        var inviter = await userManager.FindByIdAsync(userId.ToString());
+        if (inviter == null)
+            return Results.NotFound("Inviter user not found.");
+        
+        var existingUser = await userManager.FindByEmailAsync(request.Email);
+        if (existingUser is not null)
+        {
+            var existingMember = await db.TenantMembers.FirstOrDefaultAsync(tm => tm.TenantId == tenantContext.TenantId && tm.UserId == existingUser.Id);
+            if (existingMember != null)
+                return Results.BadRequest("Cannot invite member; already a member.");
+        }
+        // Create invitation
+        var invitation = new TenantMemberInvitation
+        {
+            TenantId = tenantContext.TenantId,
+            InviterId = userId,
+            InviteeEmail = request.Email,
+            Roles = request.Roles,
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(7),
+            Code = Guid.NewGuid().ToString("N")
+        };
+        
+        await db.TenantMemberInvitations.AddAsync(invitation);
+        await db.SaveChangesAsync();
+        
+        var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(invitation.Code));
+        var acceptEmailUrl = !string.IsNullOrEmpty(acceptInvitationEndpointName) ? linkGenerator.GetUriByName(context, acceptInvitationEndpointName, values: new { code })
+                              : throw new NotSupportedException($"Could not find endpoint named '{acceptInvitationEndpointName}'.");
+        
+        await emailSender.SendMemberInvitationEmailAsync(inviter, tenant, request.Email, acceptEmailUrl);
+        
+        return Results.Ok();
+    }
+    
+    private static async Task<IResult> AcceptInvitationAsync(string code, HttpContext context, BinStashDbContext db, TenantContext tenantContext)
+    {
+        if (string.IsNullOrEmpty(code))
+            return Results.BadRequest("Invitation code is required.");
+        
+        var decodedBytes = WebEncoders.Base64UrlDecode(code);
+        var decodedCode = Encoding.UTF8.GetString(decodedBytes);
+        var invitation = await db.TenantMemberInvitations.FirstOrDefaultAsync(i => i.TenantId == tenantContext.TenantId && i.Code == decodedCode && i.ExpiresAt > DateTimeOffset.UtcNow);
+        if (invitation == null)
+            return Results.NotFound("Invitation not found or expired.");
+        
+        // Check if the user is authenticated
+        var userIdStr = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
+        if (!Guid.TryParse(userIdStr, out var userId))
+            return Results.Unauthorized(); // Redirect to registration/login flow
+        
+        var existingMember = await db.TenantMembers.FirstOrDefaultAsync(tm => tm.TenantId == tenantContext.TenantId && tm.UserId == userId);
+        if (existingMember != null)
+            return Results.BadRequest("You are already a member of this tenant.");
+        
+        // Create membership
+        var membership = new TenantMember
+        {
+            TenantId = tenantContext.TenantId,
+            UserId = userId,
+            JoinedAt = DateTimeOffset.UtcNow
+        };
+        
+        await db.TenantMembers.AddAsync(membership);
+        // Assign roles
+        var roleAssignments = invitation.Roles.Select(roleName => new TenantRoleAssignment
+        {  
+            TenantId = tenantContext.TenantId,
+            UserId = userId,
+            RoleName = roleName,
+            GrantedAt = DateTimeOffset.UtcNow
+        });
+        
+        await db.TenantRoleAssignments.AddRangeAsync(roleAssignments);
+        
+        // Remove invitation
+        invitation.AcceptedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync();
+        return Results.Ok(new TenantMemberDto(tenantContext.TenantId, userId, invitation.Roles));
     }
     
     private static async Task<IResult> RemoveMemberFromTenant(Guid memberId, HttpContext context, BinStashDbContext db, TenantContext tenantContext)

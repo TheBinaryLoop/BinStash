@@ -21,6 +21,7 @@ using BinStash.Contracts.Auth;
 using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Auth.Tenant;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
@@ -28,6 +29,8 @@ using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using InfoResponse = BinStash.Contracts.Auth.InfoResponse;
+using RegisterRequest = BinStash.Contracts.Auth.RegisterRequest;
 
 namespace BinStash.Server.Endpoints;
 
@@ -35,11 +38,11 @@ public static class IdentityEndpoints
 {
     private static readonly EmailAddressAttribute EmailAddressAttribute = new();
     
-    public static RouteGroupBuilder MapIdentityEndpoints<TUser>(this IEndpointRouteBuilder app) where TUser : class, new()
+    public static RouteGroupBuilder MapIdentityEndpoints(this IEndpointRouteBuilder app)
     {
         //var timeProvider = app.ServiceProvider.GetRequiredService<TimeProvider>();
         //var bearerTokenOptions = app.ServiceProvider.GetRequiredService<IOptionsMonitor<BearerTokenOptions>>();
-        var emailSender = app.ServiceProvider.GetRequiredService<IEmailSender<TUser>>();
+        var emailSender = app.ServiceProvider.GetRequiredService<IEmailSender<BinStashUser>>();
         var linkGenerator = app.ServiceProvider.GetRequiredService<LinkGenerator>();
         
         // We'll figure out a unique endpoint name based on the final route pattern during endpoint generation.
@@ -57,15 +60,15 @@ public static class IdentityEndpoints
             if (!config.GetValue<bool>("Auth:Settings:AllowRegistration"))
                 return CreateValidationProblem("RegistrationDisabled", "Registration is disabled.");
             
-            var userManager = sp.GetRequiredService<UserManager<TUser>>();
+            var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
             
             if (!userManager.SupportsUserEmail)
             {
                 throw new NotSupportedException($"{nameof(MapIdentityEndpoints)} requires a user store with email support.");
             }
 
-            var userStore = sp.GetRequiredService<IUserStore<TUser>>();
-            var emailStore = (IUserEmailStore<TUser>)userStore;
+            var userStore = sp.GetRequiredService<IUserStore<BinStashUser>>();
+            var emailStore = (IUserEmailStore<BinStashUser>)userStore;
             var email = registration.Email;
 
             if (string.IsNullOrEmpty(email) || !EmailAddressAttribute.IsValid(email))
@@ -73,7 +76,13 @@ public static class IdentityEndpoints
                 return CreateValidationProblem(IdentityResult.Failed(userManager.ErrorDescriber.InvalidEmail(email)));
             }
 
-            var user = new TUser();
+            var user = new BinStashUser
+            {
+                Id = Guid.CreateVersion7(),
+                FirstName = registration.FirstName,
+                MiddleName = registration.MiddleName,
+                LastName = registration.LastName
+            };
             await userStore.SetUserNameAsync(user, email, CancellationToken.None);
             await emailStore.SetEmailAsync(user, email, CancellationToken.None);
             var result = await userManager.CreateAsync(user, registration.Password);
@@ -84,13 +93,16 @@ public static class IdentityEndpoints
             }
 
             await SendConfirmationEmailAsync(user, userManager, context, email);
+            
+            var tenantJoinService = sp.GetRequiredService<TenantJoinService>();
+            await tenantJoinService.JoinOnRegisterAsync(user.Id, context.RequestAborted);
             return TypedResults.Ok();
         });
 
         group.MapPost("/login", async Task<Results<IResult, EmptyHttpResult, ProblemHttpResult>>
             ([FromBody] LoginRequest login, [FromQuery] bool? useCookies, [FromQuery] bool? useSessionCookies, [FromServices] IServiceProvider sp) =>
         {
-            var signInManager = sp.GetRequiredService<SignInManager<TUser>>();
+            var signInManager = sp.GetRequiredService<SignInManager<BinStashUser>>();
             var tokenService = sp.GetRequiredService<ITokenService>();
 
             var useCookieScheme = (useCookies == true) || (useSessionCookies == true);
@@ -121,7 +133,7 @@ public static class IdentityEndpoints
             }
             
             var (accessToken, refreshToken) =
-                await tokenService.CreateTokensAsync(user as IdentityUser<Guid> ?? throw new NotSupportedException("The token service requires TUser to be IdentityUser<Guid>."));
+                await tokenService.CreateTokensAsync(user as IdentityUser<Guid> ?? throw new NotSupportedException("The token service requires User to be IdentityUser<Guid>."));
 
             return TypedResults.Ok(new AccessTokenResponse
             {
@@ -193,7 +205,7 @@ public static class IdentityEndpoints
         group.MapGet("/confirmEmail", async Task<Results<ContentHttpResult, UnauthorizedHttpResult>>
             ([FromQuery] string userId, [FromQuery] string code, [FromQuery] string? changedEmail, [FromServices] IServiceProvider sp) =>
         {
-            var userManager = sp.GetRequiredService<UserManager<TUser>>();
+            var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
             if (await userManager.FindByIdAsync(userId) is not { } user)
             {
                 // We could respond with a 404 instead of a 401 like Identity UI, but that feels like unnecessary information.
@@ -244,7 +256,7 @@ public static class IdentityEndpoints
         group.MapPost("/resendConfirmationEmail", async Task<Ok>
             ([FromBody] ResendConfirmationEmailRequest resendRequest, HttpContext context, [FromServices] IServiceProvider sp) =>
         {
-            var userManager = sp.GetRequiredService<UserManager<TUser>>();
+            var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
             if (await userManager.FindByEmailAsync(resendRequest.Email) is not { } user)
             {
                 return TypedResults.Ok();
@@ -257,7 +269,7 @@ public static class IdentityEndpoints
         group.MapPost("/forgotPassword", async Task<Results<Ok, ValidationProblem>>
             ([FromBody] ForgotPasswordRequest resetRequest, [FromServices] IServiceProvider sp) =>
         {
-            var userManager = sp.GetRequiredService<UserManager<TUser>>();
+            var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
             var user = await userManager.FindByEmailAsync(resetRequest.Email);
 
             if (user is not null && await userManager.IsEmailConfirmedAsync(user))
@@ -276,7 +288,7 @@ public static class IdentityEndpoints
         group.MapPost("/resetPassword", async Task<Results<Ok, ValidationProblem>>
             ([FromBody] ResetPasswordRequest resetRequest, [FromServices] IServiceProvider sp) =>
         {
-            var userManager = sp.GetRequiredService<UserManager<TUser>>();
+            var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
 
             var user = await userManager.FindByEmailAsync(resetRequest.Email);
 
@@ -311,7 +323,7 @@ public static class IdentityEndpoints
         accountGroup.MapPost("/2fa", async Task<Results<Ok<TwoFactorResponse>, ValidationProblem, NotFound>>
             (ClaimsPrincipal claimsPrincipal, [FromBody] TwoFactorRequest tfaRequest, [FromServices] IServiceProvider sp) =>
         {
-            var signInManager = sp.GetRequiredService<SignInManager<TUser>>();
+            var signInManager = sp.GetRequiredService<SignInManager<BinStashUser>>();
             var userManager = signInManager.UserManager;
             if (await userManager.GetUserAsync(claimsPrincipal) is not { } user)
             {
@@ -387,7 +399,7 @@ public static class IdentityEndpoints
         accountGroup.MapGet("/info", async Task<Results<Ok<InfoResponse>, ValidationProblem, NotFound>>
             (ClaimsPrincipal claimsPrincipal, [FromServices] IServiceProvider sp) =>
         {
-            var userManager = sp.GetRequiredService<UserManager<TUser>>();
+            var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
             if (await userManager.GetUserAsync(claimsPrincipal) is not { } user)
             {
                 return TypedResults.NotFound();
@@ -399,7 +411,7 @@ public static class IdentityEndpoints
         accountGroup.MapPost("/info", async Task<Results<Ok<InfoResponse>, ValidationProblem, NotFound>>
             (ClaimsPrincipal claimsPrincipal, [FromBody] InfoRequest infoRequest, HttpContext context, [FromServices] IServiceProvider sp) =>
         {
-            var userManager = sp.GetRequiredService<UserManager<TUser>>();
+            var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
             if (await userManager.GetUserAsync(claimsPrincipal) is not { } user)
             {
                 return TypedResults.NotFound();
@@ -438,7 +450,7 @@ public static class IdentityEndpoints
             return TypedResults.Ok(await CreateInfoResponseAsync(user, userManager));
         });
 
-        async Task SendConfirmationEmailAsync(TUser user, UserManager<TUser> userManager, HttpContext context, string email, bool isChange = false)
+        async Task SendConfirmationEmailAsync(BinStashUser user, UserManager<BinStashUser> userManager, HttpContext context, string email, bool isChange = false)
         {
             if (confirmEmailEndpointName is null)
             {
@@ -504,11 +516,13 @@ public static class IdentityEndpoints
         return TypedResults.ValidationProblem(errorDictionary);
     }
 
-    private static async Task<InfoResponse> CreateInfoResponseAsync<TUser>(TUser user, UserManager<TUser> userManager)
-        where TUser : class
+    private static async Task<InfoResponse> CreateInfoResponseAsync(BinStashUser user, UserManager<BinStashUser> userManager)
     {
         return new()
         {
+            FirstName = user.FirstName,
+            MiddleName = user.MiddleName,
+            LastName = user.LastName,
             Email = await userManager.GetEmailAsync(user) ?? throw new NotSupportedException("Users must have an email."),
             IsEmailConfirmed = await userManager.IsEmailConfirmedAsync(user),
         };

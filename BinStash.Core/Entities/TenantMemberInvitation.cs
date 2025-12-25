@@ -13,8 +13,19 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Contracts.Tenant;
+namespace BinStash.Core.Entities;
 
-public record UpdateTenantMemberRolesDto(List<string> Roles);
-public record TenantMemberDto(Guid TenantId, Guid UserId, List<string> Roles);
-public record InviteTenantMemberDto(string Email, List<string> Roles);
+public class TenantMemberInvitation
+{
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid TenantId { get; set; }
+    public Tenant Tenant { get; set; } = null!;
+    public Guid InviterId { get; set; }
+    public BinStashUser Inviter { get; set; } = null!;
+    public string InviteeEmail { get; set; } = null!;
+    public List<string> Roles { get; set; } = new();
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? AcceptedAt { get; set; }
+    public string Code { get; set; } = null!;
+}

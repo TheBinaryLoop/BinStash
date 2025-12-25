@@ -14,15 +14,17 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Configuration.Tenancy;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace BinStash.Server.Middlewares;
 
 public sealed class TenantResolutionMiddleware(RequestDelegate next)
 {
-    public async Task InvokeAsync(HttpContext http, BinStashDbContext db, TenantContext tenantContext, IConfiguration configuration)
+    public async Task InvokeAsync(HttpContext http, BinStashDbContext db, TenantContext tenantContext, IOptions<TenancyOptions> tenancyOpts)
     {
         var path = http.Request.Path;
 
@@ -35,6 +37,15 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
             return;
         }
 
+        var tenancyOptions = tenancyOpts.Value;
+        if (tenancyOptions.Mode == TenancyMode.Single)
+        {
+            tenantContext.TenantId = tenancyOptions.SingleTenant.TenantId;
+            tenantContext.TenantSlug = tenancyOptions.SingleTenant.Slug;
+            tenantContext.IsResolved = true;
+            await next(http);
+            return;
+        }
         
         // Try to resolve tenant from route
         if (http.Request.RouteValues.TryGetGuidValue("tenantId", out var tenantId))
@@ -66,7 +77,7 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
         
         // Try to resolve tenant from host
         // Example host: "acme.api.tld" (or "acme.api.tld:443")
-        var slug = ExtractTenantSlug(http.Request.Host.Host, configuration.GetValue<string>("Tenant:HostSuffix"));
+        var slug = ExtractTenantSlug(http.Request.Host.Host, tenancyOptions.DomainSuffix);
         if (slug is not null)
         {
             var tenant = await db.Tenants
