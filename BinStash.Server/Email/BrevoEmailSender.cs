@@ -47,7 +47,6 @@ public class BrevoEmailSender : IEmailSender<BinStashUser>, ITenantEmailSender
             ActionUrl = confirmationLink,
             LinkTtl = "15 minutes",
             DateTimeOffset.UtcNow.Year,
-            CompanyOrOrg = "Default",
             SupportEmail = _configuration["Email:SupportEmail"] ?? throw new InvalidOperationException("Support email is not configured.")
         });
         
@@ -63,7 +62,6 @@ public class BrevoEmailSender : IEmailSender<BinStashUser>, ITenantEmailSender
             ActionUrl = resetLink,
             LinkTtl = "15 minutes",
             DateTimeOffset.UtcNow.Year,
-            CompanyOrOrg = "Default",
             SupportEmail = _configuration["Email:SupportEmail"] ?? throw new InvalidOperationException("Support email is not configured.")
         });
         
@@ -79,7 +77,6 @@ public class BrevoEmailSender : IEmailSender<BinStashUser>, ITenantEmailSender
             ResetCode = resetCode,
             CodeTtl = "15 minutes",
             DateTimeOffset.UtcNow.Year,
-            CompanyOrOrg = "Default",
             SupportEmail = _configuration["Email:SupportEmail"] ?? throw new InvalidOperationException("Support email is not configured.")
         });
         
@@ -97,7 +94,6 @@ public class BrevoEmailSender : IEmailSender<BinStashUser>, ITenantEmailSender
             ActionUrl = invitationLink,
             InviteTtl = "7 days",
             DateTimeOffset.UtcNow.Year,
-            CompanyOrOrg = "Default",
             SupportEmail = _configuration["Email:SupportEmail"] ?? throw new InvalidOperationException("Support email is not configured.")
         });
         
