@@ -19,7 +19,7 @@
       <PackageReference Include="KeySharp" Version="1.0.5" />
       <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="10.0.1" />
       <PackageReference Include="Spectre.Console" Version="0.54.0" />
-      <PackageReference Include="System.IO.Hashing" Version="9.0.6" />
+      <PackageReference Include="System.IO.Hashing" Version="10.0.1" />
       <PackageReference Include="ZstdNetNGX" Version="1.0.0" />
     </ItemGroup>
 
