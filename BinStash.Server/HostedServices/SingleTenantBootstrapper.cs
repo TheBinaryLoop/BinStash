@@ -21,18 +21,11 @@ using Microsoft.Extensions.Options;
 
 namespace BinStash.Server.HostedServices;
 
-public class SingleTenantBootstrapper : IHostedService
+public class SingleTenantBootstrapper(IServiceProvider serviceProvider) : IHostedService
 {
-    private readonly IServiceProvider _serviceProvider;
-
-    public SingleTenantBootstrapper(IServiceProvider serviceProvider)
-    {
-        _serviceProvider = serviceProvider;
-    }
-
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        using var scope = _serviceProvider.CreateScope();
+        using var scope = serviceProvider.CreateScope();
         
         var db = scope.ServiceProvider.GetRequiredService<BinStashDbContext>();
         var opt = scope.ServiceProvider.GetRequiredService<IOptions<TenancyOptions>>().Value;

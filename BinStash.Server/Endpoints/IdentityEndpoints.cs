@@ -132,6 +132,12 @@ public static class IdentityEndpoints
                 return TypedResults.Problem(result.ToString(), statusCode: StatusCodes.Status401Unauthorized);
             }
             
+            if (useCookieScheme)
+            {
+                await signInManager.SignInAsync(user, isPersistent);
+                return TypedResults.Ok();
+            }
+            
             var (accessToken, refreshToken) =
                 await tokenService.CreateTokensAsync(user as IdentityUser<Guid> ?? throw new NotSupportedException("The token service requires User to be IdentityUser<Guid>."));
 
@@ -202,7 +208,7 @@ public static class IdentityEndpoints
             });
         });
 
-        group.MapGet("/confirmEmail", async Task<Results<ContentHttpResult, UnauthorizedHttpResult>>
+        group.MapGet("/confirmEmail", async Task<Results<ContentHttpResult,UnauthorizedHttpResult>>
             ([FromQuery] string userId, [FromQuery] string code, [FromQuery] string? changedEmail, [FromServices] IServiceProvider sp) =>
         {
             var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
@@ -211,7 +217,7 @@ public static class IdentityEndpoints
                 // We could respond with a 404 instead of a 401 like Identity UI, but that feels like unnecessary information.
                 return TypedResults.Unauthorized();
             }
-
+            
             try
             {
                 code = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(code));
@@ -244,13 +250,60 @@ public static class IdentityEndpoints
                 return TypedResults.Unauthorized();
             }
 
-            return TypedResults.Text("Thank you for confirming your email.");
+            return TypedResults.Content("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>Email Confirmed</title></head><body><h1>Email Confirmed</h1><p>Your email has been successfully confirmed. You can now close this window and return to the application.</p></body></html>", "text/html");
         })
         .Add(endpointBuilder =>
         {
             var finalPattern = ((RouteEndpointBuilder)endpointBuilder).RoutePattern.RawText;
             confirmEmailEndpointName = $"{nameof(MapIdentityEndpoints)}-{finalPattern}";
             endpointBuilder.Metadata.Add(new EndpointNameMetadata(confirmEmailEndpointName));
+        });
+        
+        group.MapPost("/confirmEmail", async Task<Results<Ok, UnauthorizedHttpResult>>
+            ([FromBody] ConfirmEmailRequest confirmEmailRequest, [FromServices] IServiceProvider sp) =>
+        {
+            var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
+            if (await userManager.FindByIdAsync(confirmEmailRequest.UserId) is not { } user)
+            {
+                // We could respond with a 404 instead of a 401 like Identity UI, but that feels like unnecessary information.
+                return TypedResults.Unauthorized();
+            }
+            
+            var code = confirmEmailRequest.Code;
+
+            try
+            {
+                code = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(code));
+            }
+            catch (FormatException)
+            {
+                return TypedResults.Unauthorized();
+            }
+
+            IdentityResult result;
+
+            if (string.IsNullOrEmpty(confirmEmailRequest.ChangedEmail))
+            {
+                result = await userManager.ConfirmEmailAsync(user, code);
+            }
+            else
+            {
+                // As with Identity UI, email and username are one and the same. So when we update the email,
+                // we need to update the username.
+                result = await userManager.ChangeEmailAsync(user, confirmEmailRequest.ChangedEmail, code);
+
+                if (result.Succeeded)
+                {
+                    result = await userManager.SetUserNameAsync(user, confirmEmailRequest.ChangedEmail);
+                }
+            }
+
+            if (!result.Succeeded)
+            {
+                return TypedResults.Unauthorized();
+            }
+
+            return TypedResults.Ok();
         });
 
         group.MapPost("/resendConfirmationEmail", async Task<Ok>
@@ -317,7 +370,7 @@ public static class IdentityEndpoints
 
             return TypedResults.Ok();
         });
-
+        
         var accountGroup = group.MapGroup("/manage").RequireAuthorization();
 
         accountGroup.MapPost("/2fa", async Task<Results<Ok<TwoFactorResponse>, ValidationProblem, NotFound>>
@@ -475,8 +528,9 @@ public static class IdentityEndpoints
                 routeValues.Add("changedEmail", email);
             }
 
-            var confirmEmailUrl = linkGenerator.GetUriByName(context, confirmEmailEndpointName, routeValues)
-                ?? throw new NotSupportedException($"Could not find endpoint named '{confirmEmailEndpointName}'.");
+            var confirmEmailUrl = $"http://localhost:5173/verify-email?userId={Uri.EscapeDataString(userId)}&code={Uri.EscapeDataString(code)}";
+            /*var confirmEmailUrl = linkGenerator.GetUriByName(context, confirmEmailEndpointName, routeValues)
+                ?? throw new NotSupportedException($"Could not find endpoint named '{confirmEmailEndpointName}'.");*/
 
             await emailSender.SendConfirmationLinkAsync(user, email, HtmlEncoder.Default.Encode(confirmEmailUrl));
         }
@@ -525,6 +579,7 @@ public static class IdentityEndpoints
             LastName = user.LastName,
             Email = await userManager.GetEmailAsync(user) ?? throw new NotSupportedException("Users must have an email."),
             IsEmailConfirmed = await userManager.IsEmailConfirmedAsync(user),
+            OnboardingCompleted = user.OnboardingCompleted
         };
     }
 }

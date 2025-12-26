@@ -32,6 +32,7 @@ using BinStash.Server.Extensions;
 using BinStash.Server.HostedServices;
 using BinStash.Server.Middlewares;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -63,11 +64,39 @@ public static class Program
         builder.Services.AddScoped<TenantJoinService>();
         builder.Services.AddResponseCompression();
         builder.Services.AddProblemDetails();
+
+        builder.Services.AddCors(options =>
+        {
+            if (builder.Environment.IsDevelopment())
+            {
+                options.AddDefaultPolicy(policy =>
+                {
+                    policy.SetIsOriginAllowed(origin => new Uri(origin).IsLoopback)
+                        .AllowAnyHeader()
+                        .AllowAnyMethod()
+                        .AllowCredentials();
+                });
+            }
+        });
         
         builder.Services.AddAuthentication(options =>
             {
-                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultScheme = "Smart";
+                options.DefaultChallengeScheme = "Smart";
+                //options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                //options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddPolicyScheme("Smart", "Smart Auth Scheme", options =>
+            {
+                options.ForwardDefaultSelector = ctx =>
+                {
+                    var auth = ctx.Request.Headers.Authorization.ToString();
+                    if (auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                        return JwtBearerDefaults.AuthenticationScheme;
+                    if (auth.StartsWith("ApiKey ", StringComparison.OrdinalIgnoreCase))
+                        return "ApiKey";
+                    return CookieAuthenticationDefaults.AuthenticationScheme;
+                };
             })
             .AddJwtBearer(options =>
             {
@@ -80,6 +109,19 @@ public static class Program
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Auth:Jwt:Key"] ?? "dev-only-change-me")),
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.FromMinutes(1)
+                };
+            })
+            .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
+            {
+                options.Events.OnRedirectToLogin = ctx =>
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    return Task.CompletedTask;
+                };
+                options.Events.OnRedirectToAccessDenied = ctx =>
+                {
+                    ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    return Task.CompletedTask;
                 };
             })
             .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthHandler>("ApiKey", _ => { });
@@ -148,6 +190,7 @@ public static class Program
                 }));
         }
 
+        app.UseCors();
         app.UseHttpsRedirection();
         app.UseResponseCompression();
         app.UseStatusCodePages();

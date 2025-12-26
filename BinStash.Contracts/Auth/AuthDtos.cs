@@ -44,6 +44,24 @@ public sealed class RegisterRequest
     public required string Password { get; init; }
 }
 
+public sealed class ConfirmEmailRequest
+{
+    /// <summary>
+    /// The user's ID.
+    /// </summary>
+    public required string UserId { get; init; }
+    
+    /// <summary>
+    /// The email confirmation code.
+    /// </summary>
+    public required string Code { get; init; }
+    
+    /// <summary>
+    /// The changed email address, if applicable.
+    /// </summary>
+    public string? ChangedEmail { get; init; }
+}
+
 public sealed class InfoResponse
 {
     /// <summary>
@@ -70,4 +88,9 @@ public sealed class InfoResponse
     /// Indicates whether or not the <see cref="Email"/> has been confirmed yet.
     /// </summary>
     public required bool IsEmailConfirmed { get; init; }
+    
+    /// <summary>
+    /// Indicates whether or not the user has completed the onboarding process.
+    /// </summary>
+    public required bool OnboardingCompleted { get; set; }
 }

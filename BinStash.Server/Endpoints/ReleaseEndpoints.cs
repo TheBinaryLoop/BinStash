@@ -84,7 +84,7 @@ public static class ReleaseEndpoints
     
     private static async Task<IResult> CreateReleaseAsync(HttpRequest request, BinStashDbContext db)
     {
-        // Check for the ingest id header X-Ingest-Session-Id
+        // Check for ingest id header X-Ingest-Session-Id
         if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
             return Results.BadRequest("Missing or invalid X-Ingest-Session-Id header.");
         

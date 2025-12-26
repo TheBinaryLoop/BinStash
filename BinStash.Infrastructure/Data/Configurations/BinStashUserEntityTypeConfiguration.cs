@@ -19,12 +19,13 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace BinStash.Infrastructure.Data.Configurations;
 
-public class UserEntityTypeConfiguration : IEntityTypeConfiguration<BinStashUser>
+public class BinStashUserEntityTypeConfiguration : IEntityTypeConfiguration<BinStashUser>
 {
     public void Configure(EntityTypeBuilder<BinStashUser> builder)
     {
         builder.Property(u => u.FirstName).IsRequired().HasMaxLength(128);
         builder.Property(u => u.MiddleName).HasMaxLength(128);
         builder.Property(u => u.LastName).IsRequired().HasMaxLength(128);
+        builder.Property(u => u.OnboardingCompleted).IsRequired();
     }
 }

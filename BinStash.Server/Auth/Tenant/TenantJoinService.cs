@@ -44,7 +44,6 @@ public class TenantJoinService(BinStashDbContext db, IOptions<TenancyOptions> op
                 JoinedAt = DateTimeOffset.UtcNow
             });
         }
-
         
         // Make the first user admin if no admin exists yet
         var anyAdmin = await db.TenantRoleAssignments.AnyAsync(x => x.TenantId == tenantId && x.RoleName == "TenantAdmin", ct);
