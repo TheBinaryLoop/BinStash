@@ -32,7 +32,7 @@ public class RepoRootCommand : ICommand
 }
 
 [Command("repo list", Description = "List all repositories you have access to")]
-public class RepoListCommand : AuthenticatedCommandBase
+public class RepoListCommand : TenantCommandBase
 {
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -52,7 +52,7 @@ public class RepoListCommand : AuthenticatedCommandBase
 }
 
 [Command("repo add", Description = "Add a new repository")]
-public class RepoAddCommand : AuthenticatedCommandBase
+public class RepoAddCommand : TenantCommandBase
 {
     [CommandOption("name", 'n', Description = "Name of the repository", IsRequired = true)]
     public string Name { get; init; } = string.Empty;
@@ -60,36 +60,19 @@ public class RepoAddCommand : AuthenticatedCommandBase
     [CommandOption("description", 'd', Description = "Description of the repository")]
     public string? Description { get; init; }
     
-    [CommandOption("chunk-store", 'c', Description = "Chunk store for the repository", IsRequired = true)]
-    public string ChunkStoreName { get; set; } = string.Empty;
+    [CommandOption("storage-class", 'c', Description = "Storage class for the repository")]
+    public string? StorageClass { get; set; } = string.Empty;
     
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
         var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
         
-        var chunkStores = await client.GetChunkStoresAsync();
-        if (chunkStores == null || chunkStores.Count == 0)
-        {
-            await console.Output.WriteLineAsync("No chunk stores available. Please create a chunk store before adding a repository.");
-            return;
-        }
-        
-        var chunkStore = chunkStores.FirstOrDefault(cs => cs.Name.Equals(ChunkStoreName, StringComparison.OrdinalIgnoreCase));
-        if (chunkStore == null)
-        {
-            await console.Output.WriteLineAsync("Chunk store not found. Available chunk stores:");
-            foreach (var cs in chunkStores)
-            {
-                await console.Output.WriteLineAsync($"- {cs.Name} (ID: {cs.Id})");
-            }
-            return;
-        }
         
         var createDto = new CreateRepositoryDto
         {
             Name = Name,
             Description = string.IsNullOrWhiteSpace(Description) ? null : Description,
-            ChunkStoreId = chunkStore.Id
+            StorageClassName = StorageClass
         };
         
         var repo = await client.CreateRepositoryAsync(createDto);
@@ -104,6 +87,6 @@ public class RepoAddCommand : AuthenticatedCommandBase
         await console.Output.WriteLineAsync($"- ID: {repo.Id}");
         await console.Output.WriteLineAsync($"- Name: {repo.Name}");
         await console.Output.WriteLineAsync($"- Desc: {repo.Description}");
-        await console.Output.WriteLineAsync($"- ChunkStoreId: {repo.ChunkStoreId}");
+        await console.Output.WriteLineAsync($"- Storage class: {repo.StorageClass}");
     }
 }

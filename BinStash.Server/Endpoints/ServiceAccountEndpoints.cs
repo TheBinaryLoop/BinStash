@@ -34,12 +34,14 @@ public static class ServiceAccountEndpoints
             .WithTags("Service Accounts")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
+            .RequireAuthorization()
             .RequireTenantPermission(TenantPermission.Admin);
         
         var group = app.MapGroup("/api/service-accounts")
             .WithTags("Service Accounts")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
+            .RequireAuthorization()
             .RequireTenantPermission(TenantPermission.Admin);
         
         MapGroup(tenantGroup);

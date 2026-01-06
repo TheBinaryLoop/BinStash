@@ -13,9 +13,16 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Contracts.Tenant;
+namespace BinStash.Core.Entities;
 
-public record TenantInfoDto(Guid TenantId, string Name, string Slug, DateTimeOffset JoinedAt);
-public record UpdateTenantMemberRolesDto(List<string> Roles);
-public record TenantMemberDto(Guid TenantId, Guid UserId, List<string> Roles);
-public record InviteTenantMemberDto(string Email, List<string> Roles);
+public class StorageClassMapping
+{
+    public Guid TenantId { get; set; }                     // tenant-scoped
+    public string StorageClassName { get; set; } = null!;
+    public Guid ChunkStoreId { get; set; }
+
+    public bool IsDefault { get; set; }                    // exactly one default per tenant
+    public bool IsEnabled { get; set; } = true;            // allow disabling a class for a tenant
+
+    public DateTimeOffset CreatedAt { get; set; }
+}

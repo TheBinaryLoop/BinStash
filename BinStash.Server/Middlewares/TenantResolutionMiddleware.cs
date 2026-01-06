@@ -50,15 +50,20 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
         // Try to resolve tenant from route
         if (http.Request.RouteValues.TryGetGuidValue("tenantId", out var tenantId))
         {
-            var exists = await db.Tenants.AnyAsync(t => t.Id == tenantId);
-            if (!exists)
+            var tenant = await db.Tenants
+                .Where(t => t.Id == tenantId)
+                .Select(t => new { t.Id, t.Slug })
+                .SingleOrDefaultAsync();
+            if (tenant is null)
             {
                 http.Response.StatusCode = StatusCodes.Status404NotFound;
                 await http.Response.WriteAsync("Unknown tenant.");
                 return;
             }
 
-            tenantContext.TenantId = tenantId;
+            tenantContext.TenantId = tenant.Id;
+            tenantContext.TenantSlug = tenant.Slug;
+            tenantContext.IsResolved = true;
             await next(http);
             return;
         }
@@ -66,13 +71,22 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
         // Try to resolve tenant from a query parameter
         if (http.Request.Query.Count > 0 && http.Request.Query.TryGetValue("tenantId", out var tenantIdQuery) && Guid.TryParse(tenantIdQuery, out tenantId))
         {
-            var exists = await db.Tenants.AnyAsync(t => t.Id == tenantId);
-            if (!exists)
+            var tenant = await db.Tenants
+                .Where(t => t.Id == tenantId)
+                .Select(t => new { t.Id, t.Slug })
+                .SingleOrDefaultAsync();
+            if (tenant is null)
             {
                 http.Response.StatusCode = StatusCodes.Status404NotFound;
                 await http.Response.WriteAsync("Unknown tenant.");
                 return;
             }
+
+            tenantContext.TenantId = tenant.Id;
+            tenantContext.TenantSlug = tenant.Slug;
+            tenantContext.IsResolved = true;
+            await next(http);
+            return;
         }
         
         // Try to resolve tenant from host

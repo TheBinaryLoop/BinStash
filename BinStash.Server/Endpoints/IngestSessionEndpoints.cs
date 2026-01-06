@@ -20,13 +20,13 @@ using BinStash.Contracts.Ingest;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
+using BinStash.Core.Extensions;
+using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
-using BinStash.Server.Auth;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using ZstdNet;
 
@@ -36,11 +36,11 @@ public static class IngestSessionEndpoints
 {
     public static RouteGroupBuilder MapIngestSessionEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/repositories/{repoId:guid}/ingest")
+        var group = app.MapGroup("/api/tenants/{tenantId:guid}/repositories/{repoId:guid}/ingest")
             .WithTags("Ingest Sessions")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .RequireAuthorization(new AuthorizeAttribute { AuthenticationSchemes = AuthDefaults.AuthenticationScheme });
+            .RequireAuthorization();
         
         group.MapPost("/sessions", CreateIngestSessionAsync)
             .WithDescription("Creates a new ingest session and returns the session ID and expiry time.")
@@ -91,20 +91,22 @@ public static class IngestSessionEndpoints
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status400BadRequest);
-        //session.MapPost("/finalize", FinalizeIngestSessionAsync)
-        //    .WithDescription("Finalizes the ingest session.")
-        //    .WithSummary("Finalize Ingest Session")
-        //    .Produces(StatusCodes.Status200OK)
-        //    .Produces(StatusCodes.Status404NotFound)
-        //    .Produces(StatusCodes.Status400BadRequest)
-        //    .RequireRepoPermission(RepositoryPermission.Write);
+        session.MapPost("/finalize", FinalizeIngestSessionAsync)
+            .WithDescription("Finalizes the ingest session.")
+            .WithSummary("Finalize Ingest Session")
+            .Accepts<IFormFile>("multipart/form-data")
+            .Produces(StatusCodes.Status201Created)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status409Conflict)
+            .RequireRepoPermission(RepositoryPermission.Write);
         
         /*group.MapPost("/start", IngestSessionHandlers.StartIngestSession);
         group.MapPost("/{sessionId}/abort", IngestSessionHandlers.AbortIngestSession);*/
         return group;
     }
 
-    public static async Task<IResult> CreateIngestSessionAsync(Guid repoId, BinStashDbContext db)
+    private static async Task<IResult> CreateIngestSessionAsync(Guid repoId, BinStashDbContext db)
     {
         // If we have authentication, we can link the session to a user. We could also enforce per-user limits.
         // For now, we just create a session with a random ID and 30-minute expiry.
@@ -141,13 +143,13 @@ public static class IngestSessionEndpoints
         return Results.Json(stats);
     }
     
-    private static async Task<IResult> GetMissingFileDefinitionsAsync(Guid repoId, Guid ingestSessionId, HttpRequest request, BinStashDbContext db)
+    private static async Task<IResult> GetMissingFileDefinitionsAsync(Guid repoId, Guid sessionId, HttpRequest request, BinStashDbContext db)
     {
         try
         {
             var fileDefinitionChecksums = (await ChecksumCompressor.TransposeDecompressAsync(request.Body)).Select(x => new Hash32(x)).ToList();
 
-            var ingestSession = await db.IngestSessions.FindAsync(ingestSessionId);
+            var ingestSession = await db.IngestSessions.FindAsync(sessionId);
             var repo = await db.Repositories.FindAsync(repoId);
             if (repo == null || ingestSession == null)
                 return Results.NotFound();
@@ -177,7 +179,7 @@ public static class IngestSessionEndpoints
         }
     }
     
-    private static async Task<IResult> UploadFileDefinitionsBatchAsync(Guid id, BinStashDbContext db, HttpRequest request)
+    private static async Task<IResult> UploadFileDefinitionsBatchAsync(Guid repoId, BinStashDbContext db, HttpRequest request)
     {
         // Check for the ingest id header X-Ingest-Session-Id
         if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
@@ -220,12 +222,16 @@ public static class IngestSessionEndpoints
         
         ingestSession.FilesSeenTotal += fileDefinitions.Count;
         
-        var storeMeta = await db.ChunkStores.FindAsync(id);
+        var repo = await db.Repositories.FindAsync(repoId);
+        if (repo == null)
+            return Results.NotFound();
+            
+        var storeMeta = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
         if (storeMeta == null)
             return Results.NotFound();
-
+        
         var fileHashes = fileDefinitions.Keys.ToList();
-        var existingFiles = db.FileDefinitions.Where(x => x.ChunkStoreId == id && fileHashes.Contains(x.Checksum)).Select(x => x.Checksum).ToList();
+        var existingFiles = db.FileDefinitions.Where(x => x.ChunkStoreId == storeMeta.Id && fileHashes.Contains(x.Checksum)).Select(x => x.Checksum).ToList();
         
         var store = new ChunkStore(storeMeta.Name, storeMeta.Type, storeMeta.LocalPath, new LocalFolderObjectStorage(storeMeta.LocalPath));
 
@@ -234,7 +240,7 @@ public static class IngestSessionEndpoints
             var entry = new FileDefinition
             {
                 Checksum = fileDefinition.Key,
-                ChunkStoreId = id,
+                ChunkStoreId = storeMeta.Id,
                 Length = fileDefinition.Value.Length,
             };
             
@@ -257,13 +263,18 @@ public static class IngestSessionEndpoints
         return Results.Created();
     }
     
-    private static async Task<IResult> GetMissingChunksAsync(Guid id, HttpRequest request, BinStashDbContext db)
+    private static async Task<IResult> GetMissingChunksAsync(Guid repoId, Guid sessionId, HttpRequest request, BinStashDbContext db)
     {
         try
         {
             var chunkChecksums = (await ChecksumCompressor.TransposeDecompressAsync(request.Body)).Select(x => new Hash32(x)).ToArray();
             
-            var store = await db.ChunkStores.FindAsync(id);
+            var ingestSession = await db.IngestSessions.FindAsync(sessionId);
+            var repo = await db.Repositories.FindAsync(repoId);
+            if (repo == null || ingestSession == null)
+                return Results.NotFound();
+            
+            var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
             if (store == null)
                 return Results.NotFound();
             
@@ -272,7 +283,7 @@ public static class IngestSessionEndpoints
                 return Results.Bytes(ChecksumCompressor.TransposeCompress([]), "application/octet-stream");
             
             var knownChecksums = db.Chunks
-                .Where(c => c.ChunkStoreId == id && chunkChecksums.Contains(c.Checksum))
+                .Where(c => c.ChunkStoreId == sessionId && ((IEnumerable<Hash32>)chunkChecksums).Contains(c.Checksum))
                 .Select(c => c.Checksum)
                 .ToList();
             
@@ -289,11 +300,16 @@ public static class IngestSessionEndpoints
         }
     }
 
-    private static async Task<IResult> UploadChunkAsync(Guid id, string chunkChecksum, BinStashDbContext db, Stream chunkStream)
+    private static async Task<IResult> UploadChunkAsync(Guid repoId, Guid sessionId, string chunkChecksum, BinStashDbContext db, Stream chunkStream)
     {
         var checksum = Hash32.FromHexString(chunkChecksum);
         
-        var store = await db.ChunkStores.FindAsync(id);
+        var ingestSession = await db.IngestSessions.FindAsync(sessionId);
+        var repo = await db.Repositories.FindAsync(repoId);
+        if (repo == null || ingestSession == null)
+            return Results.NotFound();
+            
+        var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
         if (store == null)
             return Results.NotFound();
             
@@ -303,13 +319,13 @@ public static class IngestSessionEndpoints
         await chunkStream.CopyToAsync(ms);
         ms.Position = 0;
 
-        if (db.Chunks.Any(c => c.ChunkStoreId == id && c.Checksum == checksum)) return Results.Ok();
+        if (db.Chunks.Any(c => c.ChunkStoreId == repoId && c.Checksum == checksum)) return Results.Ok();
         var (success, bytesWritten) = await store.StoreChunkAsync(chunkChecksum, ms.ToArray());
         if (!success) return Results.Problem();
         db.Chunks.Add(new Chunk
         {
             Checksum = checksum,
-            ChunkStoreId = id,
+            ChunkStoreId = repoId,
             Length = Convert.ToInt32(ms.Length),
             CompressedLength = bytesWritten
         });
@@ -317,7 +333,7 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
 
-    private static async Task<IResult> UploadChunksBatchAsync(Guid id, List<ChunkUploadDto> chunks, BinStashDbContext db, HttpRequest request)
+    private static async Task<IResult> UploadChunksBatchAsync(Guid repoId, List<ChunkUploadDto> chunks, BinStashDbContext db, HttpRequest request)
     {
         // Check for the ingest id header X-Ingest-Session-Id
         if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
@@ -333,7 +349,11 @@ public static class IngestSessionEndpoints
         if (ingestSession.State == IngestSessionState.Created)
             ingestSession.State = IngestSessionState.InProgress;
         
-        var storeMeta = await db.ChunkStores.FindAsync(id);
+        var repo = await db.Repositories.FindAsync(repoId);
+        if (repo == null)
+            return Results.NotFound();
+            
+        var storeMeta = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
         if (storeMeta == null)
             return Results.NotFound();
 
@@ -355,7 +375,7 @@ public static class IngestSessionEndpoints
         var checksums = uniqueChunks.Select(c => Hash32.FromHexString(c.Checksum)).ToArray();
         
         var knownChecksums = await db.Chunks
-            .Where(c => c.ChunkStoreId == id && checksums.Contains(c.Checksum))
+            .Where(c => c.ChunkStoreId == repoId && ((IEnumerable<Hash32>)checksums).Contains(c.Checksum))
             .Select(c => c.Checksum)
             .ToListAsync();
         
@@ -393,7 +413,7 @@ public static class IngestSessionEndpoints
             return new Chunk
             {
                 Checksum = checksum,
-                ChunkStoreId = id,
+                ChunkStoreId = repoId,
                 Length = chunk.Data.Length,
                 CompressedLength = missingChunksWrittenBytes[checksum]
             };
@@ -406,5 +426,105 @@ public static class IngestSessionEndpoints
         await db.SaveChangesAsync();
 
         return Results.Ok();
+    }
+    
+    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, HttpRequest request)
+    {
+        var ingestSession = await db.IngestSessions.FindAsync(sessionId);
+        var repo = await db.Repositories.FindAsync(repoId);
+        if (repo == null || ingestSession == null)
+            return Results.NotFound();
+        
+        if (ingestSession.State == IngestSessionState.Completed)
+            return Results.Ok();
+        
+        if (ingestSession.State == IngestSessionState.Completed || ingestSession.State == IngestSessionState.Failed || ingestSession.State == IngestSessionState.Aborted || ingestSession.State == IngestSessionState.Expired || ingestSession.ExpiresAt < DateTimeOffset.UtcNow)
+            return Results.BadRequest("Ingest session is not active.");
+        
+        if (ingestSession.State == IngestSessionState.Created)
+            ingestSession.State = IngestSessionState.InProgress;
+        
+        if (!request.HasFormContentType)
+            return Results.BadRequest("Content-Type must be multipart/form-data.");
+        
+        var form = await request.ReadFormAsync();
+        
+        var file = form.Files.GetFile("releaseDefinition");
+        if (file == null || file.Length == 0)
+            return Results.BadRequest("Missing or empty release definition file.");
+        
+        var contentType = file.ContentType;
+        if (contentType is not "application/x-bs-rdef" )
+            return Results.BadRequest("Unsupported Content-Type.");
+
+        var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
+        if (store == null)
+            return Results.NotFound("Chunk store not found.");
+
+        var releaseId = Guid.CreateVersion7();
+        await using var stream = file.OpenReadStream();
+
+        var releasePackage = await ReleasePackageSerializer.DeserializeAsync(stream);
+        
+        if (db.Releases.Any(r => r.RepoId == repo.Id && r.Version == releasePackage.Version))
+            return Results.Conflict($"A release with version '{releasePackage.Version}' already exists for this repository.");
+
+        var createdAt = DateTimeOffset.UtcNow;
+        
+        releasePackage.CreatedAt = createdAt;
+        releasePackage.ReleaseId = releaseId.ToString();
+        releasePackage.RepoId = repo.Id.ToString();
+        
+        await using var releasePackageStream = new MemoryStream();
+        await ReleasePackageSerializer.SerializeAsync(releasePackageStream, releasePackage);
+        var releasePackageData = releasePackageStream.ToArray();
+        var hash = new Hash32(Blake3.Hasher.Hash(releasePackageData).AsSpan());
+
+        var release = new Release
+        {
+            Id = releaseId,
+            Version = releasePackage.Version,
+            CreatedAt = createdAt,
+            Notes = releasePackage.Notes,
+            RepoId = repo.Id,
+            Repository = repo,
+            ReleaseDefinitionChecksum = hash,
+            CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null,
+            SerializerVersion = ReleasePackageSerializer.Version
+        };
+        
+        await db.Releases.AddAsync(release);
+
+        var chunkStore = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
+        await chunkStore.StoreReleasePackageAsync(releasePackageData);
+        
+        ingestSession.MetadataSize =+ releasePackageData.Length;
+        
+        ingestSession.State = IngestSessionState.Completed;
+        ingestSession.CompletedAt = DateTimeOffset.UtcNow;
+
+        var chunkHashes = releasePackage.Chunks.Select(ci => ci.Checksum).Select(x => new Hash32(x)).ToList();
+        var rawSize = await db.Chunks.Where(c => chunkHashes.Contains(c.Checksum)).SumAsync(x => x.Length);
+        
+        var releaseMetrics = new ReleaseMetrics
+        {
+            ReleaseId = release.Id,
+            IngestSessionId = ingestSession.Id,
+            CreatedAt = release.CreatedAt,
+            ChunksInRelease = releasePackage.Chunks.Count,
+            NewChunks = ingestSession.ChunksSeenNew,
+            TotalUncompressedSize = (ulong)rawSize,
+            NewCompressedBytes = ingestSession.DataSizeUnique,
+            MetaBytesFull = ingestSession.MetadataSize,
+            MetaBytesFullDiff = 0, // Set if we save a patch/diff instead of the full release definition
+            ComponentsInRelease = releasePackage.Components.Count,
+            FilesInRelease = releasePackage.Components.Sum(c => c.Files.Count)
+        };
+
+        await db.ReleaseMetrics.AddAsync(releaseMetrics);
+
+        await db.SaveChangesAsync();
+
+        return Results.Created($"/api/releases/{releaseId}", null);
     }
 }

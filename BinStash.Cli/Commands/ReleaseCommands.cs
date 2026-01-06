@@ -41,7 +41,7 @@ public class ReleasesRootCommand : ICommand
 }
 
 [Command("release list", Description = "List all releases you have access to")]
-public class ReleasesListCommand : AuthenticatedCommandBase
+public class ReleasesListCommand : TenantCommandBase
 {
     [CommandOption("repository", 'r', Description = "Repository to query", IsRequired = true)]
     public string RepositoryName { get; set; } = string.Empty;
@@ -84,7 +84,7 @@ public class ReleasesListCommand : AuthenticatedCommandBase
 }
 
 [Command("release add", Description = "Add a new release")]
-public class ReleasesAddCommand : AuthenticatedCommandBase
+public class ReleasesAddCommand : TenantCommandBase
 {
     [CommandOption("version", 'v', Description = "The version/name of the release", IsRequired = true)]
     public string Version { get; init; } = string.Empty;
@@ -182,25 +182,32 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                     return;
                 }
                 
-                ctx.Status($"Fetching chunk store for repository '{repository.Name}'...");
+                ctx.Status($"Fetching chunker settings for repository '{repository.Name}'...");
                 
-                var chunkStore = await client.GetChunkStoreAsync(repository.ChunkStoreId);
-                if (chunkStore == null)
+                repository = await client.GetRepositoryAsync(repository.Id);
+                if (repository == null)
                 {
-                    ansiConsole.WriteLine($"Chunk store for repository '{repository.Name}' not found.");
+                    // This should never happen!!!
+                    ansiConsole.WriteLine($"Repository '{RepositoryName}' not found when fetching details.");
                     return;
                 }
                 
-                WriteLogMessage(ansiConsole, $"Repository [purple]{repository.Name}[/] uses chunk store: [bold blue]{chunkStore.Name}[/] (ID: [bold blue]{chunkStore.Id}[/])");
+                if (repository.Chunker == null)
+                {
+                    ansiConsole.MarkupLine($"[red]Repository '{repository.Name}' does not have a chunker configured. Please configure a chunk store with chunker settings first.[/]");
+                    return;
+                }
+                
+                WriteLogMessage(ansiConsole, $"Repository [purple]{repository.Name}[/] uses storage class: [bold blue]{repository.StorageClass}[/]");
                 
                 ctx.Status("Setting up chunker ...");
-                var chunker = (Enum.TryParse<ChunkerType>(chunkStore.Chunker.Type, true, out var chunkerType) ? chunkerType : ChunkerType.FastCdc) switch
+                var chunker = (Enum.TryParse<ChunkerType>(repository.Chunker.Type, true, out var chunkerType) ? chunkerType : ChunkerType.FastCdc) switch
                 {
-                    ChunkerType.FastCdc => new FastCdcChunker(chunkStore.Chunker.MinChunkSize!.Value, chunkStore.Chunker.AvgChunkSize!.Value, chunkStore.Chunker.MaxChunkSize!.Value),
-                    _ => throw new NotSupportedException($"Unsupported chunker type: {chunkStore.Chunker.Type}")
+                    ChunkerType.FastCdc => new FastCdcChunker(repository.Chunker.MinChunkSize!.Value, repository.Chunker.AvgChunkSize!.Value, repository.Chunker.MaxChunkSize!.Value),
+                    _ => throw new NotSupportedException($"Unsupported chunker type: {repository.Chunker.Type}")
                 };
                 
-                WriteLogMessage(ansiConsole, $"Using chunker: [purple]{chunker.GetType().Name}[/] with min size [bold blue]{chunkStore.Chunker.MinChunkSize}[/], avg size [bold blue]{chunkStore.Chunker.AvgChunkSize}[/], max size [bold blue]{chunkStore.Chunker.MaxChunkSize}[/]");
+                WriteLogMessage(ansiConsole, $"Using chunker: [purple]{chunker.GetType().Name}[/] with min size [bold blue]{repository.Chunker.MinChunkSize}[/], avg size [bold blue]{repository.Chunker.AvgChunkSize}[/], max size [bold blue]{repository.Chunker.MaxChunkSize}[/]");
                 
                 ctx.Status("Creating component map...");
 
@@ -280,11 +287,16 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 
                 WriteLogMessage(ansiConsole, $"Processed [bold blue]{fileHashes.Count}[/] files from the specified folder in [darkorange]{sw.Elapsed}[/]");
                 
-                ctx.Status("Requesting missing file def info from chunk store...");
-                var missingFileChecksums = await client.GetMissingFileChecksumsAsync(chunkStore.Id, fileHashes.Keys.ToList());
+                ctx.Status("Requesting ingest session...");
+                var ingestSessionId = await client.CreateIngestSessionAsync(repository.Id, releasePackage.Version);
+                WriteLogMessage(ansiConsole, $"Received ingest session ID: [bold blue]{ingestSessionId}[/]");
+
+                
+                ctx.Status("Requesting missing file def info from server...");
+                var missingFileChecksums = await client.GetMissingFileChecksumsAsync(repository.Id, ingestSessionId, fileHashes.Keys.ToList());
                 if (missingFileChecksums.Count == 0)
                 {
-                    WriteLogMessage(ansiConsole, "No missing files found in the chunk store. All files are already available");
+                    WriteLogMessage(ansiConsole, "All files are already available on the server. No files need to be processed.");
                 }
                 else
                 {
@@ -316,15 +328,12 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 
                 WriteLogMessage(ansiConsole, $"Found [bold blue]{uniqueChecksums.Count}[/] unique chunk checksums across all files");
                 
-                ctx.Status("Requesting ingest session...");
-                var ingestSessionId = await client.CreateIngestSessionAsync(repository.Id, releasePackage.Version);
-                WriteLogMessage(ansiConsole, $"Received ingest session ID: [bold blue]{ingestSessionId}[/]");
                 
-                ctx.Status("Requesting missing file def info from chunk store...");
-                var missingChunkChecksums = await client.GetMissingChunkChecksumsAsync(chunkStore.Id, uniqueChecksums);
+                ctx.Status("Requesting missing chunk info from server...");
+                var missingChunkChecksums = await client.GetMissingChunkChecksumsAsync(repository.Id, ingestSessionId, uniqueChecksums);
                 if (missingChunkChecksums.Count == 0)
                 {
-                    WriteLogMessage(ansiConsole, "No missing chunks found in the chunk store. All chunks are already available");
+                    WriteLogMessage(ansiConsole, "All chunks are already available on the server. No chunks need to be uploaded.");
                 }
                 else
                 {
@@ -350,10 +359,10 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                     WriteLogMessage(ansiConsole, $"Calculated [bold blue]{missingChunkEntries.Count}[/] chunk map entries for upload in [darkorange]{sw.Elapsed}[/]");
                     sw.Stop();
                     
-                    ctx.Status("Uploading missing chunks to chunk store...");
+                    ctx.Status("Uploading missing chunks to server...");
                     sw.Restart();
-                    await client.UploadChunksAsync(ingestSessionId, chunker, chunkStore.Id, missingChunkEntries, progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing chunks to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
-                    WriteLogMessage(ansiConsole, $"All missing chunks uploaded to the chunk store in [darkorange]{sw.Elapsed}[/]");
+                    await client.UploadChunksAsync(repository.Id, ingestSessionId, chunker, missingChunkEntries, progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing chunks to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
+                    WriteLogMessage(ansiConsole, $"All missing chunks uploaded to the server in [darkorange]{sw.Elapsed}[/]");
                 }
 
                 if (missingFileChecksums.Count == 0)
@@ -364,7 +373,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
                 {
                     ctx.Status("Uploading file definitions...");
                     sw.Restart();
-                    await client.UploadFileDefinitionsAsync(ingestSessionId, chunkStore.Id, fileHashChunkMaps.ToDictionary(x => x.Key, x => (Chunks: x.Value.Select(v =>  v.Checksum).ToList(), Length: fileStats[x.Key])), progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing file definitions to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
+                    await client.UploadFileDefinitionsAsync(repository.Id, ingestSessionId, fileHashChunkMaps.ToDictionary(x => x.Key, x => (Chunks: x.Value.Select(v =>  v.Checksum).ToList(), Length: fileStats[x.Key])), progressCallback: (uploaded, total) => Task.Run(() => ctx.Status($"Uploading missing file definitions to chunk store ({uploaded}/{total} ({(double)uploaded / total:P2}))...")));
                     WriteLogMessage(ansiConsole, $"All file definitions uploaded to the chunk store in [darkorange]{sw.Elapsed}[/]");
                 }
 
@@ -431,7 +440,7 @@ public class ReleasesAddCommand : AuthenticatedCommandBase
 }
 
 [Command("release delete", Description = "Delete a release")]
-public class ReleaseDeleteCommand : AuthenticatedCommandBase
+public class ReleaseDeleteCommand : TenantCommandBase
 {
     [CommandOption("id", 'i', Description = "Id of the release", IsRequired = true)]
     public Guid ReleaseId { get; init; }
@@ -443,31 +452,24 @@ public class ReleaseDeleteCommand : AuthenticatedCommandBase
 }
 
 [Command("release download", Description = "Download a release")]
-public class ReleaseDownloadCommand : AuthenticatedCommandBase
+public class ReleaseDownloadCommand : TenantCommandBase
 {
-    [CommandOption("repository", 'r', Description = "Repository for the release", IsRequired = false)]
+    [CommandOption("repository", 'r', Description = "Repository for the release", IsRequired = true)]
     public string RepositoryName { get; init; } = string.Empty;
     
-    [CommandOption("release-id", 'i', Description = "The id of the release", IsRequired = false)]
-    public Guid? ReleaseId { get; init; }
-    
-    [CommandOption("version", 'v', Description = "The version/name of the release", IsRequired = false)]
+    [CommandOption("version", 'v', Description = "The version/name of the release", IsRequired = true)]
     public string Version { get; init; } = string.Empty;
     
     [CommandOption("component", 'c', Description = "The component to install", IsRequired = false)]
     public string Component { get; init; } = string.Empty;
     
-    [CommandOption("target-folder", 't', Description = "The target folder to download the release to", IsRequired = true)]
+    [CommandOption("target-folder", 'f', Description = "The target folder to download the release to", IsRequired = true)]
     public string TargetFolder { get; init; } = string.Empty;
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        if (string.IsNullOrWhiteSpace(Version) && !ReleaseId.HasValue)
-        {
-            throw new CommandException("You must specify either a release ID or a version to download.");
-        }
-        
-        if (string.IsNullOrWhiteSpace(Version) && !ReleaseId.HasValue) throw new CommandException("You must specify either a version or a release ID to install.");
+        if (string.IsNullOrWhiteSpace(RepositoryName)) throw new CommandException("You must specify a repository name.");
+        if (string.IsNullOrWhiteSpace(Version)) throw new CommandException("You must specify either a version to install.");
         if (!string.IsNullOrEmpty(Version) && string.IsNullOrEmpty(RepositoryName)) throw new CommandException("You must specify a repository name when providing a version.");
         if (string.IsNullOrWhiteSpace(TargetFolder)) throw new CommandException("You must specify a target directory.");
         
@@ -475,61 +477,36 @@ public class ReleaseDownloadCommand : AuthenticatedCommandBase
 
         ReleaseSummaryDto? release = null;
         
-        // If ReleaseId is specified, fetch the release directly
-        if (ReleaseId != null)
+        var repositories = await client.GetRepositoriesAsync();
+        if (repositories == null || repositories.Count == 0)
         {
-            var releases = await client.GetReleasesAsync();
-            if (releases == null || releases.Count == 0)
-            {
-                console.WriteLine("No releases found. Please create a release first.");
-                return;
-            }
-            
-            release = releases.FirstOrDefault(r => r.Id == ReleaseId.Value);
-            if (release == null)
-            {
-                console.WriteLine($"Release with ID '{ReleaseId}' not found. Available releases:");
-                foreach (var rel in releases)
-                {
-                    console.WriteLine($"- {rel.Version} (ID: {rel.Id})");
-                }
-                return;
-            }
+            console.WriteLine("No repositories found. Please create a repository first.");
+            return;
         }
-        // If Version is specified, fetch the release by version and repository
-        else if (!string.IsNullOrWhiteSpace(Version) && !string.IsNullOrWhiteSpace(RepositoryName))
+    
+        var repository = repositories.FirstOrDefault(r => r.Name.Equals(RepositoryName, StringComparison.OrdinalIgnoreCase));
+        if (repository == null)
         {
-            var repositories = await client.GetRepositoriesAsync();
-            if (repositories == null || repositories.Count == 0)
+            console.WriteLine($"Repository '{RepositoryName}' not found. Available repositories:");
+            foreach (var repo in repositories)
             {
-                console.WriteLine("No repositories found. Please create a repository first.");
-                return;
+                console.WriteLine($"- {repo.Name} (ID: {repo.Id})");
             }
-        
-            var repository = repositories.FirstOrDefault(r => r.Name.Equals(RepositoryName, StringComparison.OrdinalIgnoreCase));
-            if (repository == null)
-            {
-                console.WriteLine($"Repository '{RepositoryName}' not found. Available repositories:");
-                foreach (var repo in repositories)
-                {
-                    console.WriteLine($"- {repo.Name} (ID: {repo.Id})");
-                }
-                return;
-            }
-                
-            var releases = await client.GetReleasesForRepoAsync(repository.Id);
-            if (releases == null || releases.Count == 0)
-            {
-                await console.Output.WriteLineAsync("No releases found.");
-                return;
-            }
+            return;
+        }
             
-            release = releases.FirstOrDefault(r => r.Version.Equals(Version, StringComparison.OrdinalIgnoreCase));
-            if (release == null)
-            {
-                console.WriteLine($"Release with version '{Version}' not found in repository '{RepositoryName}'.");
-                return;
-            }
+        var releases = await client.GetReleasesForRepoAsync(repository.Id);
+        if (releases == null || releases.Count == 0)
+        {
+            await console.Output.WriteLineAsync("No releases found.");
+            return;
+        }
+        
+        release = releases.FirstOrDefault(r => r.Version.Equals(Version, StringComparison.OrdinalIgnoreCase));
+        if (release == null)
+        {
+            console.WriteLine($"Release with version '{Version}' not found in repository '{RepositoryName}'.");
+            return;
         }
         
         // Ensure the target folder exists
@@ -540,7 +517,7 @@ public class ReleaseDownloadCommand : AuthenticatedCommandBase
         
         var downloadPath = Path.Combine(TargetFolder, $"{release.Version}.tar.zst");
 
-        if (!await client.DownloadReleaseAsync(release.Id, downloadPath, Component))
+        if (!await client.DownloadReleaseAsync(repository.Id, release.Id, downloadPath, Component))
         {
             throw new CommandException($"Failed to download release '{release.Version}' (ID: {release.Id}) from repository '{release.Repository.Name}'.");
         }
@@ -577,94 +554,62 @@ public class ChunkStoreShowCommand : ICommand
 }*/
 
 [Command("release install", Description = "Install a release")]
-public class ReleaseInstallCommand : AuthenticatedCommandBase
+public class ReleaseInstallCommand : TenantCommandBase
 {
-    [CommandOption("repository", 'r', Description = "Repository for the release", IsRequired = false)]
+    [CommandOption("repository", 'r', Description = "Repository for the release", IsRequired = true)]
     public string RepositoryName { get; init; } = string.Empty;
     
-    [CommandOption("release-id", 'i', Description = "The id of the release", IsRequired = false)]
-    public Guid? ReleaseId { get; init; }
-    
-    [CommandOption("version", 'v', Description = "The version/name of the release", IsRequired = false)]
+    [CommandOption("version", 'v', Description = "The version/name of the release", IsRequired = true)]
     public string Version { get; init; } = string.Empty;
     
     [CommandOption("component", 'c', Description = "The component to install", IsRequired = false)]
     public string Component { get; init; } = string.Empty;
 
     
-    [CommandOption("target-folder", 't', Description = "The target folder to install the release to", IsRequired = true)]
+    [CommandOption("target-folder", 'f', Description = "The target folder to install the release to", IsRequired = true)]
     public string TargetFolder { get; init; } = string.Empty;
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        if (string.IsNullOrWhiteSpace(Version) && !ReleaseId.HasValue)
-        {
-            throw new CommandException("You must specify either a release ID or a version to download.");
-        }
-        
-        if (string.IsNullOrWhiteSpace(Version) && !ReleaseId.HasValue) throw new CommandException("You must specify either a version or a release ID to install.");
+        if (string.IsNullOrWhiteSpace(RepositoryName)) throw new CommandException("You must specify a repository name.");
+        if (string.IsNullOrWhiteSpace(Version)) throw new CommandException("You must specify either a version to install.");
         if (!string.IsNullOrEmpty(Version) && string.IsNullOrEmpty(RepositoryName)) throw new CommandException("You must specify a repository name when providing a version.");
         if (string.IsNullOrWhiteSpace(TargetFolder)) throw new CommandException("You must specify a target directory.");
         
-        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory, console: console);
 
         ReleaseSummaryDto? release = null;
         
-        // If ReleaseId is specified, fetch the release directly
-        if (ReleaseId != null)
+        var repositories = await client.GetRepositoriesAsync();
+        if (repositories == null || repositories.Count == 0)
         {
-            var releases = await client.GetReleasesAsync();
-            if (releases == null || releases.Count == 0)
-            {
-                console.WriteLine("No releases found. Please create a release first.");
-                return;
-            }
-            
-            release = releases.FirstOrDefault(r => r.Id == ReleaseId.Value);
-            if (release == null)
-            {
-                console.WriteLine($"Release with ID '{ReleaseId}' not found. Available releases:");
-                foreach (var rel in releases)
-                {
-                    console.WriteLine($"- {rel.Version} (ID: {rel.Id})");
-                }
-                return;
-            }
+            console.WriteLine("No repositories found. Please create a repository first.");
+            return;
         }
-        // If Version is specified, fetch the release by version and repository
-        else if (!string.IsNullOrWhiteSpace(Version) && !string.IsNullOrWhiteSpace(RepositoryName))
+    
+        var repository = repositories.FirstOrDefault(r => r.Name.Equals(RepositoryName, StringComparison.OrdinalIgnoreCase));
+        if (repository == null)
         {
-            var repositories = await client.GetRepositoriesAsync();
-            if (repositories == null || repositories.Count == 0)
+            console.WriteLine($"Repository '{RepositoryName}' not found. Available repositories:");
+            foreach (var repo in repositories)
             {
-                console.WriteLine("No repositories found. Please create a repository first.");
-                return;
+                console.WriteLine($"- {repo.Name} (ID: {repo.Id})");
             }
-        
-            var repository = repositories.FirstOrDefault(r => r.Name.Equals(RepositoryName, StringComparison.OrdinalIgnoreCase));
-            if (repository == null)
-            {
-                console.WriteLine($"Repository '{RepositoryName}' not found. Available repositories:");
-                foreach (var repo in repositories)
-                {
-                    console.WriteLine($"- {repo.Name} (ID: {repo.Id})");
-                }
-                return;
-            }
-                
-            var releases = await client.GetReleasesForRepoAsync(repository.Id);
-            if (releases == null || releases.Count == 0)
-            {
-                await console.Output.WriteLineAsync("No releases found.");
-                return;
-            }
+            return;
+        }
             
-            release = releases.FirstOrDefault(r => r.Version.Equals(Version, StringComparison.OrdinalIgnoreCase));
-            if (release == null)
-            {
-                console.WriteLine($"Release with version '{Version}' not found in repository '{RepositoryName}'.");
-                return;
-            }
+        var releases = await client.GetReleasesForRepoAsync(repository.Id);
+        if (releases == null || releases.Count == 0)
+        {
+            await console.Output.WriteLineAsync("No releases found.");
+            return;
+        }
+        
+        release = releases.FirstOrDefault(r => r.Version.Equals(Version, StringComparison.OrdinalIgnoreCase));
+        if (release == null)
+        {
+            console.WriteLine($"Release with version '{Version}' not found in repository '{RepositoryName}'.");
+            return;
         }
         
         // Ensure the target folder exists
@@ -675,7 +620,7 @@ public class ReleaseInstallCommand : AuthenticatedCommandBase
         
         var downloadPath = Path.Combine(TargetFolder, $"{release.Version}.tar.zst");
 
-        if (!await client.DownloadReleaseAsync(release.Id, downloadPath, Component))
+        if (!await client.DownloadReleaseAsync(repository.Id, release.Id, downloadPath, Component))
         {
             throw new CommandException($"Failed to download release '{release.Version}' (ID: {release.Id}) from repository '{release.Repository.Name}'.");
         }

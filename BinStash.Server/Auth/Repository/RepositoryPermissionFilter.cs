@@ -34,7 +34,7 @@ public class RepositoryPermissionFilter(RepositoryPermission permission) : IEndp
         if (!tenantCtx.IsResolved)
             return Results.BadRequest("Tenant context is missing.");
         
-        // Get {groupId:guid} from route values (template uses {groupId})
+        // Get {repoId:guid} from route values (template uses {groupId})
         if (!http.Request.RouteValues.TryGetGuidValue("repoId", out var repoId))
             return Results.BadRequest("Missing or invalid repository id.");
         

@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Entities;
 using BinStash.Server.Endpoints;
 
 namespace BinStash.Server.Extensions;
@@ -21,6 +22,7 @@ public static class EndpointRouteBuilderExtensions
 {
     public static void MapAllEndpoints(this IEndpointRouteBuilder app)
     {
+        //app.MapIdentityApi<BinStashUser>();
         app.MapIdentityEndpoints();
         app.MapChunkStoreEndpoints();
         app.MapIngestSessionEndpoints();

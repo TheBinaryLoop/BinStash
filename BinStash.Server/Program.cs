@@ -78,6 +78,23 @@ public static class Program
                 });
             }
         });
+        builder.Services.AddScoped<IAuthorizationHandler, RepositoryPermissionHandler>();
+        builder.Services.AddScoped<IAuthorizationHandler, TenantPermissionHandler>();
+        
+        builder.Services.AddScoped<IPasswordHasher<ApiKey>, PasswordHasher<ApiKey>>();
+
+        builder.Services.AddDbContext<BinStashDbContext>((_, optionsBuilder) => optionsBuilder.UseNpgsql(builder.Configuration.GetConnectionString("BinStashDb"))/*.EnableSensitiveDataLogging()*/);
+
+        builder.Services.AddIdentityApiEndpoints<BinStashUser>(options =>
+            {
+                options.SignIn.RequireConfirmedAccount = true;
+                options.SignIn.RequireConfirmedEmail = true;
+                options.User.RequireUniqueEmail = true;
+                options.Lockout.AllowedForNewUsers = true;
+                options.Lockout.MaxFailedAccessAttempts = 5;
+                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+            })
+            .AddEntityFrameworkStores<BinStashDbContext>();
         
         builder.Services.AddAuthentication(options =>
             {
@@ -95,10 +112,10 @@ public static class Program
                         return JwtBearerDefaults.AuthenticationScheme;
                     if (auth.StartsWith("ApiKey ", StringComparison.OrdinalIgnoreCase))
                         return "ApiKey";
-                    return CookieAuthenticationDefaults.AuthenticationScheme;
+                    return IdentityConstants.ApplicationScheme;
                 };
             })
-            .AddJwtBearer(options =>
+            .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
             {
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
@@ -137,23 +154,6 @@ public static class Program
             
             options.AddPolicy("Permission:Release:List", p => p.RequireClaim("Permission", "Release:List"));
         });
-        builder.Services.AddScoped<IAuthorizationHandler, RepositoryPermissionHandler>();
-        builder.Services.AddScoped<IAuthorizationHandler, TenantPermissionHandler>();
-        
-        builder.Services.AddScoped<IPasswordHasher<ApiKey>, PasswordHasher<ApiKey>>();
-
-        builder.Services.AddDbContext<BinStashDbContext>((_, optionsBuilder) => optionsBuilder.UseNpgsql(builder.Configuration.GetConnectionString("BinStashDb"))/*.EnableSensitiveDataLogging()*/);
-
-        builder.Services.AddIdentityApiEndpoints<BinStashUser>(options =>
-            {
-                options.SignIn.RequireConfirmedAccount = true;
-                options.SignIn.RequireConfirmedEmail = true;
-                options.User.RequireUniqueEmail = true;
-                options.Lockout.AllowedForNewUsers = true;
-                options.Lockout.MaxFailedAccessAttempts = 5;
-                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
-            })
-            .AddEntityFrameworkStores<BinStashDbContext>();
         
         builder.Services.AddScoped<TenantContext>();
         builder.Services.AddScoped<ITenantContext>(sp => sp.GetRequiredService<TenantContext>());

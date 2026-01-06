@@ -13,9 +13,16 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Contracts.Tenant;
+namespace BinStash.Core.Entities;
 
-public record TenantInfoDto(Guid TenantId, string Name, string Slug, DateTimeOffset JoinedAt);
-public record UpdateTenantMemberRolesDto(List<string> Roles);
-public record TenantMemberDto(Guid TenantId, Guid UserId, List<string> Roles);
-public record InviteTenantMemberDto(string Email, List<string> Roles);
+public class StorageClass
+{
+    public string Name { get; set; } = null!;           // PK: "standard"
+    public string DisplayName { get; set; } = null!;    // "Standard"
+    public string? Description { get; set; }
+    public bool IsDeprecated { get; set; }
+
+    // Optional policy knobs - if null, no limit
+    public int MaxChunkBytes { get; set; } = 16 * 1024 * 1024;
+    //public int? MaxBatchItems { get; set; } = 2048;
+}

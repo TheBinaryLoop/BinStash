@@ -19,10 +19,8 @@ using BinStash.Contracts.Tenant;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
-using BinStash.Server.Auth;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
@@ -40,7 +38,9 @@ public static class TenantEndpoints
             .WithTags("Tenant")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .RequireAuthorization(new AuthorizeAttribute { AuthenticationSchemes = AuthDefaults.AuthenticationScheme });
+            .RequireAuthorization();
+        
+        // TODO: Create tenant endpoint (auth only, no tenant context yet)
         
         var explicitTenantGroup = group.MapGroup("/{tenantId:guid}");
         
@@ -132,6 +132,16 @@ public static class TenantEndpoints
             .WithSummary("Update Tenant Member Roles")
             .RequireTenantPermission(TenantPermission.Admin);
         
+        // TODO: Move to a more fitting location
+        group.MapGet("/current/storage-classes", GetStorageClassesForTenant)
+            .WithDescription("Get storage classes for the current tenant.")
+            .WithSummary("Get Tenant Storage Classes")
+            .RequireTenantPermission(TenantPermission.Member);
+        explicitTenantGroup.MapGet("/storage-classes", GetStorageClassesForTenant)
+            .WithDescription("Get storage classes for a tenant.")
+            .WithSummary("Get Tenant Storage Classes")
+            .RequireTenantPermission(TenantPermission.Member);
+        
         return group;
     }
 
@@ -169,14 +179,9 @@ public static class TenantEndpoints
         var userId = await db.Users.FirstOrDefaultAsync(u => u.Email == context.User.Identity!.Name);
         if (userId == null)
             return Results.Unauthorized();
-        
-        var tenants = await db.TenantMembers.AsNoTracking().Include(tm => tm.Tenant).Where(tm => tm.UserId == userId.Id).Select(tm => new
-        {
-            tm.Tenant.Id,
-            tm.Tenant.Name,
-            tm.Tenant.Slug,
-            tm.JoinedAt
-        }).ToListAsync();
+
+        var tenants = await db.TenantMembers.AsNoTracking().Include(tm => tm.Tenant).Where(tm => tm.UserId == userId.Id)
+            .Select(tm => new TenantInfoDto(tm.Tenant.Id, tm.Tenant.Name, tm.Tenant.Slug, tm.JoinedAt)).ToListAsync();
         
         return Results.Ok(tenants);
     }
@@ -416,5 +421,23 @@ public static class TenantEndpoints
         await db.SaveChangesAsync();
         
         return Results.Ok(new TenantMemberDto(tenantContext.TenantId, memberId, request.Roles));
+    }
+    
+    private static async Task<IResult> GetStorageClassesForTenant(HttpContext context, BinStashDbContext db, TenantContext tenantContext)
+    {
+        // join StorageClassMapping (tenantId, enabled) with StorageClass catalog.
+        var storageClasses = await db.StorageClassMappings.AsNoTracking()
+            .Where(scm => scm.TenantId == tenantContext.TenantId && scm.IsEnabled)
+            .Join(db.StorageClasses.AsNoTracking(),
+                scm => scm.StorageClassName,
+                sc => sc.Name,
+                (scm, sc) => new
+                {
+                    sc.Name,
+                    sc.Description,
+                    scm.IsDefault
+                })
+            .ToListAsync();
+        return Results.Ok(storageClasses);
     }
 }

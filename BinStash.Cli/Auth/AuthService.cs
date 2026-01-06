@@ -19,20 +19,20 @@ namespace BinStash.Cli.Auth;
 
 public class AuthService(HttpClient http)
 {
-    private record TokenResponse(string accessToken, string refreshToken, long expiresIn);
+    private record TokenResponse(string AccessToken, string RefreshToken, long ExpiresIn);
 
     public async Task<TokenInfo> LoginAsync(string email, string password)
     {
         var now = DateTimeOffset.UtcNow;
-        var response = await http.PostAsJsonAsync("/api/auth/login", new { email, password });
+        var response = await http.PostAsJsonAsync("auth/login", new { email, password });
         response.EnsureSuccessStatusCode();
 
         var token = await response.Content.ReadFromJsonAsync<TokenResponse>();
         var tokenInfo = new TokenInfo
         {
-            AccessToken = token!.accessToken,
-            RefreshToken = token.refreshToken,
-            ExpiresAt = now.AddSeconds(token.expiresIn).UtcDateTime
+            AccessToken = token!.AccessToken,
+            RefreshToken = token.RefreshToken,
+            ExpiresAt = now.AddSeconds(token.ExpiresIn).UtcDateTime
         };
         await CredentialStore.SaveAsync(http.BaseAddress!, tokenInfo);
         return tokenInfo;
@@ -62,15 +62,15 @@ public class AuthService(HttpClient http)
     {
         var now = DateTimeOffset.UtcNow;
 
-        var response = await http.PostAsJsonAsync("/api/auth/refresh", new { refreshToken });
+        var response = await http.PostAsJsonAsync("auth/refresh", new { refreshToken });
         response.EnsureSuccessStatusCode();
 
         var token = await response.Content.ReadFromJsonAsync<TokenResponse>();
         return new TokenInfo
         {
-            AccessToken = token!.accessToken,
-            RefreshToken = token.refreshToken,
-            ExpiresAt = now.AddSeconds(token.expiresIn).UtcDateTime
+            AccessToken = token!.AccessToken,
+            RefreshToken = token.RefreshToken,
+            ExpiresAt = now.AddSeconds(token.ExpiresIn).UtcDateTime
         };
     }
 }

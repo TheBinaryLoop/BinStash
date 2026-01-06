@@ -26,10 +26,8 @@ using BinStash.Core.Extensions;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
-using BinStash.Server.Auth;
 using BinStash.Server.Extensions;
 using BinStash.Server.Helpers;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using ZstdNet;
 
@@ -39,13 +37,13 @@ public static class ReleaseEndpoints
 {
     public static RouteGroupBuilder MapReleaseEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/releases")
+        var group = app.MapGroup("/api/tenants/{tenantId:guid}/repositories/{repoId:guid}/releases")
             .WithTags("Releases")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .RequireAuthorization(new AuthorizeAttribute { AuthenticationSchemes = AuthDefaults.AuthenticationScheme });
+            .RequireAuthorization();
 
-        group.MapPost("/", CreateReleaseAsync)
+        /*group.MapPost("/", CreateReleaseAsync)
             .WithDescription("Create a new release for a repository.")
             .WithSummary("Create Release")
             .Accepts<IFormFile>("multipart/form-data")
@@ -53,7 +51,7 @@ public static class ReleaseEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status409Conflict)
-            .RequireRepoPermission(RepositoryPermission.Write);
+            .RequireRepoPermission(RepositoryPermission.Write);*/
         
         group.MapGet("/{id:guid}", GetReleaseByIdAsync)
             .WithDescription("Get a release by ID.")
@@ -207,7 +205,7 @@ public static class ReleaseEndpoints
                 Id = release.Repository.Id,
                 Name = release.Repository.Name,
                 Description = release.Repository.Description,
-                ChunkStoreId = release.Repository.ChunkStoreId
+                StorageClass = release.Repository.StorageClass,
             }
         });
     }
@@ -221,7 +219,7 @@ public static class ReleaseEndpoints
     private static async Task<IResult> GetReleaseDownloadAsync(Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db)
     {
         if (!string.IsNullOrEmpty(file) && string.IsNullOrEmpty(component))
-                return Results.BadRequest("Component must be specified when requesting a specific file.");
+            return Results.BadRequest("Component must be specified when requesting a specific file.");
             
         var release = await db.Releases.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id);
         if (release == null)
@@ -295,6 +293,9 @@ public static class ReleaseEndpoints
         
         if (files.Count == 0)
             return Results.NotFound("No files found for the requested component.");
+        
+        // 'identity' means no transformation/compression
+        response.Headers.ContentEncoding = "identity";
         
         response.ContentType = "application/zstd";
         var fileName = $"{(component != null ? $"component-{component}-" : "release-")}{release.Id}{(diffRelease != null ? ".diff" : "")}.tar.zst";

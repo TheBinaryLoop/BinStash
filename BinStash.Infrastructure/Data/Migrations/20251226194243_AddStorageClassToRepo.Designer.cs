@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using BinStash.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace BinStash.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(BinStashDbContext))]
-    partial class BinStashDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251226194243_AddStorageClassToRepo")]
+    partial class AddStorageClassToRepo
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -451,8 +454,6 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.HasIndex("TenantId", "Name")
                         .IsUnique();
 
-                    b.HasIndex("TenantId", "StorageClass");
-
                     b.ToTable("Repositories", (string)null);
                 });
 
@@ -521,97 +522,6 @@ namespace BinStash.Infrastructure.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("ServiceAccounts", (string)null);
-                });
-
-            modelBuilder.Entity("BinStash.Core.Entities.StorageClass", b =>
-                {
-                    b.Property<string>("Name")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<string>("Description")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)");
-
-                    b.Property<string>("DisplayName")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.Property<bool>("IsDeprecated")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("MaxChunkBytes")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(16777216);
-
-                    b.HasKey("Name");
-
-                    b.ToTable("StorageClasses", (string)null);
-                });
-
-            modelBuilder.Entity("BinStash.Core.Entities.StorageClassDefaultMapping", b =>
-                {
-                    b.Property<string>("StorageClassName")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<Guid>("ChunkStoreId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("now() at time zone 'utc'");
-
-                    b.Property<bool>("IsDefault")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsEnabled")
-                        .HasColumnType("boolean");
-
-                    b.HasKey("StorageClassName");
-
-                    b.HasIndex("ChunkStoreId");
-
-                    b.ToTable("StorageClassDefaultMappings", (string)null);
-                });
-
-            modelBuilder.Entity("BinStash.Core.Entities.StorageClassMapping", b =>
-                {
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("StorageClassName")
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)");
-
-                    b.Property<Guid>("ChunkStoreId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("now() at time zone 'utc'");
-
-                    b.Property<bool>("IsDefault")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsEnabled")
-                        .HasColumnType("boolean");
-
-                    b.HasKey("TenantId", "StorageClassName");
-
-                    b.HasIndex("ChunkStoreId");
-
-                    b.HasIndex("StorageClassName");
-
-                    b.HasIndex("TenantId", "IsDefault")
-                        .IsUnique()
-                        .HasFilter("\"IsDefault\" = true");
-
-                    b.ToTable("StorageClassMappings", (string)null);
                 });
 
             modelBuilder.Entity("BinStash.Core.Entities.Tenant", b =>
@@ -1062,42 +972,6 @@ namespace BinStash.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Tenant");
-                });
-
-            modelBuilder.Entity("BinStash.Core.Entities.StorageClassDefaultMapping", b =>
-                {
-                    b.HasOne("BinStash.Core.Entities.ChunkStore", null)
-                        .WithMany()
-                        .HasForeignKey("ChunkStoreId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("BinStash.Core.Entities.StorageClass", null)
-                        .WithMany()
-                        .HasForeignKey("StorageClassName")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("BinStash.Core.Entities.StorageClassMapping", b =>
-                {
-                    b.HasOne("BinStash.Core.Entities.ChunkStore", null)
-                        .WithMany()
-                        .HasForeignKey("ChunkStoreId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("BinStash.Core.Entities.StorageClass", null)
-                        .WithMany()
-                        .HasForeignKey("StorageClassName")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("BinStash.Core.Entities.Tenant", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("BinStash.Core.Entities.TenantMember", b =>

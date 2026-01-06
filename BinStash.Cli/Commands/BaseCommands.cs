@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Cli.Infrastructure;
 using CliFx;
 using CliFx.Attributes;
 using CliFx.Infrastructure;
@@ -47,7 +48,14 @@ public abstract class UrlCommandBase : CommandBase
     {
         if (string.IsNullOrWhiteSpace(Url))
             return string.Empty;
-        return Url.EndsWith('/') ? Url : $"{Url}/";
+        // make sure the url ends with api/
+        if (Url.EndsWith("/api/", StringComparison.OrdinalIgnoreCase))
+            return Url;
+        if (Url.EndsWith("/api", StringComparison.OrdinalIgnoreCase))
+            return $"{Url}/";
+        if (Url.EndsWith('/'))
+            return $"{Url}api/";
+        return $"{Url}/api/";
     }
     
     protected override ValueTask<bool> PreCheckAsync(IConsole console)
@@ -100,6 +108,51 @@ public abstract class AuthenticatedCommandBase : UrlCommandBase
             await console.Error.WriteLineAsync("The authentication token must be provided.");
             return false;
         }
+
+        return true;
+    }
+}
+
+public abstract class TenantCommandBase : AuthenticatedCommandBase
+{
+    [CommandOption("tenant", 't', Description = "The tenant slug to operate on.", IsRequired = true)]
+    public string? TenantSlug { get; set; }
+    
+    protected Guid TenantId { get; private set; }
+    
+    protected new string GetUrl()
+    {
+        var url = base.GetUrl();
+        return $"{url}tenants/{TenantId}/";
+    }
+
+    protected override async ValueTask<bool> PreCheckAsync(IConsole console)
+    {
+        if (!await base.PreCheckAsync(console))
+            return false;
+
+        if (string.IsNullOrWhiteSpace(TenantSlug))
+        {
+            await console.Error.WriteLineAsync("The tenant slug must be provided.");
+            return false;
+        }
+
+        var apiClient = new BinStashApiClient(base.GetUrl(), AuthTokenFactory);
+        var tenants = await apiClient.GetTenantsAsync();
+        if (tenants is null)
+        {
+            await console.Error.WriteLineAsync("Failed to retrieve tenants from the server.");
+            return false;
+        }
+        
+        var tenant = tenants.FirstOrDefault(t => t.Slug.Equals(TenantSlug, StringComparison.OrdinalIgnoreCase));
+        if (tenant is null)
+        {
+            await console.Error.WriteLineAsync($"The tenant '{TenantSlug}' does not exist or is not accessible with the provided token.");
+            return false;
+        }
+        
+        TenantId = tenant.TenantId;
 
         return true;
     }

@@ -169,7 +169,7 @@ public static class IdentityEndpoints
             
             var db = sp.GetRequiredService<BinStashDbContext>();
             var tokenService = sp.GetRequiredService<ITokenService>();
-            var passwordHasher = sp.GetRequiredService<IPasswordHasher<IdentityUser<Guid>>>();
+            var passwordHasher = sp.GetRequiredService<IPasswordHasher<BinStashUser>>();
             
             var existing = await db.UserRefreshTokens
                 .Include(x => x.User)

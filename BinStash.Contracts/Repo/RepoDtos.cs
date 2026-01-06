@@ -13,13 +13,15 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.ChunkStore;
+
 namespace BinStash.Contracts.Repo;
 
 public class CreateRepositoryDto
 {
     public required string Name { get; set; }
     public string? Description { get; set; }
-    public required Guid ChunkStoreId { get; set; }
+    public string? StorageClassName { get; set; }
 }
 
 public class RepositorySummaryDto
@@ -27,7 +29,8 @@ public class RepositorySummaryDto
     public required Guid Id { get; set; }
     public required string Name { get; set; }
     public string? Description { get; set; }
-    public required Guid ChunkStoreId { get; set; }
+    public required string StorageClass { get; set; }
+    public ChunkStoreChunkerDto? Chunker { get; set; }
 }
 
 public class RepositoryConfigDto
