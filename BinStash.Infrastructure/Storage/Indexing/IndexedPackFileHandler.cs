@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -14,6 +14,7 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.IO.MemoryMappedFiles;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Serialization.Utils;
@@ -21,7 +22,7 @@ using BinStash.Infrastructure.Storage.Packing;
 
 namespace BinStash.Infrastructure.Storage.Indexing;
 
-internal class IndexedPackFileHandler
+internal class IndexedPackFileHandler : IDisposable
 {
     private readonly long _maxPackFileSize;
     private readonly string _indexFilePath;
@@ -29,10 +30,13 @@ internal class IndexedPackFileHandler
     private readonly SemaphoreSlim _packFileLock = new(1, 1);
     private readonly SemaphoreSlim _indexFileLock = new(1, 1);
     private readonly Dictionary<Hash32, (int fileNo, long offset, int length)> _index = new();
+    private readonly ConcurrentDictionary<string, Stream> _readStreams = new();
     
     private readonly Func<byte[], Hash32> _computeHash;
     
+    private bool _initialIndexLoadDone;
     private int _currentFileNumber = int.MinValue;
+    private FileStream? _currentStream;
 
     public IndexedPackFileHandler(string directoryPath, string dataFileName, string prefix, long maxPackFileSize, Func<byte[], Hash32> computeHash)
     {
@@ -41,7 +45,6 @@ internal class IndexedPackFileHandler
         Directory.CreateDirectory(directoryPath);
         _indexFilePath = Path.Combine(directoryPath, $"index{prefix}.idx");
         _dataFilePrefix = Path.Combine(directoryPath, $"{dataFileName}{prefix}");
-        LoadIndex();
     }
 
     private void LoadIndex()
@@ -75,6 +78,7 @@ internal class IndexedPackFileHandler
         finally
         {
             _indexFileLock.Release();
+            _initialIndexLoadDone = true;
         }
     }
     
@@ -129,7 +133,6 @@ internal class IndexedPackFileHandler
                     SaveIndexEntry(hash, fileNo, entry.Offset, entry.Length, noLock: true);
                 }
             }
-           
             return true;
         }
         catch
@@ -217,6 +220,9 @@ internal class IndexedPackFileHandler
     
     public async Task<int> WriteIndexedDataAsync(Hash32 hash, byte[] data)
     {
+        if (!_initialIndexLoadDone)
+            LoadIndex();
+        
         // quick check without lock
         if (_index.ContainsKey(hash))
             return 0;
@@ -243,6 +249,9 @@ internal class IndexedPackFileHandler
 
     public async Task<byte[]> ReadIndexedDataAsync(Hash32 hash)
     {
+        if (!_initialIndexLoadDone)
+            LoadIndex();
+        
         await _packFileLock.WaitAsync();
         try
         {
@@ -250,16 +259,20 @@ internal class IndexedPackFileHandler
                 throw new KeyNotFoundException($"No data with index {hash.ToHexString()}.");
 
             var path = $"{_dataFilePrefix}-{entry.fileNo}.pack";
-            await using var dataStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            dataStream.Seek(entry.offset, SeekOrigin.Begin);
-            return await PackFileEntry.ReadAsync(dataStream) ?? throw new InvalidDataException($"Failed to read data for index {hash.ToHexString()}.");
+            if (!_readStreams.TryGetValue(path, out var stream))
+            {
+                stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                _readStreams[path] = stream;
+            }
+            stream.Seek(entry.offset, SeekOrigin.Begin);
+            return await PackFileEntry.ReadAsync(stream) ?? throw new InvalidDataException($"Failed to read data for index {hash.ToHexString()}.");
         }
         finally
         {
             _packFileLock.Release();
         }
     }
-
+    
     private FileStream GetWritableDataFile(out int fileNumber)
     {
         // If we haven't determined the current file number yet, do so now
@@ -272,7 +285,8 @@ internal class IndexedPackFileHandler
                 if (!info.Exists || info.Length < _maxPackFileSize)
                 {
                     _currentFileNumber = fileNumber;
-                    return new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+                    _currentStream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+                    return _currentStream;
                 }
             }
         }
@@ -282,10 +296,24 @@ internal class IndexedPackFileHandler
         {
             // If so, increment to the next file number
             _currentFileNumber++;
+            _currentStream?.Dispose();
         }
         
         // Return a stream to the current file
         fileNumber = _currentFileNumber;
-        return new FileStream($"{_dataFilePrefix}-{fileNumber}.pack", FileMode.Append, FileAccess.Write, FileShare.Read);
+        _currentStream ??= new FileStream($"{_dataFilePrefix}-{fileNumber}.pack", FileMode.Append, FileAccess.Write, FileShare.Read);
+
+        return _currentStream;
+    }
+
+    public void Dispose()
+    {
+        _packFileLock.Dispose();
+        _indexFileLock.Dispose();
+        _currentStream?.Dispose();
+        foreach (var stream in _readStreams.Values)
+        {
+            stream.Dispose();
+        }
     }
 }

@@ -10,8 +10,9 @@ pipeline {
   }
 
   environment {
-    SOLUTION     = 'BinStash.sln'
+    SOLUTION = 'BinStash.sln'
     BUILD_CONFIG = 'Release'
+    MSBUILDDISABLENODEREUSE = 1
   }
 
   parameters {
@@ -39,7 +40,7 @@ pipeline {
         dotnetRestore(
           project: env.SOLUTION,
           sdk: 'dotnet-lts',
-          showSdkInfo: true // prints dotnet --info before the command
+          showSdkInfo: false // prints dotnet --info before the command
         )
       }
     }
@@ -66,15 +67,8 @@ pipeline {
           sdk: 'dotnet-lts',
           shutDownBuildServers: true
         )
-
-        // Option B (optional): also produce TRX for JUnit if you want test reports in Jenkins UI
-        // withDotNet(sdk: 'dotnet-9.0') {
-        //   sh 'dotnet test "$SOLUTION" -c "$BUILD_CONFIG" --no-build --logger "trx;LogFileName=test_results.trx"'
-        // }
       }
       post {
-        // If you enabled Option B above, publish TRX:
-        //always { junit allowEmptyResults: true, testResults: '**/TestResults/*.trx' }
         always { xunit checksName: '', tools: [xUnitDotNet(excludesPattern: '', pattern: '**/TestResults/*.xml', stopProcessingIfError: true)] }
         success { echo '✅ Tests passed' }
       }

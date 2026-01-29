@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -293,6 +293,9 @@ public static class ReleaseEndpoints
         
         if (files.Count == 0)
             return Results.NotFound("No files found for the requested component.");
+
+        // 'identity' means no transformation/compression
+        response.Headers.ContentEncoding = "identity";
         
         // 'identity' means no transformation/compression
         response.Headers.ContentEncoding = "identity";

@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -290,8 +290,6 @@ public class BinStashApiClient
         if (!string.IsNullOrWhiteSpace(component))
             query["component"] = component;
 
-        uriBuilder.Query = query.ToString();
-        Console.WriteLine(uriBuilder.ToString());
         var request = new HttpRequestMessage(HttpMethod.Get, uriBuilder.ToString());
         var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         if (response.StatusCode == HttpStatusCode.BadRequest)
