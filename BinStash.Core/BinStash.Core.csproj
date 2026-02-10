@@ -12,7 +12,7 @@
       <PackageReference Include="Blake3" Version="2.2.0" />
       <PackageReference Include="Microsoft.IO.RecyclableMemoryStream" Version="3.0.1" />
       <PackageReference Include="SlidingWindow" Version="1.0.7.1" />
-      <PackageReference Include="System.IO.Hashing" Version="9.0.6" />
+      <PackageReference Include="System.IO.Hashing" Version="10.0.3" />
       <PackageReference Include="ZstdNetNGX" Version="1.0.0" />
     </ItemGroup>
 
