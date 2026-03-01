@@ -33,6 +33,7 @@ public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     public DbSet<Repository> Repositories { get; set; }
     public DbSet<RepositoryRoleAssignment> RepositoryRoleAssignments { get; set; }
     public DbSet<ServiceAccount> ServiceAccounts { get; set; }
+    public DbSet<StorageClassDefaultMapping> StorageClassDefaultMappings { get; set; }
     public DbSet<StorageClass> StorageClasses { get; set; }
     public DbSet<StorageClassMapping> StorageClassMappings { get; set; }
     public DbSet<Tenant> Tenants { get; set; }
@@ -42,6 +43,10 @@ public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     public DbSet<UserGroup> UserGroups { get; set; }
     public DbSet<UserGroupMember> UserGroupMembers { get; set; }
     public DbSet<UserRefreshToken> UserRefreshTokens { get; set; }
+    
+    public DbSet<InstanceSetting> InstanceSettings { get; set; }
+    public DbSet<SetupState> SetupStates { get; set; }
+    public DbSet<SetupCode> SetupCodes { get; set; }
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

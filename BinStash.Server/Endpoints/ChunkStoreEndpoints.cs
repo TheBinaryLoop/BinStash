@@ -42,12 +42,15 @@ public static class ChunkStoreEndpoints
         group.MapPost("/", CreateChunkStoreAsync)
             .WithDescription("Creates a new chunk store.")
             .WithSummary("Create Chunk Store")
-            .Produces<ChunkStoreSummaryDto>(StatusCodes.Status201Created);
+            .Produces<ChunkStoreSummaryDto>(StatusCodes.Status201Created)
+            .RequireTenantPermission(TenantPermission.Admin)
+            .RequireAuthorization("SetupAuth");
         group.MapGet("/", ListChunkStoresAsync)
             .WithDescription("Lists all chunk stores.")
             .WithSummary("List Chunk Stores")
             .Produces<List<ChunkStoreSummaryDto>>()
-            .RequireTenantPermission(TenantPermission.Admin);
+            .RequireTenantPermission(TenantPermission.Admin)
+            .RequireAuthorization("SetupAuth");
         group.MapGet("/{id:guid}", GetChunkStoreByIdAsync)
             .WithDescription("Gets a chunk store by its ID.")
             .WithSummary("Get Chunk Store By ID")
@@ -89,6 +92,17 @@ public static class ChunkStoreEndpoints
         {
             if (string.IsNullOrWhiteSpace(dto.LocalPath))
                 return Results.BadRequest("Local path is required for local chunk store type.");
+            if (!Directory.Exists(dto.LocalPath))
+            {
+                try
+                {
+                    Directory.CreateDirectory(dto.LocalPath);
+                }
+                catch (Exception e)
+                {
+                    return Results.Problem($"Failed to create local path: {e.Message}", statusCode: 400);
+                }
+            }
         }
         
         // Validate chunker options or set defaults

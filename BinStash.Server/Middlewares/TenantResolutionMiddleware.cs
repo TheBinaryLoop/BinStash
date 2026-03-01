@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -29,9 +29,10 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
         var path = http.Request.Path;
 
         // Skip tenant resolution for tooling and public endpoints
-        if (path.StartsWithSegments("/openapi", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWithSegments("/scalar", StringComparison.OrdinalIgnoreCase) ||
-            path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
+        if (path.StartsWithSegments("/api/setup", StringComparison.OrdinalIgnoreCase) || 
+             path.StartsWithSegments("/openapi", StringComparison.OrdinalIgnoreCase) ||
+             path.StartsWithSegments("/scalar", StringComparison.OrdinalIgnoreCase) ||
+             path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
         {
             await next(http);
             return;

@@ -30,5 +30,6 @@ public static class EndpointRouteBuilderExtensions
         app.MapReleaseEndpoints();
         app.MapTenantEndpoints();
         app.MapServiceAccountEndpoints();
+        app.MapSetupEndpoints();
     }
 }

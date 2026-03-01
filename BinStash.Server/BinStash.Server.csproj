@@ -8,6 +8,7 @@
         <UserSecretsId>71fd78af-9cb7-4e7e-9539-9b6f11dd2d17</UserSecretsId>
         <Configurations>Debug;Release</Configurations>
         <Platforms>AnyCPU;x64</Platforms>
+        <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.OpenApi.Generated</InterceptorsNamespaces>
     </PropertyGroup>
 
     <ItemGroup>

@@ -29,6 +29,9 @@ public class TenantPermissionFilter(TenantPermission permission) : IEndpointFilt
         if (http.User.Identity?.IsAuthenticated != true)
             return Results.Unauthorized();
         
+        if (http.User.Identity.AuthenticationType == "Setup")
+            return await next(context);
+        
         var tenantCtx = http.RequestServices.GetRequiredService<ITenantContext>();
         if (!tenantCtx.IsResolved)
             return Results.BadRequest("Tenant context is missing.");

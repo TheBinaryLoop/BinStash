@@ -148,6 +148,23 @@ public static class IdentityEndpoints
                 ExpiresIn = 15 * 60 // 15 minutes
             });
         });
+
+        group.MapPost("/logout", async Task<Results<IResult, EmptyHttpResult, ProblemHttpResult>>
+        ([FromQuery] bool? useCookies, [FromServices] IServiceProvider sp) =>
+        {
+            var signInManager = sp.GetRequiredService<SignInManager<BinStashUser>>();
+
+            var useCookieScheme = useCookies == true;
+            signInManager.AuthenticationScheme = useCookieScheme ? IdentityConstants.ApplicationScheme : IdentityConstants.BearerScheme;
+            
+            if (useCookieScheme)
+            {
+                await signInManager.SignOutAsync();
+                return TypedResults.Ok();
+            }
+            
+            return TypedResults.NotFound("Not implemented");
+        });
         
         group.MapPost("/machine/token", async Task<Results<IResult, EmptyHttpResult, ProblemHttpResult>>
             ([FromBody] MachineTokenLoginRequest login, [FromServices] IServiceProvider sp) =>

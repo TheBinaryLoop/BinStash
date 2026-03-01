@@ -141,6 +141,5 @@ public class ChunkStore
 
 public enum ChunkStoreType
 {
-    Local,
-    S3
+    Local
 }

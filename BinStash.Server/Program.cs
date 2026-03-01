@@ -25,6 +25,7 @@ using BinStash.Server.Auth.ApiKeys;
 using BinStash.Server.Auth.Repository;
 using BinStash.Server.Auth.Tenant;
 using BinStash.Server.Auth.Tokens;
+using BinStash.Server.Configuration;
 using BinStash.Server.Configuration.Tenancy;
 using BinStash.Server.Context;
 using BinStash.Server.Email;
@@ -48,6 +49,13 @@ public static class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
+        // connection string from appsettings/env
+        var connectionString = builder.Configuration.GetConnectionString("BinStashDb")
+                 ?? throw new InvalidOperationException("Missing connection string");
+        
+        // IMPORTANT: Insert DB provider as LOWEST priority (first in list)
+        builder.Configuration.Sources.Insert(0, new DbConfigurationSource(connectionString));
+        
         builder.Services.AddSystemd();
         builder.Services.AddWindowsService();
         
@@ -82,8 +90,9 @@ public static class Program
         builder.Services.AddScoped<IAuthorizationHandler, TenantPermissionHandler>();
         
         builder.Services.AddScoped<IPasswordHasher<ApiKey>, PasswordHasher<ApiKey>>();
+        builder.Services.AddScoped<IPasswordHasher<SetupCode>, PasswordHasher<SetupCode>>();
 
-        builder.Services.AddDbContext<BinStashDbContext>((_, optionsBuilder) => optionsBuilder.UseNpgsql(builder.Configuration.GetConnectionString("BinStashDb"))/*.EnableSensitiveDataLogging()*/);
+        builder.Services.AddDbContext<BinStashDbContext>((_, optionsBuilder) => optionsBuilder.UseNpgsql(connectionString)/*.EnableSensitiveDataLogging()*/);
 
         builder.Services.AddIdentityApiEndpoints<BinStashUser>(options =>
             {
@@ -94,6 +103,7 @@ public static class Program
                 options.Lockout.MaxFailedAccessAttempts = 5;
                 options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
             })
+            .AddRoles<IdentityRole<Guid>>()
             .AddEntityFrameworkStores<BinStashDbContext>();
         
         builder.Services.AddAuthentication(options =>
@@ -141,7 +151,19 @@ public static class Program
                     return Task.CompletedTask;
                 };
             })
-            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthHandler>("ApiKey", _ => { });
+            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthHandler>("ApiKey", _ => { })
+            .AddCookie("Setup", options =>
+            {
+                options.Cookie.Name = "binstash_setup";
+                options.Cookie.HttpOnly = true;
+                options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                options.Cookie.SameSite = SameSiteMode.Strict;
+                options.ExpireTimeSpan = TimeSpan.FromMinutes(15);
+                options.SlidingExpiration = true;
+
+                options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = 401; return Task.CompletedTask; };
+                options.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = 403; return Task.CompletedTask; };
+            });;
         builder.Services.AddAuthorization(options =>
         {
             options.AddPolicy("Permission:Tenant:Admin", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.Admin)));
@@ -153,6 +175,8 @@ public static class Program
             
             
             options.AddPolicy("Permission:Release:List", p => p.RequireClaim("Permission", "Release:List"));
+            
+            options.AddPolicy("SetupAuth", p => p.AddAuthenticationSchemes("Setup").RequireAuthenticatedUser().RequireClaim("setup", "true"));
         });
         
         builder.Services.AddScoped<TenantContext>();
@@ -161,6 +185,7 @@ public static class Program
         builder.Services.AddProblemDetails();
         
         // Hosted services
+        builder.Services.AddHostedService<SetupBootstrapper>();
         builder.Services.AddHostedService<SingleTenantBootstrapper>();
 
         
@@ -170,12 +195,11 @@ public static class Program
         var app = builder.Build();
         
         // Configure the ef core migration process
-        app.Lifetime.ApplicationStarted.Register(() =>
+        using (var scope = app.Services.CreateScope())
         {
-            using var scope = app.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<BinStashDbContext>();
             db.Database.Migrate(); // applies any pending migrations
-        });
+        }
         
         // Configure the HTTP request pipeline.
         if (app.Environment.IsDevelopment())
@@ -194,6 +218,7 @@ public static class Program
         app.UseHttpsRedirection();
         app.UseResponseCompression();
         app.UseStatusCodePages();
+        app.UseMiddleware<SetupGateMiddleware>();
         app.UseMiddleware<TenantResolutionMiddleware>();
         app.UseAuthentication();
         app.UseAuthorization();

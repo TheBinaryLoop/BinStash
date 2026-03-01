@@ -35,6 +35,9 @@ public class SingleTenantBootstrapper(IServiceProvider serviceProvider) : IHoste
         
         var t = opt.SingleTenant;
         
+        if (t.TenantId == Guid.Empty)
+            return;
+        
         var exists = await db.Tenants.AnyAsync(x => x.Id == t.TenantId, cancellationToken);
         if (!exists)
         {
