@@ -23,13 +23,15 @@ public static class EndpointRouteBuilderExtensions
     public static void MapAllEndpoints(this IEndpointRouteBuilder app)
     {
         //app.MapIdentityApi<BinStashUser>();
-        app.MapIdentityEndpoints();
         app.MapChunkStoreEndpoints();
+        app.MapIdentityEndpoints();
         app.MapIngestSessionEndpoints();
-        app.MapRepositoryEndpoints();
+        app.MapInstanceEndpoints();
         app.MapReleaseEndpoints();
-        app.MapTenantEndpoints();
+        app.MapRepositoryEndpoints();
         app.MapServiceAccountEndpoints();
         app.MapSetupEndpoints();
+        app.MapStorageClassEndpoints();
+        app.MapTenantEndpoints();
     }
 }

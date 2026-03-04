@@ -40,6 +40,7 @@ public sealed class SetupGateMiddleware(RequestDelegate next)
         var state = await db.SetupStates.AsNoTracking().SingleOrDefaultAsync(x => x.Id == 1);
         if (state is null || !state.IsInitialized)
         {
+            // TODO: Return problem+json with setup_required code
             ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
             await ctx.Response.WriteAsync("setup_required");
             return;

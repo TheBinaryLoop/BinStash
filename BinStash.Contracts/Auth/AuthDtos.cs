@@ -93,4 +93,9 @@ public sealed class InfoResponse
     /// Indicates whether or not the user has completed the onboarding process.
     /// </summary>
     public required bool OnboardingCompleted { get; set; }
+    
+    /// <summary>
+    /// The roles assigned to the authenticated user.
+    /// </summary>
+    public required IList<string> Roles { get; set; }
 }

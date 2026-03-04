@@ -59,10 +59,13 @@ public static class SetupEndpoints
         group.MapPost("/tenancy", SetTenancyAsync)
             .WithDescription("Set tenancy mode for this instance.")
             .RequireAuthorization("SetupAuth");
-        group.MapGet("/chunk-store/enabled-types", GetChunkStoreTypes)
+        // TODO: Chunk Store list and create endpoints
+        group.MapGet("/chunk-stores/enabled-types", GetChunkStoreTypes)
             .WithDescription("Get available chunk store types.")
             .RequireAuthorization("SetupAuth");
-        group.MapPost("/chunk-store", EnsureChunkStoreAsync).RequireAuthorization("SetupAuth");
+        group.MapGet("/chunk-stores", ChunkStoreEndpoints.ListChunkStoresAsync).RequireAuthorization("SetupAuth");
+        group.MapPost("/chunk-stores/create", ChunkStoreEndpoints.CreateChunkStoreAsync).RequireAuthorization("SetupAuth");
+        group.MapPost("/chunk-stores", EnsureChunkStoreAsync).RequireAuthorization("SetupAuth");
         group.MapPost("/storage-class", EnsureStorageClassesAsync).RequireAuthorization("SetupAuth");
         group.MapPost("/storage/defaults", EnsureStorageDefaultsAsync).RequireAuthorization("SetupAuth");
         group.MapPost("/admin", CreateAdminAsync).RequireAuthorization("SetupAuth");
@@ -446,6 +449,15 @@ public static class SetupEndpoints
             // Instance admin existence check is role-based; optional here
         }
 
+        // Set some basic config values
+        db.InstanceSettings.Add(new InstanceSetting
+        {
+            Key = "Email:Provider",
+            Value = "None",
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        
+        
         state.IsInitialized = true;
         state.CompletedAt = DateTimeOffset.UtcNow;
         state.SetupVersion += 1;

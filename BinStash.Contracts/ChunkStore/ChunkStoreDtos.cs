@@ -28,6 +28,15 @@ public class ChunkStoreDetailDto : ChunkStoreSummaryDto
     public required Dictionary<string, object> Stats { get; set; }
 }
 
+public class ChunkStoreStatsDto
+{
+    public required int TotalChunks { get; set; }
+    // StorageUsed
+    // DeduplicationRatio
+    // Chunks ingested (last 7 days; daily)
+    // Storage growth (last 7 days; daily)
+}
+
 public class ChunkStoreChunkerDto
 {
     public string Type { get; set; } = string.Empty;

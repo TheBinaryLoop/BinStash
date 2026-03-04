@@ -36,8 +36,11 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization.Infrastructure;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 
@@ -48,12 +51,19 @@ public static class Program
     public static void Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        
+        builder.Services.AddHealthChecks()
+            .AddNpgSql(
+                connectionString: builder.Configuration.GetConnectionString("BinStashDb"),
+                name: "PostgreSQL",
+                failureStatus: HealthStatus.Degraded,
+                tags: ["db", "sql", "postgresql"]);
 
         // connection string from appsettings/env
         var connectionString = builder.Configuration.GetConnectionString("BinStashDb")
                  ?? throw new InvalidOperationException("Missing connection string");
         
-        // IMPORTANT: Insert DB provider as LOWEST priority (first in list)
+        // IMPORTANT: Insert DB provider as LOWEST priority (first in list) so it can be overridden by other configuration sources
         builder.Configuration.Sources.Insert(0, new DbConfigurationSource(connectionString));
         
         builder.Services.AddSystemd();
@@ -166,6 +176,8 @@ public static class Program
             });;
         builder.Services.AddAuthorization(options =>
         {
+            options.AddPolicy("Permission:Instance:Admin", p => p.AddRequirements(new RolesAuthorizationRequirement(["InstanceAdmin"])));
+            
             options.AddPolicy("Permission:Tenant:Admin", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.Admin)));
             options.AddPolicy("Permission:Tenant:Member", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.Member)));
             
@@ -222,6 +234,26 @@ public static class Program
         app.UseMiddleware<TenantResolutionMiddleware>();
         app.UseAuthentication();
         app.UseAuthorization();
+        app.MapHealthChecks("/health", new HealthCheckOptions
+        {
+                ResponseWriter = async (context, report) =>
+                {
+                    context.Response.ContentType = "application/json";
+                    var result = new
+                    {
+                        status = report.Status.ToString(),
+                        checks = report.Entries.Select(e => new
+                        {
+                            name = e.Key,
+                            status = e.Value.Status.ToString(),
+                            description = e.Value.Description,
+                            exception = e.Value.Exception?.ToString(),
+                            duration = e.Value.Duration.ToString()
+                        })
+                    };
+                    await context.Response.WriteAsJsonAsync(result);
+                }
+        });
         app.MapAllEndpoints();
         
         app.Run();

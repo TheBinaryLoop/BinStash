@@ -16,12 +16,10 @@
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
-using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
-using BinStash.Server.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Server.Endpoints;
@@ -32,30 +30,36 @@ public static class ChunkStoreEndpoints
     {
         // TODO: Add ProducesError
         
-        var group = app.MapGroup("/api/chunkstores")
+        var group = app.MapGroup("/api/chunk-stores")
             .WithTags("ChunkStore")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .RequireAuthorization();
+            .RequireAuthorization("Permission:Instance:Admin");
             //.WithDescription("Endpoints for managing chunk stores. Chunk stores are used to store chunks of data that are referenced by repositories. They can be local or remote, and support various chunking algorithms.");
 
+        group.MapGet("/enabled-types", GetChunkStoreTypes)
+            .WithDescription("Get available chunk store types.")
+            .WithSummary("Get Chunk Store Types")
+            .Produces(StatusCodes.Status200OK);
         group.MapPost("/", CreateChunkStoreAsync)
             .WithDescription("Creates a new chunk store.")
             .WithSummary("Create Chunk Store")
-            .Produces<ChunkStoreSummaryDto>(StatusCodes.Status201Created)
-            .RequireTenantPermission(TenantPermission.Admin)
-            .RequireAuthorization("SetupAuth");
+            .Produces<ChunkStoreSummaryDto>(StatusCodes.Status201Created);
         group.MapGet("/", ListChunkStoresAsync)
             .WithDescription("Lists all chunk stores.")
             .WithSummary("List Chunk Stores")
-            .Produces<List<ChunkStoreSummaryDto>>()
-            .RequireTenantPermission(TenantPermission.Admin)
-            .RequireAuthorization("SetupAuth");
+            .Produces<List<ChunkStoreSummaryDto>>();
         group.MapGet("/{id:guid}", GetChunkStoreByIdAsync)
             .WithDescription("Gets a chunk store by its ID.")
             .WithSummary("Get Chunk Store By ID")
             .Produces<ChunkStoreDetailDto>()
             .Produces(StatusCodes.Status404NotFound);
+        group.MapGet("/{id:guid}/stats", GetChunkStoreStatsAsync)
+            .WithDescription("Gets statistics about a chunk store, such as total size, number of chunks, etc.")
+            .WithSummary("Get Chunk Store Stats")
+            .Produces<ChunkStoreStatsDto>()
+            .Produces(StatusCodes.Status404NotFound);
+        
         group.MapGet("/{id:guid}/rebuild", RebuildChunkStoreAsync)
             .WithDescription(
                 "Rebuilds the chunk store by scanning the underlying storage and rewriting the pack and index files.")
@@ -74,7 +78,15 @@ public static class ChunkStoreEndpoints
         return group;
     }
 
-    private static async Task<IResult> CreateChunkStoreAsync(CreateChunkStoreDto dto, BinStashDbContext db)
+    private static IResult GetChunkStoreTypes()
+    {
+        var types = Enum.GetValues<ChunkStoreType>()
+            .Select(x => new { name = x.ToString(), value = (int)x })
+            .ToList();
+        return Results.Ok(types);
+    }
+    
+    internal static async Task<IResult> CreateChunkStoreAsync(CreateChunkStoreDto dto, BinStashDbContext db)
     {
         if (string.IsNullOrWhiteSpace(dto.Name))
             return Results.BadRequest("Chunk store name is required.");
@@ -132,7 +144,7 @@ public static class ChunkStoreEndpoints
         });
     }
     
-    private static async Task<IResult> ListChunkStoresAsync(BinStashDbContext db)
+    internal static async Task<IResult> ListChunkStoresAsync(BinStashDbContext db)
     {
         var stores = await db.ChunkStores.Select(x => new ChunkStoreSummaryDto
         {
@@ -164,6 +176,18 @@ public static class ChunkStoreEndpoints
         });
     }
 
+    private static async Task<IResult> GetChunkStoreStatsAsync(Guid id, BinStashDbContext db)
+    {
+        var store = await db.ChunkStores.FindAsync(id);
+        if (store == null)
+            return Results.NotFound();
+
+        return Results.Ok(new ChunkStoreStatsDto
+        {
+            TotalChunks = await db.Chunks.Where(x => x.ChunkStoreId == id).CountAsync(),
+        });
+    }
+    
     private static async Task<IResult> RebuildChunkStoreAsync(Guid id, BinStashDbContext db)
     {
         var store = await db.ChunkStores.FindAsync(id);

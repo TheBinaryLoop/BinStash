@@ -474,7 +474,7 @@ public static class IdentityEndpoints
             {
                 return TypedResults.NotFound();
             }
-
+            
             return TypedResults.Ok(await CreateInfoResponseAsync(user, userManager));
         });
 
@@ -596,7 +596,8 @@ public static class IdentityEndpoints
             LastName = user.LastName,
             Email = await userManager.GetEmailAsync(user) ?? throw new NotSupportedException("Users must have an email."),
             IsEmailConfirmed = await userManager.IsEmailConfirmedAsync(user),
-            OnboardingCompleted = user.OnboardingCompleted
+            OnboardingCompleted = user.OnboardingCompleted,
+            Roles = await userManager.GetRolesAsync(user)
         };
     }
 }
