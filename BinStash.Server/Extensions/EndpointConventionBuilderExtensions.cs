@@ -13,9 +13,11 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Auth.Instance;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Server.Auth.Ingest;
+using BinStash.Server.Auth.Instance;
 using BinStash.Server.Auth.Repository;
 using BinStash.Server.Auth.Tenant;
 
@@ -25,6 +27,9 @@ public static class EndpointConventionBuilderExtensions
 {
     extension(IEndpointConventionBuilder builder)
     {
+        public IEndpointConventionBuilder RequireInstancePermissioin(InstancePermission permisssion)
+            => builder.AddEndpointFilter(new InstancePermissionFilter(permisssion));
+        
         public IEndpointConventionBuilder RequireRepoPermission(RepositoryPermission permission)
             => builder.AddEndpointFilter(new RepositoryPermissionFilter(permission));
 
@@ -37,6 +42,9 @@ public static class EndpointConventionBuilderExtensions
     
     extension(RouteHandlerBuilder builder)
     {
+        public RouteHandlerBuilder RequireInstancePermissioin(InstancePermission permisssion)
+            => builder.AddEndpointFilter(new InstancePermissionFilter(permisssion));
+        
         public RouteHandlerBuilder RequireRepoPermission(RepositoryPermission permission)
             => builder.AddEndpointFilter(new RepositoryPermissionFilter(permission));
 
@@ -49,6 +57,9 @@ public static class EndpointConventionBuilderExtensions
     
     extension(RouteGroupBuilder builder)
     {
+        public RouteGroupBuilder RequireInstancePermissioin(InstancePermission permisssion)
+            => builder.AddEndpointFilter(new InstancePermissionFilter(permisssion));
+        
         public RouteGroupBuilder RequireRepoPermission(RepositoryPermission permission)
             => builder.AddEndpointFilter(new RepositoryPermissionFilter(permission));
 

@@ -33,6 +33,10 @@ public class ChunkStore
     // Settings for the local chunk store type
     public string LocalPath { get; private set; }
     
+    public ProbeMode ProbeMode { get; set; } = ProbeMode.ReadWrite;
+
+    public long? MinFreeBytes { get; set; }
+    
     private readonly IObjectStorage? _storage;
     
     
@@ -142,4 +146,10 @@ public class ChunkStore
 public enum ChunkStoreType
 {
     Local
+}
+
+public enum ProbeMode
+{
+    ReadOnly,
+    ReadWrite
 }

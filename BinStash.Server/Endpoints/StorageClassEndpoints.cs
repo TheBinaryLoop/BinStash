@@ -14,7 +14,9 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.StorageClass;
+using BinStash.Core.Auth.Instance;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Server.Endpoints;
@@ -26,7 +28,7 @@ public static class StorageClassEndpoints
         var group = app.MapGroup("/api/storage-classes")
             .WithSummary("Endpoints for managing storage classes.")
             .WithTags("Storage Classes")
-            .RequireAuthorization("Permission:Instance:Admin"); // TODO: Rewrite to better readable code
+            .RequireInstancePermissioin(InstancePermission.Admin);
 
         group.MapGet("/", GetStorageClassesAsync)
             .WithName("GetStorageClasses")

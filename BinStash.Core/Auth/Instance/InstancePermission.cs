@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -13,9 +13,9 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Contracts.Tenant;
+namespace BinStash.Core.Auth.Instance;
 
-public record TenantInfoDto(Guid TenantId, string Name, string Slug, DateTimeOffset JoinedAt, string Role);
-public record UpdateTenantMemberRolesDto(List<string> Roles);
-public record TenantMemberDto(Guid TenantId, Guid UserId, List<string> Roles);
-public record InviteTenantMemberDto(string Email, List<string> Roles);
+public enum InstancePermission : short
+{
+    Admin = 1
+}

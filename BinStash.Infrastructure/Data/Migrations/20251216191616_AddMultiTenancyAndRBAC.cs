@@ -11,7 +11,7 @@ namespace BinStash.Infrastructure.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            var defaultTenantId = new Guid("070a5385-cd25-4cbc-9493-a9e298bb5a02");
+            var defaultTenantId = new Guid("070a5385-0000-0000-0000-a9e298bb5a02");
 
             // Create the tenants table first
             migrationBuilder.CreateTable(

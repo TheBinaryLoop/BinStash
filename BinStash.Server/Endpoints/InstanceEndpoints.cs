@@ -15,7 +15,9 @@
 
 using System.Globalization;
 using System.Text.Json;
+using BinStash.Core.Auth.Instance;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Server.Endpoints;
@@ -26,7 +28,7 @@ public static class InstanceEndpoints
     {
         var group = app.MapGroup("/api/instance")
             .WithTags("Instance")
-            .RequireAuthorization("Permission:Instance:Admin"); // TODO: Rewrite to better readable code
+            .RequireInstancePermissioin(InstancePermission.Admin);
 
         //group.MapGet("/info", GetInstanceInfo).WithName("GetInstanceInfo");
         group.MapGet("/stats", GetInstanceStats)

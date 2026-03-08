@@ -16,10 +16,12 @@
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
+using BinStash.Core.Auth.Instance;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
+using BinStash.Server.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Server.Endpoints;
@@ -34,7 +36,7 @@ public static class ChunkStoreEndpoints
             .WithTags("ChunkStore")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .RequireAuthorization("Permission:Instance:Admin");
+            .RequireInstancePermissioin(InstancePermission.Admin);
             //.WithDescription("Endpoints for managing chunk stores. Chunk stores are used to store chunks of data that are referenced by repositories. They can be local or remote, and support various chunking algorithms.");
 
         group.MapGet("/enabled-types", GetChunkStoreTypes)

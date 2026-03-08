@@ -31,6 +31,7 @@ public class ChunkStoreEntityTypeConfiguration : IEntityTypeConfiguration<ChunkS
         builder.Property(cs => cs.Name).IsRequired().HasMaxLength(256);
         builder.Property(cs => cs.Type).IsRequired();
         builder.Property(cs => cs.LocalPath).IsRequired();
+        builder.Property(cs => cs.ProbeMode).IsRequired();
 
         builder.OwnsOne(cs => cs.ChunkerOptions, chunker =>
         {

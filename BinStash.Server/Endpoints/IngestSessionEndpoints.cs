@@ -413,7 +413,7 @@ public static class IngestSessionEndpoints
             return new Chunk
             {
                 Checksum = checksum,
-                ChunkStoreId = repoId,
+                ChunkStoreId = repo.ChunkStoreId,
                 Length = chunk.Data.Length,
                 CompressedLength = missingChunksWrittenBytes[checksum]
             };

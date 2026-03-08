@@ -59,7 +59,9 @@ public static class SetupEndpoints
         group.MapPost("/tenancy", SetTenancyAsync)
             .WithDescription("Set tenancy mode for this instance.")
             .RequireAuthorization("SetupAuth");
-        // TODO: Chunk Store list and create endpoints
+        group.MapPost("/default-tenant", ConfigureDefaultTenantAsync)
+            .WithDescription("Configure default tenant for single tenancy mode.")
+            .RequireAuthorization("SetupAuth");
         group.MapGet("/chunk-stores/enabled-types", GetChunkStoreTypes)
             .WithDescription("Get available chunk store types.")
             .RequireAuthorization("SetupAuth");
@@ -105,7 +107,7 @@ public static class SetupEndpoints
             await db.SaveChangesAsync();
             return Results.Unauthorized();
         }
-
+        
         // consume code
         code.ConsumedAt = now;
         state.ClaimedAt = now;
@@ -184,6 +186,14 @@ public static class SetupEndpoints
         if (!locked)
             await UpsertSetting(db, "Tenancy:Mode", mode);
 
+        // Delete default tenant if it exists, since it's only relevant for single tenancy mode
+        var defaultTenantId = Guid.Parse("070a5385-0000-0000-0000-a9e298bb5a02");
+        var defaultTenant = await db.Tenants.SingleOrDefaultAsync(x => x.Id == defaultTenantId);
+        if (defaultTenant is not null)
+        {
+            db.Tenants.Remove(defaultTenant);
+        }
+        
         state.TenancyMode = mode;
         state.CurrentStep = mode switch
         {
@@ -196,6 +206,32 @@ public static class SetupEndpoints
         ReloadConfig(config);
 
         return Results.Ok(new { mode, locked });
+    }
+    
+    private static async Task<IResult> ConfigureDefaultTenantAsync(ConfigureDefaultTenantRequest req, BinStashDbContext db, IConfiguration config)
+    {
+        if (string.IsNullOrWhiteSpace(req.Name) || string.IsNullOrWhiteSpace(req.Slug))
+            return Results.BadRequest("Name and Slug are required.");
+        
+        var tenant = new Tenant
+        {
+            Id = Guid.CreateVersion7(),
+            Name = req.Name,
+            Slug = req.Slug,
+        };
+        db.Tenants.Add(tenant);
+        
+        config["Tenancy:SingleTenant:TenantId"] = tenant.Id.ToString();
+        config["Tenancy:SingleTenant:Name"] = tenant.Name;
+        config["Tenancy:SingleTenant:Slug"] = tenant.Slug;
+        
+        var state = await db.SetupStates.SingleAsync(x => x.Id == 1);
+        state.CurrentStep = "ChunkStore";
+        await db.SaveChangesAsync();
+        
+        ReloadConfig(config);
+        
+        return Results.Ok(new { tenantId = tenant.Id });
     }
 
     private static IResult GetChunkStoreTypes()
@@ -450,12 +486,7 @@ public static class SetupEndpoints
         }
 
         // Set some basic config values
-        db.InstanceSettings.Add(new InstanceSetting
-        {
-            Key = "Email:Provider",
-            Value = "None",
-            UpdatedAt = DateTimeOffset.UtcNow
-        });
+        config["Email:Provider"] = "None";
         
         
         state.IsInitialized = true;
@@ -505,6 +536,7 @@ public static class SetupEndpoints
     // DTOs
     public sealed record ClaimRequest(string Code);
     public sealed record SetTenancyRequest(string Mode);
+    public sealed record ConfigureDefaultTenantRequest(string Name, string Slug);
     public sealed record EnsureChunkStoreRequest(ChunkStoreType Type, string Name, string LocalPath, bool Skip = false);
     public sealed record EnsureStorageClassRequest(string Name, string DisplayName, string? Description);
     public sealed record EnsureStorageClassesRequest(List<EnsureStorageClassRequest> StorageClasses);

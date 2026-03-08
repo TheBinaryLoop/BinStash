@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -14,41 +14,27 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Security.Claims;
-using BinStash.Core.Auth.Tenant;
 using BinStash.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
-namespace BinStash.Server.Auth.Tenant;
+namespace BinStash.Server.Auth.Instance;
 
-public sealed class TenantPermissionHandler(BinStashDbContext db)
-    : AuthorizationHandler<TenantPermissionRequirement, TenantAuthResource>
+public class InstancePermissionHandler(BinStashDbContext db) : AuthorizationHandler<InstancePermissionRequirement>
 {
-    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, TenantPermissionRequirement requirement, TenantAuthResource resource)
+    private static Guid _instanceAdminRoleId = Guid.Empty;
+    
+    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, InstancePermissionRequirement requirement)
     {
         var userIdStr = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
         if (!Guid.TryParse(userIdStr, out var userId))
             return;
 
-        // must be a tenant member
-        var isMember = await db.TenantMembers
-            .AnyAsync(m => m.TenantId == resource.TenantId && m.UserId == userId);
+        // Add more permissions here
 
-        if (!isMember)
-            return;
-
-        if (requirement.Permission == TenantPermission.Member)
-        {
-            context.Succeed(requirement);
-            return;
-        }
-
-        // admin required
-        var isAdmin = await db.TenantRoleAssignments.AnyAsync(r =>
-            r.TenantId == resource.TenantId &&
-            r.UserId == userId &&
-            r.RoleName == "TenantAdmin");
-
+        if (_instanceAdminRoleId == Guid.Empty)
+            _instanceAdminRoleId = await db.Roles.Where(r => r.Name == "InstanceAdmin").Select(r => r.Id).FirstOrDefaultAsync();
+        var isAdmin = await db.UserRoles.Where(x => x.UserId == userId && x.RoleId == _instanceAdminRoleId).AnyAsync();
         if (isAdmin)
             context.Succeed(requirement);
     }

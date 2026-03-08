@@ -179,9 +179,19 @@ public static class TenantEndpoints
         var userId = await db.Users.FirstOrDefaultAsync(u => u.Email == context.User.Identity!.Name);
         if (userId == null)
             return Results.Unauthorized();
-
-        var tenants = await db.TenantMembers.AsNoTracking().Include(tm => tm.Tenant).Where(tm => tm.UserId == userId.Id)
-            .Select(tm => new TenantInfoDto(tm.Tenant.Id, tm.Tenant.Name, tm.Tenant.Slug, tm.JoinedAt)).ToListAsync();
+        
+        // Get a list of all tenants the user is a member of, including tenant info and joined date as well as the role of the user in the tenant (e.g. admin, member, etc.)
+        var tenants = await db.TenantMembers.AsNoTracking()
+            .Where(tm => tm.UserId == userId.Id)
+            .Join(db.Tenants.AsNoTracking(), tm => tm.TenantId, t => t.Id, (tm, t) => new TenantInfoDto
+            (
+                t.Id,
+                t.Name,
+                t.Slug,
+                tm.JoinedAt,
+                db.TenantRoleAssignments.Where(r => r.TenantId == tm.TenantId && r.UserId == tm.UserId).OrderBy(r => r.RoleName).Select(r => r.RoleName).First()
+            ))
+            .ToListAsync();
         
         return Results.Ok(tenants);
     }

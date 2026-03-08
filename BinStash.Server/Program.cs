@@ -14,6 +14,7 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Text;
+using BinStash.Core.Auth.Instance;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Auth.Tokens;
@@ -22,6 +23,7 @@ using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Email.Brevo;
 using BinStash.Infrastructure.Templates;
 using BinStash.Server.Auth.ApiKeys;
+using BinStash.Server.Auth.Instance;
 using BinStash.Server.Auth.Repository;
 using BinStash.Server.Auth.Tenant;
 using BinStash.Server.Auth.Tokens;
@@ -30,13 +32,14 @@ using BinStash.Server.Configuration.Tenancy;
 using BinStash.Server.Context;
 using BinStash.Server.Email;
 using BinStash.Server.Extensions;
+using BinStash.Server.Health;
+using BinStash.Server.Helpers;
 using BinStash.Server.HostedServices;
 using BinStash.Server.Middlewares;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Authorization.Infrastructure;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -57,7 +60,8 @@ public static class Program
                 connectionString: builder.Configuration.GetConnectionString("BinStashDb"),
                 name: "PostgreSQL",
                 failureStatus: HealthStatus.Degraded,
-                tags: ["db", "sql", "postgresql"]);
+                tags: ["db", "sql", "postgresql"])
+            .AddCheck<ChunkStoreHealthCheck>("chunkstores_live", tags: ["live"]);;
 
         // connection string from appsettings/env
         var connectionString = builder.Configuration.GetConnectionString("BinStashDb")
@@ -73,6 +77,7 @@ public static class Program
         builder.Services.Configure<TenancyOptions>(builder.Configuration.GetSection("Tenancy"));
         
         // Add services to the container.
+        builder.Services.AddSingleton<ChunkStoreProbeCache>();
         builder.Services.AddSingleton<IEmailTemplateRenderer, EmailTemplateRenderer>(_ => new EmailTemplateRenderer(typeof(EmailTemplateRenderer).Assembly, "BinStash.Infrastructure"));
         builder.Services.AddHttpClient<BrevoApiClient>();
         builder.Services.AddTransient<BrevoApiClient>();
@@ -96,8 +101,9 @@ public static class Program
                 });
             }
         });
-        builder.Services.AddScoped<IAuthorizationHandler, RepositoryPermissionHandler>();
+        builder.Services.AddScoped<IAuthorizationHandler, InstancePermissionHandler>();
         builder.Services.AddScoped<IAuthorizationHandler, TenantPermissionHandler>();
+        builder.Services.AddScoped<IAuthorizationHandler, RepositoryPermissionHandler>();
         
         builder.Services.AddScoped<IPasswordHasher<ApiKey>, PasswordHasher<ApiKey>>();
         builder.Services.AddScoped<IPasswordHasher<SetupCode>, PasswordHasher<SetupCode>>();
@@ -176,7 +182,7 @@ public static class Program
             });;
         builder.Services.AddAuthorization(options =>
         {
-            options.AddPolicy("Permission:Instance:Admin", p => p.AddRequirements(new RolesAuthorizationRequirement(["InstanceAdmin"])));
+            options.AddPolicy("Permission:Instance:Admin", p => p.AddRequirements(new InstancePermissionRequirement(InstancePermission.Admin)));
             
             options.AddPolicy("Permission:Tenant:Admin", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.Admin)));
             options.AddPolicy("Permission:Tenant:Member", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.Member)));
@@ -199,6 +205,7 @@ public static class Program
         // Hosted services
         builder.Services.AddHostedService<SetupBootstrapper>();
         builder.Services.AddHostedService<SingleTenantBootstrapper>();
+        builder.Services.AddHostedService<ChunkStoreProbeService>();
 
         
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -248,7 +255,8 @@ public static class Program
                             status = e.Value.Status.ToString(),
                             description = e.Value.Description,
                             exception = e.Value.Exception?.ToString(),
-                            duration = e.Value.Duration.ToString()
+                            duration = e.Value.Duration.ToString(),
+                            data = e.Value.Data   // <-- add this
                         })
                     };
                     await context.Response.WriteAsJsonAsync(result);
