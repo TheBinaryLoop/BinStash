@@ -36,6 +36,7 @@ public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     public DbSet<StorageClassDefaultMapping> StorageClassDefaultMappings { get; set; }
     public DbSet<StorageClass> StorageClasses { get; set; }
     public DbSet<StorageClassMapping> StorageClassMappings { get; set; }
+    public DbSet<Subscription> Subscriptions { get; set; }
     public DbSet<Tenant> Tenants { get; set; }
     public DbSet<TenantMember> TenantMembers { get; set; }
     public DbSet<TenantMemberInvitation> TenantMemberInvitations { get; set; }

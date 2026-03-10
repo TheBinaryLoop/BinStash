@@ -16,6 +16,7 @@
 using System.Security.Claims;
 using System.Text;
 using BinStash.Contracts.Tenant;
+using BinStash.Core.Auth.Instance;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
@@ -30,7 +31,7 @@ namespace BinStash.Server.Endpoints;
 public static class TenantEndpoints
 { 
     // We'll figure out a unique endpoint name based on the final route pattern during endpoint generation.
-    private static string? acceptInvitationEndpointName;
+    private static string? _acceptInvitationEndpointName;
     
     public static RouteGroupBuilder MapTenantEndpoints(this IEndpointRouteBuilder app)
     {
@@ -47,10 +48,24 @@ public static class TenantEndpoints
         group.MapGet("/", ListTenantsForMember)   
             .WithDescription("Get tenants the user is a member of.")
             .WithSummary("List Tenants");
+        group.MapPost("/", CreateTenant)
+            .WithDescription("Create a new tenant.")
+            .WithSummary("Create Tenant")
+            .RequireInstancePermissioin(InstancePermission.Admin);
         
         group.MapGet("/{id:guid}", GetTenant)
             .WithDescription("Get a tenant by ID.")
             .WithSummary("Get Tenant");
+        
+        explicitTenantGroup.MapPut("/", UpdateTenant)
+            .WithDescription("Update tenant details.")
+            .WithSummary("Update Tenant")
+            .RequireTenantPermission(TenantPermission.Admin);
+        
+        explicitTenantGroup.MapDelete("/", async (HttpContext context) => Results.StatusCode(StatusCodes.Status501NotImplemented)) // TODO: implement tenant deletion with safeguards (e.g. only if no members, or transfer ownership first)
+            .WithDescription("Delete a tenant. (Not implemented yet)")
+            .WithSummary("Delete Tenant")
+            .RequireTenantPermission(TenantPermission.Admin);
         
         group.MapGet("/current", GetCurrentTenant)
             .WithDescription("Get the current tenant.")
@@ -94,8 +109,8 @@ public static class TenantEndpoints
             .Add(endpointBuilder =>
             {
                 var finalPattern = ((RouteEndpointBuilder)endpointBuilder).RoutePattern.RawText;
-                acceptInvitationEndpointName = $"{nameof(MapTenantEndpoints)}-{finalPattern}";
-                endpointBuilder.Metadata.Add(new EndpointNameMetadata(acceptInvitationEndpointName));
+                _acceptInvitationEndpointName = $"{nameof(MapTenantEndpoints)}-{finalPattern}";
+                endpointBuilder.Metadata.Add(new EndpointNameMetadata(_acceptInvitationEndpointName));
             });;
         
         // POST /api/tenants/{tenantId}/invitations/{code}/accept
@@ -174,11 +189,85 @@ public static class TenantEndpoints
         return Results.Ok(membersWithRoles);
     }
 
+    private static async Task<IResult> CreateTenant(CreateTenantDto request, HttpContext context, BinStashDbContext db)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Slug))
+            return Results.BadRequest("Name and Slug are required.");
+
+        var userIdStr = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
+        if (!Guid.TryParse(userIdStr, out var userId))
+            return Results.Unauthorized();
+        
+        var existingSlug = await db.Tenants.AnyAsync(t => t.Slug.ToLower() == request.Slug.ToLower());
+        if (existingSlug)
+            return Results.BadRequest("Slug already exists.");
+        
+        var tenant = new Tenant
+        {
+            Id = Guid.CreateVersion7(),
+            Name = request.Name,
+            Slug = request.Slug.ToLowerInvariant(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedByUserId = userId
+        };
+        
+        await db.Tenants.AddAsync(tenant);
+        
+        await db.SaveChangesAsync();
+        
+        return Results.Created($"/api/tenants/{tenant.Id}", new { tenant.Id, tenant.Name, tenant.Slug, tenant.CreatedAt });
+    }
+    
+    private static async Task<IResult> UpdateTenant(UpdateTenantDto request, HttpContext context, BinStashDbContext db, TenantContext tenantContext)
+    {
+        var tenant = await db.Tenants.FindAsync(tenantContext.TenantId);
+        if (tenant == null)
+            return Results.NotFound("Tenant not found.");
+        
+        if (!string.IsNullOrWhiteSpace(request.Name))
+            tenant.Name = request.Name;
+        
+        if (!string.IsNullOrWhiteSpace(request.Slug) && !request.Slug.Equals(tenant.Slug, StringComparison.CurrentCultureIgnoreCase))
+        {
+            var existingSlug = await db.Tenants.AnyAsync(t => t.Slug.Equals(request.Slug, StringComparison.CurrentCultureIgnoreCase) && t.Id != tenant.Id);
+            if (existingSlug)
+                return Results.BadRequest("Slug already exists.");
+            
+            tenant.Slug = request.Slug.ToLowerInvariant();
+        }
+        
+        await db.SaveChangesAsync();
+        
+        return Results.Ok(new { tenant.Id, tenant.Name, tenant.Slug, tenant.CreatedAt });
+    }
+    
     private static async Task<IResult> ListTenantsForMember(HttpContext context, BinStashDbContext db)
     {
         var userId = await db.Users.FirstOrDefaultAsync(u => u.Email == context.User.Identity!.Name);
         if (userId == null)
             return Results.Unauthorized();
+        
+        // Check if the user is an instance admin and return all tenants if so (instance admins are implicitly tenant members of all tenants)
+        if (await db.UserRoles.Where(ur => ur.UserId == userId.Id)
+                .Join(db.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => r)
+                .AnyAsync(r => r.Name == "InstanceAdmin"))
+        {
+            return await db.Tenants.AsNoTracking()
+                .Select(t => new TenantInfoDto
+                (
+                    t.Id,
+                    t.Name,
+                    t.Slug,
+                    DateTimeOffset.UtcNow, // joined date is not applicable for instance admins
+                    "TenantAdmin" // role is implicitly TenantAdmin for all tenants
+                ))
+                .ToListAsync()
+                .ContinueWith<IResult>(t =>
+                {
+                    var tenants = t.Result;
+                    return Results.Ok(tenants);
+                });
+        }
         
         // Get a list of all tenants the user is a member of, including tenant info and joined date as well as the role of the user in the tenant (e.g. admin, member, etc.)
         var tenants = await db.TenantMembers.AsNoTracking()
@@ -284,8 +373,8 @@ public static class TenantEndpoints
         await db.SaveChangesAsync();
         
         var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(invitation.Code));
-        var acceptEmailUrl = !string.IsNullOrEmpty(acceptInvitationEndpointName) ? linkGenerator.GetUriByName(context, acceptInvitationEndpointName, values: new { code })
-                              : throw new NotSupportedException($"Could not find endpoint named '{acceptInvitationEndpointName}'.");
+        var acceptEmailUrl = !string.IsNullOrEmpty(_acceptInvitationEndpointName) ? linkGenerator.GetUriByName(context, _acceptInvitationEndpointName, values: new { code })
+                              : throw new NotSupportedException($"Could not find endpoint named '{_acceptInvitationEndpointName}'.");
         
         await emailSender.SendMemberInvitationEmailAsync(inviter, tenant, request.Email, acceptEmailUrl);
         

@@ -185,6 +185,7 @@ public static class Program
             options.AddPolicy("Permission:Instance:Admin", p => p.AddRequirements(new InstancePermissionRequirement(InstancePermission.Admin)));
             
             options.AddPolicy("Permission:Tenant:Admin", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.Admin)));
+            options.AddPolicy("Permission:Tenant:BillingAdmin", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.BillingAdmin)));
             options.AddPolicy("Permission:Tenant:Member", p => p.AddRequirements(new TenantPermissionRequirement(TenantPermission.Member)));
             
             options.AddPolicy("Permission:Repo:Admin", p => p.AddRequirements(new RepositoryPermissionRequirement(RepositoryPermission.Admin)));
@@ -204,7 +205,7 @@ public static class Program
         
         // Hosted services
         builder.Services.AddHostedService<SetupBootstrapper>();
-        builder.Services.AddHostedService<SingleTenantBootstrapper>();
+        //builder.Services.AddHostedService<SingleTenantBootstrapper>();
         builder.Services.AddHostedService<ChunkStoreProbeService>();
 
         
@@ -261,7 +262,8 @@ public static class Program
                     };
                     await context.Response.WriteAsJsonAsync(result);
                 }
-        });
+        })
+        .RequireInstancePermissioin(InstancePermission.Admin);
         app.MapAllEndpoints();
         
         app.Run();

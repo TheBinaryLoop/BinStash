@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -13,11 +13,33 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Server.Configuration.Tenancy;
+namespace BinStash.Core.Entities;
 
-public class SingleTenantOptions
+public class Subscription
 {
+    public Guid Id { get; set; } = Guid.CreateVersion7();
     public Guid TenantId { get; set; }
-    public string Slug { get; set; } = "default";
-    public string Name { get; set; } = "Default Tenant";
+    public BillingMode BillingMode { get; set; } = BillingMode.UsageBased;
+    public SubscriptionStatus Status { get; set; } = SubscriptionStatus.Active;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+    public double MinimumMonthlyFee { get; set; }
+    public string Currency { get; set; } = null!;
+    
+    public Tenant Tenant { get; set; } = null!;
+}
+
+public enum BillingMode
+{
+    UsageBased = 1,
+    Contract = 2
+}
+
+public enum SubscriptionStatus
+{
+    Trialing = 1,
+    Active = 2,
+    Suspended = 3,
+    Expired = 4,
+    Canceled = 5
 }

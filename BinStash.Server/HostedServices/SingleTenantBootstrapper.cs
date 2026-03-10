@@ -33,7 +33,7 @@ public class SingleTenantBootstrapper(IServiceProvider serviceProvider) : IHoste
         if (opt.Mode != TenancyMode.Single)
             return;
         
-        var t = opt.SingleTenant;
+        /*var t = opt.SingleTenant;
         
         if (t.TenantId == Guid.Empty)
             return;
@@ -49,7 +49,7 @@ public class SingleTenantBootstrapper(IServiceProvider serviceProvider) : IHoste
             });
             
             await db.SaveChangesAsync(cancellationToken);
-        }
+        }*/
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

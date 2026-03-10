@@ -18,6 +18,6 @@ namespace BinStash.Server.Configuration.Tenancy;
 public class TenancyOptions
 {
     public TenancyMode Mode { get; set; } = TenancyMode.Single;
-    public SingleTenantOptions SingleTenant { get; set; } = new();
+    public Guid DefaultTenantId { get; set; } = Guid.Empty;
     public string? DomainSuffix { get; set; }
 }

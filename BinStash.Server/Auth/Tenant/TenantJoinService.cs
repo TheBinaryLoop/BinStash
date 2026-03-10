@@ -28,7 +28,7 @@ public class TenantJoinService(BinStashDbContext db, IOptions<TenancyOptions> op
     public async Task JoinOnRegisterAsync(Guid userId, CancellationToken ct = default)
     {
         var tenantId = _opt.Mode == TenancyMode.Single
-            ? _opt.SingleTenant.TenantId
+            ? _opt.DefaultTenantId
             : throw new InvalidOperationException("Tenancy.Mode is Multi. Cannot auto-join tenant on register yet.");
 
         // Ensure membership exists (idempotent)

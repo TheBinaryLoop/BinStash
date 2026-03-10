@@ -15,6 +15,8 @@
 
 namespace BinStash.Contracts.Tenant;
 
+public record CreateTenantDto(string Name, string Slug);
+public record UpdateTenantDto(string Name, string Slug);
 public record TenantInfoDto(Guid TenantId, string Name, string Slug, DateTimeOffset JoinedAt, string Role);
 public record UpdateTenantMemberRolesDto(List<string> Roles);
 public record TenantMemberDto(Guid TenantId, Guid UserId, List<string> Roles);

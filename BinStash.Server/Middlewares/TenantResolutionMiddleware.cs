@@ -24,7 +24,7 @@ namespace BinStash.Server.Middlewares;
 
 public sealed class TenantResolutionMiddleware(RequestDelegate next)
 {
-    public async Task InvokeAsync(HttpContext http, BinStashDbContext db, TenantContext tenantContext, IOptions<TenancyOptions> tenancyOpts)
+    public async Task InvokeAsync(HttpContext http, BinStashDbContext db, TenantContext tenantContext, IOptionsMonitor<TenancyOptions> tenancyOpts)
     {
         var path = http.Request.Path;
 
@@ -38,11 +38,10 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
             return;
         }
 
-        var tenancyOptions = tenancyOpts.Value;
+        var tenancyOptions = tenancyOpts.CurrentValue;
         if (tenancyOptions.Mode == TenancyMode.Single)
         {
-            tenantContext.TenantId = tenancyOptions.SingleTenant.TenantId;
-            tenantContext.TenantSlug = tenancyOptions.SingleTenant.Slug;
+            tenantContext.TenantId = tenancyOptions.DefaultTenantId;
             tenantContext.IsResolved = true;
             await next(http);
             return;

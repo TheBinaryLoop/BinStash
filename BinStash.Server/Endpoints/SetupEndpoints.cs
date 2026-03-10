@@ -221,9 +221,7 @@ public static class SetupEndpoints
         };
         db.Tenants.Add(tenant);
         
-        config["Tenancy:SingleTenant:TenantId"] = tenant.Id.ToString();
-        config["Tenancy:SingleTenant:Name"] = tenant.Name;
-        config["Tenancy:SingleTenant:Slug"] = tenant.Slug;
+        config["Tenancy:DefaultTenantId"] = tenant.Id.ToString();
         
         var state = await db.SetupStates.SingleAsync(x => x.Id == 1);
         state.CurrentStep = "ChunkStore";
@@ -341,7 +339,7 @@ public static class SetupEndpoints
 
         if (mode == "Single")
         {
-            var tenantId = tenancyOpts.Value.SingleTenant.TenantId;
+            var tenantId = tenancyOpts.Value.DefaultTenantId;
             if (tenantId == Guid.Empty)
                 return Results.BadRequest("Single tenant not configured yet (TenantId missing).");
 
@@ -404,7 +402,7 @@ public static class SetupEndpoints
 
         if (req.IsTenantAdmin)
         {
-            var tenantId = tenancyOpts.Value.SingleTenant.TenantId;
+            var tenantId = tenancyOpts.Value.DefaultTenantId;
             if (tenantId == Guid.Empty)
                 return Results.BadRequest("Single tenant not configured yet (TenantId missing).");
 
@@ -470,7 +468,7 @@ public static class SetupEndpoints
 
         if (mode == "Single")
         {
-            var tenantId = tenancyOpts.Value.SingleTenant.TenantId;
+            var tenantId = tenancyOpts.Value.DefaultTenantId;
             if (tenantId == Guid.Empty) return Results.BadRequest("Single tenant TenantId missing.");
             if (!await db.Tenants.AnyAsync(x => x.Id == tenantId)) return Results.BadRequest("Tenant missing.");
             if (!await db.StorageClassMappings.AnyAsync(x => x.TenantId == tenantId && x.IsDefault))
@@ -487,6 +485,7 @@ public static class SetupEndpoints
 
         // Set some basic config values
         config["Email:Provider"] = "None";
+        config["Instance:Mode"] = "SelfHosted";
         
         
         state.IsInitialized = true;

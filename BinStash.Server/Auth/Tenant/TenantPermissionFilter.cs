@@ -44,6 +44,7 @@ public class TenantPermissionFilter(TenantPermission permission) : IEndpointFilt
         {
             TenantPermission.Member => "Permission:Tenant:Member",
             TenantPermission.Admin => "Permission:Tenant:Admin",
+            TenantPermission.BillingAdmin => "Permission:Tenant:BillingAdmin",
             _ => throw new ArgumentOutOfRangeException(nameof(permission), permission, null)
         };
 

@@ -30,6 +30,17 @@ public class RepositoryPermissionHandler(BinStashDbContext db) : AuthorizationHa
         if (!Guid.TryParse(userIdStr, out var userId))
             return;
         
+        // check if user is instance admin
+        var isInstanceAdmin = await db.UserRoles.Where(ur => ur.UserId == userId)
+            .Join(db.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => r)
+            .AnyAsync(r => r.Name == "InstanceAdmin");
+        
+        if (isInstanceAdmin)
+        {
+            context.Succeed(requirement);
+            return;
+        }
+        
         // Must be tenant member
         var isMember = await db.TenantMembers.AnyAsync(m => m.TenantId == resource.TenantId && m.UserId == userId);
 

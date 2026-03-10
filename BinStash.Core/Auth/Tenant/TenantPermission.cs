@@ -18,5 +18,6 @@ namespace BinStash.Core.Auth.Tenant;
 public enum TenantPermission : short
 {
     Member = 1,
-    Admin = 2
+    Admin = 2,
+    BillingAdmin = 3
 }

@@ -21,7 +21,16 @@ public class Tenant
     public string Slug { get; set; } = null!;
     public string Name { get; set; } = null!;
     public DateTimeOffset CreatedAt { get; set; }
+    public Guid CreatedByUserId { get; set; }
+    public TenantStatus Status { get; set; } = TenantStatus.Active;
     
     // TODO: Add repository groups
     public ICollection<Repository> Repositories { get; set; } = new List<Repository>();
+}
+
+public enum TenantStatus
+{
+    Active,
+    Suspended,
+    Deleted
 }

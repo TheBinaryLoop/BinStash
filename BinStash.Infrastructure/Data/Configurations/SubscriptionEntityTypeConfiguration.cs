@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -19,14 +19,21 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace BinStash.Infrastructure.Data.Configurations;
 
-public class BinStashUserEntityTypeConfiguration : IEntityTypeConfiguration<BinStashUser>
+public class SubscriptionEntityTypeConfiguration : IEntityTypeConfiguration<Subscription>
 {
-    public void Configure(EntityTypeBuilder<BinStashUser> builder)
+    public void Configure(EntityTypeBuilder<Subscription> builder)
     {
-        builder.Property(u => u.FirstName).IsRequired().HasMaxLength(128);
-        builder.Property(u => u.MiddleName).HasMaxLength(128);
-        builder.Property(u => u.LastName).IsRequired().HasMaxLength(128);
-        builder.Property(u => u.OnboardingCompleted).IsRequired();
-        builder.Property(u => u.Status).IsRequired();
+        builder.ToTable("Subscriptions");
+        
+        builder.HasKey(s => s.Id);
+        
+        builder.Property(s => s.TenantId).IsRequired();
+        builder.Property(s => s.BillingMode).IsRequired();
+        builder.Property(s => s.Status).IsRequired();
+        builder.Property(s => s.CreatedAt).IsRequired().HasDefaultValueSql("now() at time zone 'utc'");
+        builder.Property(s => s.MinimumMonthlyFee).IsRequired();
+        builder.Property(s => s.Currency).IsRequired();
+        
+        builder.HasOne(s => s.Tenant).WithMany().HasForeignKey(s => s.TenantId);
     }
 }

@@ -11,8 +11,6 @@ namespace BinStash.Infrastructure.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            var defaultTenantId = new Guid("070a5385-0000-0000-0000-a9e298bb5a02");
-
             // Create the tenants table first
             migrationBuilder.CreateTable(
                 name: "Tenants",
@@ -28,26 +26,12 @@ namespace BinStash.Infrastructure.Data.Migrations
                     table.PrimaryKey("PK_Tenants", x => x.Id);
                 });
             
-            // Insert the default tenant
-            migrationBuilder.InsertData(
-                table: "Tenants",
-                columns: new[] { "Id", "Slug", "Name" },
-                values: new object[] { defaultTenantId, "default", "Default Tenant" }
-            );
-
             // Add the TenantId column as nullable first (no default)
             migrationBuilder.AddColumn<Guid>(
                 name: "TenantId",
                 table: "Repositories",
                 type: "uuid",
                 nullable: true);
-            
-            // Backfill existing repositories
-            migrationBuilder.Sql($@"
-                UPDATE ""Repositories""
-                SET ""TenantId"" = '{defaultTenantId}'
-                WHERE ""TenantId"" IS NULL;
-            ");
             
             //  Alter column to NOT NULL
             migrationBuilder.AlterColumn<Guid>(
