@@ -379,7 +379,7 @@ public static class IngestSessionEndpoints
         var checksumArray = uniqueChunks.Select(c => c.Hash).ToArray();
 
         var knownChecksums = (await db.Chunks
-                .Where(c => c.ChunkStoreId == store.Id && checksumArray.Contains(c.Checksum))
+                .Where(c => c.ChunkStoreId == storeMeta.Id && checksumArray.Contains(c.Checksum))
                 .Select(c => c.Checksum)
                 .ToListAsync())
             .ToHashSet();

@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -30,6 +31,8 @@ using BinStash.Server.Extensions;
 using BinStash.Server.Helpers;
 using Microsoft.EntityFrameworkCore;
 using ZstdNet;
+using KeyNotFoundException = System.Collections.Generic.KeyNotFoundException;
+using Path = System.IO.Path;
 
 namespace BinStash.Server.Endpoints;
 
@@ -262,7 +265,7 @@ public static class ReleaseEndpoints
         var fileHashes = files.Select(f => f.File.Hash).Distinct().ToList();
         Debug.WriteLine($"[ReleaseDownload] Unique file hashes to process: {fileHashes.Count} (in {sw.ElapsedMilliseconds} ms)");
         sw.Restart();
-        var fileChunkMap = new Dictionary<Hash32, List<(Hash32 Hash, int Length)>>();
+        var fileChunkMap = new ConcurrentDictionary<Hash32, List<(Hash32 Hash, int Length)>>();
         using (var throttler = new SemaphoreSlim(32))
         {
             await Task.WhenAll(fileHashes.Select(async uniqueFileHash =>
@@ -407,7 +410,7 @@ public static class ReleaseEndpoints
             foreach (var kvp in diffFileChunkMap) 
                 fileChunkMap.TryAdd(kvp.Key, kvp.Value);
             
-            var (deltaManifest, newChunkChecksums, newFileChecksums) = DeltaCalculator.ComputeDeltaManifest(diffFiles, files, fileChunkMap, chunkInfos);
+            var (deltaManifest, newChunkChecksums, newFileChecksums) = DeltaCalculator.ComputeDeltaManifest(diffFiles, files, fileChunkMap.ToDictionary(), chunkInfos);
             
             deltaManifest = deltaManifest with 
             {

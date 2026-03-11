@@ -35,7 +35,7 @@ public static class InstanceEndpoints
         
         var group = app.MapGroup("/api/instance")
             .WithTags("Instance")
-            .RequireInstancePermissioin(InstancePermission.Admin);
+            .RequireInstancePermission(InstancePermission.Admin);
 
         //group.MapGet("/info", GetInstanceInfo).WithName("GetInstanceInfo");
         group.MapGet("/stats", GetInstanceStats)

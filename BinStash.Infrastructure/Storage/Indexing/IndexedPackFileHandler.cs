@@ -13,7 +13,6 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO.MemoryMappedFiles;
 using BinStash.Contracts.Hashing;
@@ -22,117 +21,201 @@ using BinStash.Infrastructure.Storage.Packing;
 
 namespace BinStash.Infrastructure.Storage.Indexing;
 
-internal class IndexedPackFileHandler : IDisposable
+internal sealed class IndexedPackFileHandler : IDisposable
 {
     private readonly long _maxPackFileSize;
     private readonly string _indexFilePath;
     private readonly string _dataFilePrefix;
-    private readonly SemaphoreSlim _packFileLock = new(1, 1);
-    private readonly SemaphoreSlim _indexFileLock = new(1, 1);
-    private readonly Dictionary<Hash32, (int fileNo, long offset, int length)> _index = new();
-    private readonly ConcurrentDictionary<string, Stream> _readStreams = new();
-    
     private readonly Func<byte[], Hash32> _computeHash;
-    
-    private bool _initialIndexLoadDone;
+
+    // One-time initialization
+    private readonly SemaphoreSlim _initLock = new(1, 1);
+    private volatile bool _initialIndexLoadDone;
+
+    // Serializes append/write-path mutations only
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
+
+    // Protects index stream re-open/rebuild operations
+    private readonly SemaphoreSlim _indexStreamLock = new(1, 1);
+
+    // Reads are lock-free against this snapshot-like concurrent map
+    private ConcurrentDictionary<Hash32, IndexEntry> _index = new();
+
+    // Current pack append state
     private int _currentFileNumber = int.MinValue;
     private FileStream? _currentStream;
+    private long _currentStreamLength;
+
+    // Persistent append stream for index
+    private FileStream? _indexAppendStream;
+    private BinaryWriter? _indexWriter;
+
+    private bool _disposed;
+
+    private readonly record struct IndexEntry(int FileNo, long Offset, int Length);
 
     public IndexedPackFileHandler(string directoryPath, string dataFileName, string prefix, long maxPackFileSize, Func<byte[], Hash32> computeHash)
     {
         _maxPackFileSize = maxPackFileSize;
-        _computeHash = computeHash;
+        _computeHash = computeHash ?? throw new ArgumentNullException(nameof(computeHash));
+
         Directory.CreateDirectory(directoryPath);
+
         _indexFilePath = Path.Combine(directoryPath, $"index{prefix}.idx");
         _dataFilePrefix = Path.Combine(directoryPath, $"{dataFileName}{prefix}");
     }
 
-    private void LoadIndex()
+    private async Task EnsureIndexLoadedAsync()
     {
-        if (!File.Exists(_indexFilePath)) return;
-        if (new FileInfo(_indexFilePath).Length == 0) return;
+        if (_initialIndexLoadDone)
+            return;
 
-        _indexFileLock.Wait();
-
-        // Maybe add a file header to the index file in the future to detect corruption
-        
+        await _initLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            var indexLength = new FileInfo(_indexFilePath).Length;
-            using var mmf = MemoryMappedFile.CreateFromFile(_indexFilePath, FileMode.Open);
-            using var accessor = mmf.CreateViewAccessor();
-            long position = 0;
-            while (position < indexLength)
-            {
-                var hash = new byte[32];
-                accessor.ReadArray(position, hash, 0, 32);
-                position += 32;
+            if (_initialIndexLoadDone)
+                return;
 
-                var fileNo = VarIntUtils.ReadVarInt<int>(accessor, ref position);
-                var offset = VarIntUtils.ReadVarInt<long>(accessor, ref position);
-                var length = VarIntUtils.ReadVarInt<int>(accessor, ref position);
-
-                _index[new Hash32(hash)] = (fileNo, offset, length);
-            }
-        }
-        finally
-        {
-            _indexFileLock.Release();
+            var loadedIndex = LoadIndexCore();
+            _index = loadedIndex;
             _initialIndexLoadDone = true;
         }
+        finally
+        {
+            _initLock.Release();
+        }
     }
-    
-    private void SaveIndexEntry(Hash32 hash, int fileNumber, long offset, int length, bool noLock = false)
-    {
-        if (!noLock)
-            _indexFileLock.Wait();
 
+    private ConcurrentDictionary<Hash32, IndexEntry> LoadIndexCore()
+    {
+        var map = new ConcurrentDictionary<Hash32, IndexEntry>();
+
+        if (!File.Exists(_indexFilePath))
+            return map;
+
+        var fileInfo = new FileInfo(_indexFilePath);
+        if (fileInfo.Length == 0)
+            return map;
+
+        using var mmf = MemoryMappedFile.CreateFromFile(_indexFilePath, FileMode.Open, mapName: null, capacity: 0, MemoryMappedFileAccess.Read);
+        using var accessor = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+
+        long position = 0;
+        var indexLength = fileInfo.Length;
+
+        while (position < indexLength)
+        {
+            var hashBytes = new byte[32];
+            accessor.ReadArray(position, hashBytes, 0, 32);
+            position += 32;
+
+            var fileNo = VarIntUtils.ReadVarInt<int>(accessor, ref position);
+            var offset = VarIntUtils.ReadVarInt<long>(accessor, ref position);
+            var length = VarIntUtils.ReadVarInt<int>(accessor, ref position);
+
+            map[new Hash32(hashBytes)] = new IndexEntry(fileNo, offset, length);
+        }
+
+        return map;
+    }
+
+    private async Task EnsureIndexAppendStreamOpenAsync()
+    {
+        if (_indexAppendStream is not null && _indexWriter is not null)
+            return;
+
+        await _indexStreamLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            using var writer = new BinaryWriter(File.Open(_indexFilePath, FileMode.Append, FileAccess.Write, FileShare.Read));
-            writer.Write(hash.GetBytes());
-            VarIntUtils.WriteVarInt(writer, fileNumber);
-            VarIntUtils.WriteVarInt(writer, offset);
-            VarIntUtils.WriteVarInt(writer, length);
-            writer.Flush();
+            if (_indexAppendStream is not null && _indexWriter is not null)
+                return;
+
+            _indexAppendStream?.Dispose();
+            _indexWriter?.Dispose();
+
+            _indexAppendStream = new FileStream(
+                _indexFilePath,
+                FileMode.Append,
+                FileAccess.Write,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                options: FileOptions.Asynchronous);
+
+            _indexWriter = new BinaryWriter(_indexAppendStream, System.Text.Encoding.UTF8, leaveOpen: true);
         }
         finally
         {
-            if (!noLock)
-                _indexFileLock.Release();
+            _indexStreamLock.Release();
         }
+    }
+
+    private async Task SaveIndexEntryAsync(Hash32 hash, int fileNumber, long offset, int length)
+    {
+        await EnsureIndexAppendStreamOpenAsync().ConfigureAwait(false);
+
+        // write lock is already held by caller on write path / rebuild path
+        _indexWriter!.Write(hash.GetBytes());
+        VarIntUtils.WriteVarInt(_indexWriter, fileNumber);
+        VarIntUtils.WriteVarInt(_indexWriter, offset);
+        VarIntUtils.WriteVarInt(_indexWriter, length);
+        _indexWriter.Flush();
+
+        // Stronger durability than FlushAsync alone.
+        _indexAppendStream!.Flush(flushToDisk: true);
     }
 
     public async Task<bool> RebuildIndexFile()
     {
-        await _indexFileLock.WaitAsync();
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+
         try
         {
-            // Find all data files
-            var dataFiles = Directory.EnumerateFiles(Path.GetDirectoryName(_dataFilePrefix)!, $"{Path.GetFileName(_dataFilePrefix)}-*.pack");
-            
-            // Clear in-memory index
-            _index.Clear();
-            // Clear existing index file
-            await File.WriteAllBytesAsync(_indexFilePath, ReadOnlyMemory<byte>.Empty);
-            
-            // Rebuild index from data files
+            var directory = Path.GetDirectoryName(_dataFilePrefix)!;
+            var pattern = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
+
+            var dataFiles = Directory.EnumerateFiles(directory, pattern)
+                .OrderBy(ParsePackFileNumber)
+                .ToArray();
+
+            var rebuilt = new ConcurrentDictionary<Hash32, IndexEntry>();
+
+            // Reset on-disk index file
+            _indexWriter?.Dispose();
+            _indexWriter = null;
+
+            _indexAppendStream?.Dispose();
+            _indexAppendStream = null;
+
+            await File.WriteAllBytesAsync(_indexFilePath, ReadOnlyMemory<byte>.Empty).ConfigureAwait(false);
+            await EnsureIndexAppendStreamOpenAsync().ConfigureAwait(false);
+
             foreach (var dataFile in dataFiles)
             {
-                Console.WriteLine($"Rebuilding index for {dataFile}");
-                await using var fs = new FileStream(dataFile, FileMode.Open, FileAccess.Read, FileShare.Read);
-                await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(fs))
+                await using var fs = new FileStream(
+                    dataFile,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    bufferSize: 128 * 1024,
+                    options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+                var fileNo = ParsePackFileNumber(dataFile);
+                if (fileNo < 0)
+                    continue;
+
+                await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(fs).ConfigureAwait(false))
                 {
                     var hash = _computeHash(entry.Data);
-                    if (_index.ContainsKey(hash))
-                        continue; // Skip duplicates
-                    var fileNoStr = Path.GetFileName(dataFile).Split('-').Last().Split('.').First();
-                    if (!int.TryParse(fileNoStr, out var fileNo))
-                        continue; // Skip invalid file names
-                    _index[hash] = (fileNo, entry.Offset, entry.Length);
-                    SaveIndexEntry(hash, fileNo, entry.Offset, entry.Length, noLock: true);
+
+                    if (!rebuilt.TryAdd(hash, new IndexEntry(fileNo, entry.Offset, entry.Length)))
+                        continue; // duplicate content, keep first occurrence
+
+                    await SaveIndexEntryAsync(hash, fileNo, entry.Offset, entry.Length).ConfigureAwait(false);
                 }
             }
+
+            _index = rebuilt;
             return true;
         }
         catch
@@ -141,179 +224,265 @@ internal class IndexedPackFileHandler : IDisposable
         }
         finally
         {
-            _indexFileLock.Release();
+            _writeLock.Release();
         }
     }
-    
+
     public async Task<bool> RebuildPackFilesAsync()
     {
-        await _packFileLock.WaitAsync();
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
+        await _writeLock.WaitAsync().ConfigureAwait(false);
+
         try
         {
-            // Find all data files
-            var dataFiles = Directory.EnumerateFiles(Path.GetDirectoryName(_dataFilePrefix)!, $"{Path.GetFileName(_dataFilePrefix)}-*.pack");
+            var directory = Path.GetDirectoryName(_dataFilePrefix)!;
+            var pattern = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
 
-            // Rebuild index from data files
+            var dataFiles = Directory.EnumerateFiles(directory, pattern)
+                .OrderBy(ParsePackFileNumber)
+                .ToArray();
+
             foreach (var dataFile in dataFiles)
             {
                 var tmpDataFile = dataFile + ".tmp";
-                await using var fs = new FileStream(dataFile, FileMode.Open, FileAccess.Read, FileShare.Read);
-                await using var tmpFs = new FileStream(tmpDataFile, FileMode.Create, FileAccess.Write, FileShare.None);
-                await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(fs, ignoreChecks: true))
+
+                await using var fs = new FileStream(
+                    dataFile,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    bufferSize: 128 * 1024,
+                    options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+                await using var tmpFs = new FileStream(
+                    tmpDataFile,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None,
+                    bufferSize: 128 * 1024,
+                    options: FileOptions.Asynchronous);
+
+                await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(fs, ignoreChecks: true).ConfigureAwait(false))
                 {
-                    await PackFileEntry.WriteAsync(tmpFs, entry.Data);
+                    await PackFileEntry.WriteAsync(tmpFs, entry.Data).ConfigureAwait(false);
                 }
-                tmpFs.Flush();
-                tmpFs.Close();
+
+                await tmpFs.FlushAsync().ConfigureAwait(false);
+                tmpFs.Flush(flushToDisk: true);
+
                 fs.Close();
+                tmpFs.Close();
+
                 File.Delete(dataFile);
                 File.Move(tmpDataFile, dataFile);
             }
-            
-            return true;
+
+            // Current append stream may now point at replaced files
+            _currentStream?.Dispose();
+            _currentStream = null;
+            _currentFileNumber = int.MinValue;
+            _currentStreamLength = 0;
+
+            return await RebuildIndexFile().ConfigureAwait(false);
         }
         finally
         {
-            _packFileLock.Release();
+            _writeLock.Release();
         }
     }
-    
+
     public Dictionary<Hash32, (int fileNo, long offset, int length)> GetIndexSnapshot()
     {
-        return new(_index);
+        return _index.ToDictionary(
+            static kvp => kvp.Key,
+            static kvp => (kvp.Value.FileNo, kvp.Value.Offset, kvp.Value.Length));
     }
-    
+
     public int CountDataFiles()
     {
-        var count = 0;
-        for (var i = 0; ; i++)
-        {
-            var path = $"{_dataFilePrefix}-{i}.pack";
-            if (!File.Exists(path))
-                break;
-            count++;
-        }
-        return count;
+        var directory = Path.GetDirectoryName(_dataFilePrefix)!;
+        var pattern = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
+        return Directory.EnumerateFiles(directory, pattern).Count();
     }
-    
+
     public int GetEstimatedUncompressedSize((int fileNo, long offset, int length) entry)
     {
-        _packFileLock.Wait();
         try
         {
             var path = $"{_dataFilePrefix}-{entry.fileNo}.pack";
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            fs.Seek(entry.offset + 5, SeekOrigin.Begin); // Skip Magic (4) + Version (1)
-            Span<byte> lenBuf = stackalloc byte[4];
-            fs.ReadExactly(lenBuf);
-            return BinaryPrimitives.ReadInt32LittleEndian(lenBuf);
+            using var fs = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 1,
+                options: FileOptions.RandomAccess);
+
+            return PackFileEntry.ReadUncompressedLength(fs.SafeFileHandle, entry.offset);
         }
         catch
         {
-            return 0; // On failure, ignore
-        }
-        finally
-        {
-            _packFileLock.Release();
+            return 0;
         }
     }
-    
+
     public async Task<int> WriteIndexedDataAsync(Hash32 hash, byte[] data)
     {
-        if (!_initialIndexLoadDone)
-            LoadIndex();
-        
-        // quick check without lock
+        ThrowIfDisposed();
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
+
+        // cheap fast-path before entering write lock
         if (_index.ContainsKey(hash))
             return 0;
-        
-        await _packFileLock.WaitAsync();
+
+        await _writeLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            // double-check
+            // double-check under write lock
             if (_index.ContainsKey(hash))
                 return 0;
 
-            await using var dataStream = GetWritableDataFile(out var fileNo);
-            var (offset, length) = await PackFileEntry.WriteAsync(dataStream, data);
+            var dataStream = await GetWritableDataFileAsync().ConfigureAwait(false);
+            var fileNo = _currentFileNumber;
 
-            _index[hash] = (fileNo, offset, length);
-            SaveIndexEntry(hash, fileNo, offset, length);
+            var (offset, length) = await PackFileEntry.WriteAsync(dataStream, data).ConfigureAwait(false);
+
+            // Strong durability for the pack file
+            dataStream.Flush(flushToDisk: true);
+
+            _currentStreamLength += length;
+
+            var entry = new IndexEntry(fileNo, offset, length);
+
+            if (!_index.TryAdd(hash, entry))
+                return 0;
+
+            await SaveIndexEntryAsync(hash, fileNo, offset, length).ConfigureAwait(false);
+
             return length;
         }
         finally
         {
-            _packFileLock.Release();
+            _writeLock.Release();
         }
     }
 
     public async Task<byte[]> ReadIndexedDataAsync(Hash32 hash)
     {
-        if (!_initialIndexLoadDone)
-            LoadIndex();
-        
-        await _packFileLock.WaitAsync();
-        try
-        {
-            if (!_index.TryGetValue(hash, out var entry))
-                throw new KeyNotFoundException($"No data with index {hash.ToHexString()}.");
+        ThrowIfDisposed();
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
 
-            var path = $"{_dataFilePrefix}-{entry.fileNo}.pack";
-            if (!_readStreams.TryGetValue(path, out var stream))
-            {
-                stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                _readStreams[path] = stream;
-            }
-            stream.Seek(entry.offset, SeekOrigin.Begin);
-            return await PackFileEntry.ReadAsync(stream) ?? throw new InvalidDataException($"Failed to read data for index {hash.ToHexString()}.");
-        }
-        finally
-        {
-            _packFileLock.Release();
-        }
+        if (!_index.TryGetValue(hash, out var entry))
+            throw new KeyNotFoundException($"No data with index {hash.ToHexString()}.");
+
+        var path = $"{_dataFilePrefix}-{entry.FileNo}.pack";
+
+        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 1, options: FileOptions.Asynchronous | FileOptions.RandomAccess);
+
+        return await PackFileEntry.ReadAtAsync(fs.SafeFileHandle, entry.Offset).ConfigureAwait(false) ?? throw new InvalidDataException($"Failed to read data for index {hash.ToHexString()}.");
     }
-    
-    private FileStream GetWritableDataFile(out int fileNumber)
-    {
-        // If we haven't determined the current file number yet, do so now
-        if (_currentFileNumber == int.MinValue)
-        {
-            for (fileNumber = 0; ; fileNumber++)
-            {
-                var path = $"{_dataFilePrefix}-{fileNumber}.pack";
-                var info = new FileInfo(path);
-                if (!info.Exists || info.Length < _maxPackFileSize)
-                {
-                    _currentFileNumber = fileNumber;
-                    _currentStream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
-                    return _currentStream;
-                }
-            }
-        }
-        
-        // Check if the current file has reached the max size
-        if (new FileInfo($"{_dataFilePrefix}-{_currentFileNumber}.pack").Length >= _maxPackFileSize)
-        {
-            // If so, increment to the next file number
-            _currentFileNumber++;
-            _currentStream?.Dispose();
-        }
-        
-        // Return a stream to the current file
-        fileNumber = _currentFileNumber;
-        _currentStream ??= new FileStream($"{_dataFilePrefix}-{fileNumber}.pack", FileMode.Append, FileAccess.Write, FileShare.Read);
 
-        return _currentStream;
+    private async Task<FileStream> GetWritableDataFileAsync()
+    {
+        if (_currentFileNumber == int.MinValue || _currentStream is null)
+        {
+            await OpenCurrentWritableFileAsync().ConfigureAwait(false);
+            return _currentStream!;
+        }
+
+        if (_currentStreamLength >= _maxPackFileSize)
+        {
+            _currentStream.Dispose();
+            _currentStream = null;
+            _currentFileNumber++;
+            await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
+        }
+
+        if (_currentStream is null || !_currentStream.CanWrite)
+        {
+            await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
+        }
+
+        return _currentStream!;
+    }
+
+    private async Task OpenCurrentWritableFileAsync()
+    {
+        var directory = Path.GetDirectoryName(_dataFilePrefix)!;
+        var prefix = Path.GetFileName(_dataFilePrefix);
+
+        var existing = Directory.EnumerateFiles(directory, $"{prefix}-*.pack")
+            .Select(ParsePackFileNumber)
+            .Where(n => n >= 0)
+            .OrderBy(n => n)
+            .ToArray();
+
+        if (existing.Length == 0)
+        {
+            _currentFileNumber = 0;
+            await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
+            return;
+        }
+
+        var highest = existing[^1];
+        var highestPath = $"{_dataFilePrefix}-{highest}.pack";
+        var highestLength = new FileInfo(highestPath).Length;
+
+        _currentFileNumber = highestLength < _maxPackFileSize ? highest : highest + 1;
+        await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
+    }
+
+    private Task OpenSpecificWritableFileAsync(int fileNumber)
+    {
+        var path = $"{_dataFilePrefix}-{fileNumber}.pack";
+
+        _currentStream?.Dispose();
+        _currentStream = new FileStream(
+            path,
+            FileMode.Append,
+            FileAccess.Write,
+            FileShare.Read,
+            bufferSize: 128 * 1024,
+            options: FileOptions.Asynchronous);
+
+        _currentStreamLength = _currentStream.Length;
+        return Task.CompletedTask;
+    }
+
+    private static int ParsePackFileNumber(string path)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(path);
+        var dash = fileName.LastIndexOf('-');
+        if (dash < 0)
+            return -1;
+
+        return int.TryParse(fileName[(dash + 1)..], out var fileNo) ? fileNo : -1;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(IndexedPackFileHandler));
     }
 
     public void Dispose()
     {
-        _packFileLock.Dispose();
-        _indexFileLock.Dispose();
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        _indexWriter?.Dispose();
+        _indexWriter = null;
+
+        _indexAppendStream?.Dispose();
+        _indexAppendStream = null;
+
         _currentStream?.Dispose();
-        foreach (var stream in _readStreams.Values)
-        {
-            stream.Dispose();
-        }
+        _currentStream = null;
+
+        _writeLock.Dispose();
+        _indexStreamLock.Dispose();
+        _initLock.Dispose();
     }
 }

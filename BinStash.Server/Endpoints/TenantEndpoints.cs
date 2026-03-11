@@ -51,7 +51,7 @@ public static class TenantEndpoints
         group.MapPost("/", CreateTenant)
             .WithDescription("Create a new tenant.")
             .WithSummary("Create Tenant")
-            .RequireInstancePermissioin(InstancePermission.Admin);
+            .RequireInstancePermission(InstancePermission.Admin);
         
         group.MapGet("/{id:guid}", GetTenant)
             .WithDescription("Get a tenant by ID.")

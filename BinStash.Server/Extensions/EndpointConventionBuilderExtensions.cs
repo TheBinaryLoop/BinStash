@@ -27,7 +27,7 @@ public static class EndpointConventionBuilderExtensions
 {
     extension(IEndpointConventionBuilder builder)
     {
-        public IEndpointConventionBuilder RequireInstancePermissioin(InstancePermission permisssion)
+        public IEndpointConventionBuilder RequireInstancePermission(InstancePermission permisssion)
             => builder.AddEndpointFilter(new InstancePermissionFilter(permisssion));
         
         public IEndpointConventionBuilder RequireRepoPermission(RepositoryPermission permission)
@@ -42,7 +42,7 @@ public static class EndpointConventionBuilderExtensions
     
     extension(RouteHandlerBuilder builder)
     {
-        public RouteHandlerBuilder RequireInstancePermissioin(InstancePermission permisssion)
+        public RouteHandlerBuilder RequireInstancePermission(InstancePermission permisssion)
             => builder.AddEndpointFilter(new InstancePermissionFilter(permisssion));
         
         public RouteHandlerBuilder RequireRepoPermission(RepositoryPermission permission)
@@ -57,7 +57,7 @@ public static class EndpointConventionBuilderExtensions
     
     extension(RouteGroupBuilder builder)
     {
-        public RouteGroupBuilder RequireInstancePermissioin(InstancePermission permisssion)
+        public RouteGroupBuilder RequireInstancePermission(InstancePermission permisssion)
             => builder.AddEndpointFilter(new InstancePermissionFilter(permisssion));
         
         public RouteGroupBuilder RequireRepoPermission(RepositoryPermission permission)

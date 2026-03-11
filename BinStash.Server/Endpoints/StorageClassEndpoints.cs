@@ -28,7 +28,7 @@ public static class StorageClassEndpoints
         var group = app.MapGroup("/api/storage-classes")
             .WithSummary("Endpoints for managing storage classes.")
             .WithTags("Storage Classes")
-            .RequireInstancePermissioin(InstancePermission.Admin);
+            .RequireInstancePermission(InstancePermission.Admin);
 
         group.MapGet("/", GetStorageClassesAsync)
             .WithName("GetStorageClasses")

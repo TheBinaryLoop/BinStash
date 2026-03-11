@@ -18,6 +18,7 @@ using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Helpers;
 using Microsoft.EntityFrameworkCore;
+using Path = System.IO.Path;
 
 namespace BinStash.Server.HostedServices;
 
