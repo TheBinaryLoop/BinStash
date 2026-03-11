@@ -315,7 +315,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                     break;
                 case 0x02: // Section: 0x02 - Chunk table / File definitions
                     if (linkToFileDefinitions)
-                        fileHashesMap = ChecksumCompressor.TransposeDecompress(s).Select((x, i) => (x, i)).ToDictionary(x => x.i, x => new Hash32(x.x));
+                        fileHashesMap = ChecksumCompressor.TransposeDecompressHashes(s).Select((x, i) => (x, i)).ToDictionary(x => x.i, x => x.x);
                     else
                         package.Chunks.AddRange(ChecksumCompressor.TransposeDecompress(s).Select(x => new ChunkInfo(x)));
                     break;
@@ -434,7 +434,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                     ReadPackageMetadata(r, package);
                     break;
                 case 0x02: // Section: 0x02 - File definitions
-                    fileHashesMap = ChecksumCompressor.TransposeDecompress(s).Select((x, i) => (x, i)).ToDictionary(x => x.i, x => new Hash32(x.x));
+                    fileHashesMap = ChecksumCompressor.TransposeDecompressHashes(s).Select((x, i) => (x, i)).ToDictionary(x => x.i, x => x.x);
                     break;
                 case 0x03: // Section: 0x03 - String table
                     // Layout: [count] [len1..lenN] [bytes for s1..sN]

@@ -147,7 +147,7 @@ public static class IngestSessionEndpoints
     {
         try
         {
-            var fileDefinitionChecksums = (await ChecksumCompressor.TransposeDecompressAsync(request.Body)).Select(x => new Hash32(x)).ToList();
+            var fileDefinitionChecksums = await ChecksumCompressor.TransposeDecompressHashesAsync(request.Body);
 
             var ingestSession = await db.IngestSessions.FindAsync(sessionId);
             var repo = await db.Repositories.FindAsync(repoId);
@@ -202,7 +202,7 @@ public static class IngestSessionEndpoints
         ms.Position = 0;*/
         await using var decompressionStream = new DecompressionStream(request.Body);
         using var reader = new BinaryReader(decompressionStream);
-        var chunkChecksums = await ChecksumCompressor.TransposeDecompressAsync(decompressionStream);
+        var chunkChecksums = await ChecksumCompressor.TransposeDecompressHashesAsync(decompressionStream);
         var batchCount = await VarIntUtils.ReadVarIntAsync<int>(decompressionStream);
         for (var i = 0; i < batchCount; i++)
         {
@@ -215,7 +215,7 @@ public static class IngestSessionEndpoints
                 var chunkIndex = await VarIntUtils.ReadVarIntAsync<int>(decompressionStream);
                 if (chunkIndex < 0 || chunkIndex >= chunkChecksums.Count)
                     return Results.BadRequest("Invalid chunk index in batch.");
-                chunks.Add(new Hash32(chunkChecksums[chunkIndex]));
+                chunks.Add(chunkChecksums[chunkIndex]);
             }
             fileDefinitions[fileChecksum] = (chunks, fileLength);
         }
@@ -267,7 +267,7 @@ public static class IngestSessionEndpoints
     {
         try
         {
-            var chunkChecksums = (await ChecksumCompressor.TransposeDecompressAsync(request.Body)).Select(x => new Hash32(x)).ToArray();
+            var chunkChecksums = (await ChecksumCompressor.TransposeDecompressHashesAsync(request.Body)).ToArray();
             
             var ingestSession = await db.IngestSessions.FindAsync(sessionId);
             var repo = await db.Repositories.FindAsync(repoId);

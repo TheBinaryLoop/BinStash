@@ -350,8 +350,7 @@ public class BinStashApiClient
         var response = await _httpClient.PostAsync(path, new ByteArrayContent(compressedContent));
         response.EnsureSuccessStatusCode();
         var respStream = await response.Content.ReadAsStreamAsync();
-        var decompressedChecksums = await ChecksumCompressor.TransposeDecompressAsync(respStream);
-        return decompressedChecksums.Select(x => new Hash32(x)).ToList();
+        return await ChecksumCompressor.TransposeDecompressHashesAsync(respStream);
     }
 
     #endregion

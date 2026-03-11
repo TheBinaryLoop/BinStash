@@ -263,14 +263,30 @@ public static class ReleaseEndpoints
         Debug.WriteLine($"[ReleaseDownload] Unique file hashes to process: {fileHashes.Count} (in {sw.ElapsedMilliseconds} ms)");
         sw.Restart();
         var fileChunkMap = new Dictionary<Hash32, List<(Hash32 Hash, int Length)>>();
-        foreach (var uniqueFileHash in fileHashes)
+        using (var throttler = new SemaphoreSlim(32))
         {
-            var fileDefinition = await store.RetrieveFileDefinitionAsync(uniqueFileHash.ToHexString());
-            if (fileDefinition == null)
-                throw new FileNotFoundException("File definition not found in the chunk store.");
-            var chunkList = ChecksumCompressor.TransposeDecompress(fileDefinition).Select(x => new Hash32(x)).ToList();
-            fileChunkMap[uniqueFileHash] = chunkList.Select(x => (x, -1)).ToList();
+            await Task.WhenAll(fileHashes.Select(async uniqueFileHash =>
+            {
+                await throttler.WaitAsync();
+                try
+                {
+                    var fileDefinition = await store.RetrieveFileDefinitionAsync(uniqueFileHash.ToHexString());
+                    if (fileDefinition == null)
+                        throw new FileNotFoundException("File definition not found in the chunk store.");
+
+                    var chunkList = ChecksumCompressor.TransposeDecompressHashes(fileDefinition)
+                        .Select(static x => (x, -1))
+                        .ToList();
+
+                    fileChunkMap[uniqueFileHash] = chunkList;
+                }
+                finally
+                {
+                    throttler.Release();
+                }
+            }));
         }
+        
         var uniqueChunks = fileChunkMap.Values.SelectMany(x => x.Select(c => c.Hash)).Distinct().ToList();
         var chunkInfos = await db.Chunks.AsNoTracking()
             .Where(c => c.ChunkStoreId == repo.ChunkStoreId && uniqueChunks.Contains(c.Checksum))
@@ -294,13 +310,12 @@ public static class ReleaseEndpoints
         //fileChunkMap = fileChunkMap.ToLookup(x => x.Key, x => x.Value);
         
         
-        var fileStats = db.FileDefinitions.Where(x => x.ChunkStoreId == repo.ChunkStoreId && fileHashes.Contains(x.Checksum)).ToLookup(x => x.Checksum, x => x);
+        var fileStats = await db.FileDefinitions.AsNoTracking()
+            .Where(x => x.ChunkStoreId == repo.ChunkStoreId && fileHashes.Contains(x.Checksum))
+            .ToDictionaryAsync(x => x.Checksum, x => x.Length);
         
         if (files.Count == 0)
             return Results.NotFound("No files found for the requested component.");
-
-        // 'identity' means no transformation/compression
-        response.Headers.ContentEncoding = "identity";
         
         // 'identity' means no transformation/compression
         response.Headers.ContentEncoding = "identity";
@@ -345,13 +360,28 @@ public static class ReleaseEndpoints
             
             var diffFileHashes = diffFiles.Select(f => f.File.Hash).Distinct().Except(fileHashes).ToList();
             var diffFileChunkMap = new Dictionary<Hash32, List<(Hash32 Hash, int Length)>>(diffFileHashes.Count);
-            foreach (var uniqueFileHash in diffFileHashes)
+            using (var throttler = new SemaphoreSlim(32))
             {
-                var fileDefinition = await store.RetrieveFileDefinitionAsync(uniqueFileHash.ToHexString());
-                if (fileDefinition == null)
-                    throw new FileNotFoundException("File definition not found in the chunk store.");
-                var chunkList = ChecksumCompressor.TransposeDecompress(fileDefinition).Select(x => new Hash32(x)).ToList();
-                diffFileChunkMap[uniqueFileHash] = chunkList.Select(x => (x, -1)).ToList();
+                await Task.WhenAll(diffFileHashes.Select(async uniqueFileHash =>
+                {
+                    await throttler.WaitAsync();
+                    try
+                    {
+                        var fileDefinition = await store.RetrieveFileDefinitionAsync(uniqueFileHash.ToHexString());
+                        if (fileDefinition == null)
+                            throw new FileNotFoundException("File definition not found in the chunk store.");
+
+                        var chunkList = ChecksumCompressor.TransposeDecompressHashes(fileDefinition)
+                            .Select(static x => (x, -1))
+                            .ToList();
+
+                        diffFileChunkMap[uniqueFileHash] = chunkList;
+                    }
+                    finally
+                    {
+                        throttler.Release();
+                    }
+                }));
             }
             var diffUniqueChunks = diffFileChunkMap.Values.SelectMany(x => x.Select(c => c.Hash)).Distinct().Except(uniqueChunks).ToList();
             var diffChunkInfos = await db.Chunks.AsNoTracking()
@@ -420,20 +450,19 @@ public static class ReleaseEndpoints
                 // Remove component name from the path if component is set
                 var relativePath = componentFile.Name.Replace('\\', '/');
                 if (component != null && relativePath.StartsWith($"{componentName}/", StringComparison.OrdinalIgnoreCase))
-                    relativePath = relativePath.Replace($"{componentName}/", string.Empty);
+                    relativePath = relativePath[(componentName.Length + 1)..];
                 else if (component == null && !relativePath.StartsWith($"{componentName}/", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(componentName))
                     relativePath = Path.Combine(componentName, relativePath).Replace('\\', '/');
                 
-                var totalSize = fileStats[componentFile.Hash].First().Length;
-                var chunksByIndex = new Dictionary<int, Hash32>();
+                var totalSize = fileStats[componentFile.Hash];
                 
                 await tarWriter.WriteFileAsync(relativePath, async outputStream =>
                 {
                     var currentFileChunkMap = fileChunkMap[componentFile.Hash];
 
-                    var chunksByIndexCurrentFile = new Dictionary<int, Hash32>(currentFileChunkMap.Count);
+                    var chunksByIndex = new Dictionary<int, Hash32>(currentFileChunkMap.Count);
                     for (var i = 0; i < currentFileChunkMap.Count; i++)
-                        chunksByIndexCurrentFile[i] = currentFileChunkMap[i].Hash;
+                        chunksByIndex[i] = currentFileChunkMap[i].Hash;
 
                     var chunkRefs = ChunkRefHelper.ConvertDeltaToChunkRefs(componentFile.Chunks).ToList();
                     if (chunkRefs.Count == 0)
@@ -456,7 +485,7 @@ public static class ReleaseEndpoints
                     await WriteChunksWindowedAsync(
                         outputStream,
                         chunkRefs,
-                        chunksByIndexCurrentFile,
+                        chunksByIndex,
                         store,
                         windowSize: 32);
                 }, totalSize, release.CreatedAt.UtcDateTime);
