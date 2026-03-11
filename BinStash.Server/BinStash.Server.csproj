@@ -13,14 +13,14 @@
     <ItemGroup>
         <PackageReference Include="Blake3" Version="2.2.0" />
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4" />
-        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.5">
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.4">
           <PrivateAssets>all</PrivateAssets>
           <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
         <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.4" />
         <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.4" />
         <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
-        <PackageReference Include="Scalar.AspNetCore" Version="2.12.36" />
+        <PackageReference Include="Scalar.AspNetCore" Version="2.13.5" />
         <PackageReference Include="SharpZipLib" Version="1.4.2" />
         <PackageReference Include="ZstdNetNGX" Version="1.0.0" />
     </ItemGroup>
