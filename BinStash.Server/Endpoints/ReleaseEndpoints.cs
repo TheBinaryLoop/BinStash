@@ -281,6 +281,9 @@ public static class ReleaseEndpoints
         
         if (files.Count == 0)
             return Results.NotFound("No files found for the requested component.");
+
+        // 'identity' means no transformation/compression
+        response.Headers.ContentEncoding = "identity";
         
         response.ContentType = "application/zstd";
         var fileName = $"{(component != null ? $"component-{component}-" : "release-")}{release.Id}{(diffRelease != null ? ".diff" : "")}.tar.zst";
