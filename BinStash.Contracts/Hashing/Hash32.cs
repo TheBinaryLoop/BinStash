@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Buffers.Binary;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -23,40 +24,33 @@ public readonly struct Hash32 : IEquatable<Hash32>, IComparable<Hash32>
 {
     private readonly ulong _h0, _h1, _h2, _h3; // pack 32 bytes into 4x ulong
 
-    public Hash32(byte[] bytes)
+    public Hash32(byte[] bytes) : this(bytes.AsSpan())
     {
-        /* pack 4*8 little-endian */
-        if (bytes.Length != 32) throw new ArgumentException("Hash32 must be 32 bytes");
-        _h0 = BitConverter.ToUInt64(bytes, 0);
-        _h1 = BitConverter.ToUInt64(bytes, 8);
-        _h2 = BitConverter.ToUInt64(bytes, 16);
-        _h3 = BitConverter.ToUInt64(bytes, 24);
     }
+
     
     public Hash32(ReadOnlySpan<byte> bytes)
     {
         /* pack 4*8 little-endian */
         if (bytes.Length != 32) throw new ArgumentException("Hash32 must be 32 bytes");
-        _h0 = BitConverter.ToUInt64(bytes.Slice(0, 8).ToArray());
-        _h1 = BitConverter.ToUInt64(bytes.Slice(8, 8).ToArray());
-        _h2 = BitConverter.ToUInt64(bytes.Slice(16, 8).ToArray());
-        _h3 = BitConverter.ToUInt64(bytes.Slice(24, 8).ToArray()); 
+        _h0 = BinaryPrimitives.ReadUInt64LittleEndian(bytes[0..8]);
+        _h1 = BinaryPrimitives.ReadUInt64LittleEndian(bytes[8..16]);
+        _h2 = BinaryPrimitives.ReadUInt64LittleEndian(bytes[16..24]);
+        _h3 = BinaryPrimitives.ReadUInt64LittleEndian(bytes[24..32]);
     }
     
     public static Hash32 FromHexString(string hex)
     {
         if (hex.Length != 64) throw new ArgumentException("Hash32 hex string must be 64 characters");
-        var bytes = Convert.FromHexString(hex);
+        Span<byte> bytes = stackalloc byte[32];
+        Convert.FromHexString(hex, bytes, out _, out _);
         return new Hash32(bytes);
     }
     
     public static bool operator ==(Hash32 left, Hash32 right) => left.Equals(right);
     public static bool operator !=(Hash32 left, Hash32 right) => !left.Equals(right);
     
-    public override bool Equals(object? obj)
-    {
-        return obj is Hash32 other && Equals(other);
-    }
+    public override bool Equals(object? obj) => obj is Hash32 other && Equals(other);
     
     public bool Equals(Hash32 other) => _h0 == other._h0 && _h1 == other._h1 && _h2 == other._h2 && _h3 == other._h3;
     public int CompareTo(Hash32 other)
@@ -72,17 +66,29 @@ public readonly struct Hash32 : IEquatable<Hash32>, IComparable<Hash32>
 
     public override int GetHashCode() => HashCode.Combine(_h0,_h1,_h2,_h3);
     
+    public void WriteBytes(Span<byte> destination)
+    {
+        if (destination.Length < 32) throw new ArgumentException("Destination too small", nameof(destination));
+
+        BinaryPrimitives.WriteUInt64LittleEndian(destination[0..8], _h0);
+        BinaryPrimitives.WriteUInt64LittleEndian(destination[8..16], _h1);
+        BinaryPrimitives.WriteUInt64LittleEndian(destination[16..24], _h2);
+        BinaryPrimitives.WriteUInt64LittleEndian(destination[24..32], _h3);
+    }
+    
     public byte[] GetBytes()
     {
-        var bytes = new byte[32];
-        Array.Copy(BitConverter.GetBytes(_h0), 0, bytes, 0, 8);
-        Array.Copy(BitConverter.GetBytes(_h1), 0, bytes, 8, 8);
-        Array.Copy(BitConverter.GetBytes(_h2), 0, bytes, 16, 8);
-        Array.Copy(BitConverter.GetBytes(_h3), 0, bytes, 24, 8);
+        var bytes = GC.AllocateUninitializedArray<byte>(32);
+        WriteBytes(bytes);
         return bytes;
     }
     
-    public string ToHexString() => Convert.ToHexStringLower(GetBytes());
+    public string ToHexString()
+    {
+        Span<byte> bytes = stackalloc byte[32];
+        WriteBytes(bytes);
+        return Convert.ToHexStringLower(bytes);
+    }
 }
 
 public sealed class Hash32TypeConverter : JsonConverter<Hash32>

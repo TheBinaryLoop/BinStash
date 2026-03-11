@@ -361,62 +361,66 @@ public static class IngestSessionEndpoints
 
         if (chunks.Count == 0)
             return Results.BadRequest("No chunks provided.");
-
-        ingestSession.ChunksSeenTotal += chunks.Count;
         
         // Deduplicate
         var uniqueChunks = chunks
-            .GroupBy(c => c.Checksum)
-            .Select(g => g.First())
+            .GroupBy(c => c.Checksum, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new
+            {
+                Hex = g.Key,
+                Hash = Hash32.FromHexString(g.Key),
+                Data = g.First().Data
+            })
             .ToList();
-        
-        ingestSession.ChunksSeenUnique += uniqueChunks.Count;
 
-        var checksums = uniqueChunks.Select(c => Hash32.FromHexString(c.Checksum)).ToArray();
+        ingestSession.ChunksSeenTotal += chunks.Count;
+        ingestSession.ChunksSeenUnique += uniqueChunks.Count;
         
-        var knownChecksums = await db.Chunks
-            .Where(c => c.ChunkStoreId == repoId && ((IEnumerable<Hash32>)checksums).Contains(c.Checksum))
-            .Select(c => c.Checksum)
-            .ToListAsync();
-        
+        var checksumArray = uniqueChunks.Select(c => c.Hash).ToArray();
+
+        var knownChecksums = (await db.Chunks
+                .Where(c => c.ChunkStoreId == store.Id && checksumArray.Contains(c.Checksum))
+                .Select(c => c.Checksum)
+                .ToListAsync())
+            .ToHashSet();
+
         var missingChunks = uniqueChunks
-            .Where(c => !knownChecksums.Contains(Hash32.FromHexString(c.Checksum)))
+            .Where(c => !knownChecksums.Contains(c.Hash))
             .ToList();
-        
+
         ingestSession.ChunksSeenNew += missingChunks.Count;
 
         var missingChunksWrittenBytes = new ConcurrentDictionary<Hash32, int>();
-        
-        var writeTasks = missingChunks.Select(async chunk =>
+
+        var results = await Task.WhenAll(missingChunks.Select(async chunk =>
         {
-            var hash = Convert.ToHexString(Blake3.Hasher.Hash(chunk.Data).AsSpan());
-            if (!hash.Equals(chunk.Checksum, StringComparison.OrdinalIgnoreCase))
-                return false; // Consider logging this
+            var actualHash = new Hash32(Blake3.Hasher.Hash(chunk.Data).AsSpan());
+            if (actualHash != chunk.Hash)
+                return false;
 
-            var (success, bytesWritten) = await store.StoreChunkAsync(chunk.Checksum, chunk.Data);
-            missingChunksWrittenBytes[Hash32.FromHexString(chunk.Checksum)] = bytesWritten;
+            var (success, bytesWritten) = await store.StoreChunkAsync(chunk.Hex, chunk.Data);
+            if (success)
+                missingChunksWrittenBytes[chunk.Hash] = bytesWritten;
+
             return success;
-        });
-        
-        ingestSession.DataSizeTotal += missingChunksWrittenBytes.Sum(c => c.Value);
+        }));
+
+        if (results.Any(r => !r))
+            return Results.Problem("Some chunks failed checksum or storage.");
+
+        ingestSession.DataSizeTotal += missingChunks.Sum(c => c.Data.Length);
         ingestSession.DataSizeUnique += missingChunksWrittenBytes.Sum(c => c.Value);
-
-        var results = await Task.WhenAll(writeTasks);
-
+        
         if (results.Any(r => r == false))
             return Results.Problem("Some chunks failed checksum or storage.");
 
         
-        var chunksToAdd = missingChunks.Select(chunk =>
+        var chunksToAdd = missingChunks.Select(chunk => new Chunk
         {
-            var checksum = Hash32.FromHexString(chunk.Checksum);
-            return new Chunk
-            {
-                Checksum = checksum,
-                ChunkStoreId = repo.ChunkStoreId,
-                Length = chunk.Data.Length,
-                CompressedLength = missingChunksWrittenBytes[checksum]
-            };
+            Checksum = chunk.Hash,
+            ChunkStoreId = repo.ChunkStoreId,
+            Length = chunk.Data.Length,
+            CompressedLength = missingChunksWrittenBytes[chunk.Hash]
         });
         
         ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;

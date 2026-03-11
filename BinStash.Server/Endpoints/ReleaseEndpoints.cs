@@ -272,15 +272,20 @@ public static class ReleaseEndpoints
             fileChunkMap[uniqueFileHash] = chunkList.Select(x => (x, -1)).ToList();
         }
         var uniqueChunks = fileChunkMap.Values.SelectMany(x => x.Select(c => c.Hash)).Distinct().ToList();
-        var chunkInfos = db.Chunks.AsNoTracking().Where(c => c.ChunkStoreId == repo.ChunkStoreId && uniqueChunks.Contains(c.Checksum)).ToList();
+        var chunkInfos = await db.Chunks.AsNoTracking()
+            .Where(c => c.ChunkStoreId == repo.ChunkStoreId && uniqueChunks.Contains(c.Checksum))
+            .ToListAsync();
+
+        var chunkInfoMap = chunkInfos.ToDictionary(c => c.Checksum, c => c.Length);
+
         foreach (var (_, chunkList) in fileChunkMap)
         {
             for (var i = 0; i < chunkList.Count; i++)
             {
-                var chunkInfo = chunkInfos.FirstOrDefault(c => c.Checksum == chunkList[i].Hash);
-                if (chunkInfo == null)
+                if (!chunkInfoMap.TryGetValue(chunkList[i].Hash, out var chunkLength))
                     throw new FileNotFoundException("Chunk info not found in the database.");
-                chunkList[i] = (chunkList[i].Hash, chunkInfo.Length);
+
+                chunkList[i] = (chunkList[i].Hash, chunkLength);
             }
         }
         Debug.WriteLine($"[ReleaseDownload] Built file-chunk map with {uniqueChunks.Count} unique chunks (in {sw.ElapsedMilliseconds} ms)");
@@ -349,15 +354,23 @@ public static class ReleaseEndpoints
                 diffFileChunkMap[uniqueFileHash] = chunkList.Select(x => (x, -1)).ToList();
             }
             var diffUniqueChunks = diffFileChunkMap.Values.SelectMany(x => x.Select(c => c.Hash)).Distinct().Except(uniqueChunks).ToList();
-            chunkInfos.AddRange(db.Chunks.AsNoTracking().Where(c => c.ChunkStoreId == repo.ChunkStoreId && diffUniqueChunks.Contains(c.Checksum)).ToList());
+            var diffChunkInfos = await db.Chunks.AsNoTracking()
+                .Where(c => c.ChunkStoreId == repo.ChunkStoreId && diffUniqueChunks.Contains(c.Checksum))
+                .ToListAsync();
+
+            chunkInfos.AddRange(diffChunkInfos);
+
+            foreach (var chunk in diffChunkInfos)
+                chunkInfoMap[chunk.Checksum] = chunk.Length;
+
             foreach (var (_, chunkList) in diffFileChunkMap)
             {
                 for (var i = 0; i < chunkList.Count; i++)
                 {
-                    var chunkInfo = chunkInfos.FirstOrDefault(c => c.Checksum == chunkList[i].Hash);
-                    if (chunkInfo == null)
+                    if (!chunkInfoMap.TryGetValue(chunkList[i].Hash, out var chunkLength))
                         throw new FileNotFoundException("Chunk info not found in the database.");
-                    chunkList[i] = (chunkList[i].Hash, chunkInfo.Length);
+
+                    chunkList[i] = (chunkList[i].Hash, chunkLength);
                 }
             }
             // Merge the two file-chunk maps
@@ -416,15 +429,20 @@ public static class ReleaseEndpoints
                 
                 await tarWriter.WriteFileAsync(relativePath, async outputStream =>
                 {
+                    var currentFileChunkMap = fileChunkMap[componentFile.Hash];
+
+                    var chunksByIndexCurrentFile = new Dictionary<int, Hash32>(currentFileChunkMap.Count);
+                    for (var i = 0; i < currentFileChunkMap.Count; i++)
+                        chunksByIndexCurrentFile[i] = currentFileChunkMap[i].Hash;
+
                     var chunkRefs = ChunkRefHelper.ConvertDeltaToChunkRefs(componentFile.Chunks).ToList();
                     if (chunkRefs.Count == 0)
                     {
-                        var currentFileChunkMap = fileChunkMap[componentFile.Hash];
                         chunkRefs = new List<ChunkRef>(currentFileChunkMap.Count);
                         var offset = 0;
-                        for(var i = 0; i < currentFileChunkMap.Count; i++)
+                        for (var i = 0; i < currentFileChunkMap.Count; i++)
                         {
-                            var (checksum, length) = currentFileChunkMap[i];
+                            var (_, length) = currentFileChunkMap[i];
                             chunkRefs.Add(new ChunkRef
                             {
                                 Index = i,
@@ -432,30 +450,15 @@ public static class ReleaseEndpoints
                                 Length = length
                             });
                             offset += length;
-                            chunksByIndex[i] = checksum;
                         }
                     }
                     
-                    var loadedChunks = new byte[chunkRefs.Count][];
-                    var throttler = new SemaphoreSlim(128); // Limit parallel reads
-
-                    await Task.WhenAll(chunkRefs.Select(async (chunkRef, i) =>
-                    {
-                        await throttler.WaitAsync();
-                        try
-                        {
-                            var checksum = chunksByIndex[chunkRef.Index];
-                            var chunkData = await store.RetrieveChunkAsync(checksum.ToHexString());
-                            loadedChunks[i] = chunkData ?? throw new FileNotFoundException($"Chunk {checksum} not found in the chunk store.");
-                        }
-                        finally
-                        {
-                            throttler.Release();
-                        }
-                    }));
-                    
-                    foreach (var chunk in loadedChunks)
-                        await outputStream.WriteAsync(chunk, 0, chunk.Length);
+                    await WriteChunksWindowedAsync(
+                        outputStream,
+                        chunkRefs,
+                        chunksByIndexCurrentFile,
+                        store,
+                        windowSize: 32);
                 }, totalSize, release.CreatedAt.UtcDateTime);
                 
                 await tarWriter.WriteFileAsync($"{relativePath}.hash", componentFile.Hash.GetBytes());
@@ -463,6 +466,55 @@ public static class ReleaseEndpoints
         }
 
         return Results.Empty;
+    }
+    
+    private static async Task WriteChunksWindowedAsync(Stream outputStream, IReadOnlyList<ChunkRef> chunkRefs, IReadOnlyDictionary<int, Hash32> chunksByIndex, ChunkStore store, int windowSize = 32, CancellationToken cancellationToken = default)
+    {
+        if (windowSize <= 0)
+            throw new ArgumentOutOfRangeException(nameof(windowSize), "Window size must be greater than 0.");
+
+        // Maps absolute chunk position in chunkRefs -> in-flight read task
+        var inFlight = new Dictionary<int, Task<byte[]>>(windowSize);
+
+        Task<byte[]> StartReadAsync(int position)
+        {
+            var chunkRef = chunkRefs[position];
+            if (!chunksByIndex.TryGetValue(chunkRef.Index, out var checksum))
+                throw new KeyNotFoundException($"No checksum found for chunk index {chunkRef.Index}.");
+
+            return ReadChunkAsync(checksum, store, cancellationToken);
+        }
+
+        // Prime the pipeline
+        var initialCount = Math.Min(windowSize, chunkRefs.Count);
+        for (var i = 0; i < initialCount; i++)
+            inFlight[i] = StartReadAsync(i);
+
+        // Consume in order, topping up the window as we go
+        for (var nextToWrite = 0; nextToWrite < chunkRefs.Count; nextToWrite++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var chunkData = await inFlight[nextToWrite].ConfigureAwait(false);
+            inFlight.Remove(nextToWrite);
+
+            await outputStream.WriteAsync(chunkData, cancellationToken).ConfigureAwait(false);
+
+            var nextToSchedule = nextToWrite + windowSize;
+            if (nextToSchedule < chunkRefs.Count)
+                inFlight[nextToSchedule] = StartReadAsync(nextToSchedule);
+        }
+    }
+
+    private static async Task<byte[]> ReadChunkAsync(Hash32 checksum, ChunkStore store, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var chunkData = await store.RetrieveChunkAsync(checksum.ToHexString()).ConfigureAwait(false);
+        if (chunkData == null)
+            throw new FileNotFoundException($"Chunk {checksum.ToHexString()} not found in the chunk store.");
+
+        return chunkData;
     }
     
 }
