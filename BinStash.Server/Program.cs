@@ -264,6 +264,7 @@ public static class Program
                 }
         })
         .RequireInstancePermissioin(InstancePermission.Admin);
+        .RequireInstancePermission(InstancePermission.Admin);
         app.MapAllEndpoints();
         
         app.Run();
