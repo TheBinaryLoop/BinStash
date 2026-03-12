@@ -263,7 +263,6 @@ public static class Program
                     await context.Response.WriteAsJsonAsync(result);
                 }
         })
-        .RequireInstancePermissioin(InstancePermission.Admin);
         .RequireInstancePermission(InstancePermission.Admin);
         app.MapAllEndpoints();
         
