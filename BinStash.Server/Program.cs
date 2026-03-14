@@ -20,7 +20,6 @@ using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
-using BinStash.Infrastructure.Email.Brevo;
 using BinStash.Infrastructure.Templates;
 using BinStash.Server.Auth.ApiKeys;
 using BinStash.Server.Auth.Instance;
