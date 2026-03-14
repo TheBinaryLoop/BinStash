@@ -35,7 +35,7 @@ public static class TenantEndpoints
     
     public static RouteGroupBuilder MapTenantEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/tenants")
+        var group = app.MapGroup("/api/tenants")!
             .WithTags("Tenant")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -43,40 +43,40 @@ public static class TenantEndpoints
         
         // TODO: Create tenant endpoint (auth only, no tenant context yet)
         
-        var explicitTenantGroup = group.MapGroup("/{tenantId:guid}");
+        var explicitTenantGroup = group.MapGroup("/{tenantId:guid}")!;
         
-        group.MapGet("/", ListTenantsForMember)   
+        group.MapGet("/", ListTenantsForMember)!
             .WithDescription("Get tenants the user is a member of.")
             .WithSummary("List Tenants");
-        group.MapPost("/", CreateTenant)
+        group.MapPost("/", CreateTenant)!
             .WithDescription("Create a new tenant.")
             .WithSummary("Create Tenant")
             .RequireInstancePermission(InstancePermission.Admin);
         
-        group.MapGet("/{id:guid}", GetTenant)
+        group.MapGet("/{id:guid}", GetTenant)!
             .WithDescription("Get a tenant by ID.")
             .WithSummary("Get Tenant");
         
-        explicitTenantGroup.MapPut("/", UpdateTenant)
+        explicitTenantGroup.MapPut("/", UpdateTenant)!
             .WithDescription("Update tenant details.")
             .WithSummary("Update Tenant")
             .RequireTenantPermission(TenantPermission.Admin);
         
-        explicitTenantGroup.MapDelete("/", async (HttpContext context) => Results.StatusCode(StatusCodes.Status501NotImplemented)) // TODO: implement tenant deletion with safeguards (e.g. only if no members, or transfer ownership first)
+        explicitTenantGroup.MapDelete("/", (HttpContext context) => Results.StatusCode(StatusCodes.Status501NotImplemented))! // TODO: implement tenant deletion with safeguards (e.g. only if no members, or transfer ownership first)
             .WithDescription("Delete a tenant. (Not implemented yet)")
             .WithSummary("Delete Tenant")
             .RequireTenantPermission(TenantPermission.Admin);
         
-        group.MapGet("/current", GetCurrentTenant)
+        group.MapGet("/current", GetCurrentTenant)!
             .WithDescription("Get the current tenant.")
             .WithSummary("Get Current Tenant")
             .RequireTenantPermission(TenantPermission.Member);
         
-        group.MapGet("/current/members", GetMembersForTenant)
+        group.MapGet("/current/members", GetMembersForTenant)!
             .WithDescription("Get members of the current tenant.")
             .WithSummary("Get Tenant Members")
             .RequireTenantPermission(TenantPermission.Admin);
-        explicitTenantGroup.MapGet("/members", GetMembersForTenant)
+        explicitTenantGroup.MapGet("/members", GetMembersForTenant)!
             .WithDescription("Get members of a tenant.")
             .WithSummary("Get Tenant Members")
             .RequireTenantPermission(TenantPermission.Admin);
@@ -85,14 +85,20 @@ public static class TenantEndpoints
                 // - Permission: TenantAdmin
                 // - Why: invite flow is the typical SaaS onboarding mechanism; avoids public registration.
                 // - When: admin invites a coworker by email.
-        group.MapPost("/current/invatations", InviteMemberAsync)
+        group.MapPost("/current/invatations", InviteMemberAsync)!
             .WithDescription("Invite a member to a tenant.")
             .WithSummary("Invite Tenant Member")
             .RequireTenantPermission(TenantPermission.Admin);
-        explicitTenantGroup.MapPost("/invitations", InviteMemberAsync)
+        explicitTenantGroup.MapPost("/invitations", InviteMemberAsync)!
             .WithDescription("Invite a member to a tenant.")
             .WithSummary("Invite Tenant Member")
             .RequireTenantPermission(TenantPermission.Admin);
+        
+        app.MapGet("/api/tenants/{tenantId}/invitations/{code}/preview", GetInvitationPreviewAsync)!
+            .WithTags("Tenant")
+            .WithDescription("Get a preview of a tenant invitation.")
+            .WithSummary("Get Tenant Invitation Preview")
+            .AllowAnonymous();
         
         
         // GET /api/tenants/{tenantId}/invitations/{code}/accept
@@ -102,7 +108,7 @@ public static class TenantEndpoints
         // Returns: membership summary
         // { "tenantId": "...", "userId": "...", "roles": ["Member"] }
         
-        group.MapGet("/current/invitations/{code}/accept", AcceptInvitationAsync)
+        group.MapGet("/current/invitations/{code}/accept", AcceptInvitationAsync)!
             .WithDescription("Accept an invitation to join the current tenant.")
             .WithSummary("Accept Tenant Invitation")
             .AllowAnonymous()
@@ -120,39 +126,39 @@ public static class TenantEndpoints
         // Returns: membership summary
         // { "tenantId": "...", "userId": "...", "roles": ["Member"] }
         
-        group.MapDelete("/current/members/{memberId:guid}", RemoveMemberFromTenant)
+        group.MapDelete("/current/members/{memberId:guid}", RemoveMemberFromTenant)!
             .WithDescription("Remove a member from the current tenant.")
             .WithSummary("Remove Tenant Member")
             .RequireTenantPermission(TenantPermission.Admin);
-        explicitTenantGroup.MapDelete("/members/{memberId:guid}", RemoveMemberFromTenant)
+        explicitTenantGroup.MapDelete("/members/{memberId:guid}", RemoveMemberFromTenant)!
             .WithDescription("Remove a member from a tenant.")
             .WithSummary("Remove Tenant Member")
             .RequireTenantPermission(TenantPermission.Admin);
         
-        group.MapPost("/current/leave", LeaveTenant)
+        group.MapPost("/current/leave", LeaveTenant)!
             .WithDescription("Leave the current tenant.")
             .WithSummary("Leave Tenant")
             .RequireTenantPermission(TenantPermission.Member);
-        explicitTenantGroup.MapPost("/leave", LeaveTenant)
+        explicitTenantGroup.MapPost("/leave", LeaveTenant)!
             .WithDescription("Leave a tenant.")
             .WithSummary("Leave Tenant")
             .RequireTenantPermission(TenantPermission.Member);
         
-        group.MapPatch("/current/members/{memberId:guid}", UpdateMemberRoles)
+        group.MapPatch("/current/members/{memberId:guid}", UpdateMemberRoles)!
             .WithDescription("Update roles for a tenant member.")
             .WithSummary("Update Tenant Member Roles")
             .RequireTenantPermission(TenantPermission.Admin);
-        explicitTenantGroup.MapPatch("/members/{memberId:guid}", UpdateMemberRoles)
+        explicitTenantGroup.MapPatch("/members/{memberId:guid}", UpdateMemberRoles)!
             .WithDescription("Update roles for a tenant member.")
             .WithSummary("Update Tenant Member Roles")
             .RequireTenantPermission(TenantPermission.Admin);
         
         // TODO: Move to a more fitting location
-        group.MapGet("/current/storage-classes", GetStorageClassesForTenant)
+        group.MapGet("/current/storage-classes", GetStorageClassesForTenant)!
             .WithDescription("Get storage classes for the current tenant.")
             .WithSummary("Get Tenant Storage Classes")
             .RequireTenantPermission(TenantPermission.Member);
-        explicitTenantGroup.MapGet("/storage-classes", GetStorageClassesForTenant)
+        explicitTenantGroup.MapGet("/storage-classes", GetStorageClassesForTenant)!
             .WithDescription("Get storage classes for a tenant.")
             .WithSummary("Get Tenant Storage Classes")
             .RequireTenantPermission(TenantPermission.Member);
@@ -373,59 +379,94 @@ public static class TenantEndpoints
         await db.SaveChangesAsync();
         
         var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(invitation.Code));
+        
+        // TODO: Get host form settings
+        var acceptInvitationFrontendUrl = $"http://localhost:5173/invite/{tenantContext.TenantId:D}/{code}";
         var acceptEmailUrl = !string.IsNullOrEmpty(_acceptInvitationEndpointName) ? linkGenerator.GetUriByName(context, _acceptInvitationEndpointName, values: new { code })
                               : throw new NotSupportedException($"Could not find endpoint named '{_acceptInvitationEndpointName}'.");
         
-        await emailSender.SendMemberInvitationEmailAsync(inviter, tenant, request.Email, acceptEmailUrl);
+        await emailSender.SendMemberInvitationEmailAsync(inviter, tenant, request.Email, acceptInvitationFrontendUrl);
         
-        return Results.Ok();
+        return Results.Json(new {});
+    }
+    
+    private static async Task<IResult> GetInvitationPreviewAsync(string code, HttpContext context, BinStashDbContext db, TenantContext tenantContext)
+    {
+        if (string.IsNullOrEmpty(code))
+            return Results.BadRequest("Invitation code is required.");
+
+        try
+        {
+            var decodedBytes = WebEncoders.Base64UrlDecode(code);
+            var decodedCode = Encoding.UTF8.GetString(decodedBytes);
+            var invitation = await db.TenantMemberInvitations.FirstOrDefaultAsync(i => i.TenantId == tenantContext.TenantId && i.Code == decodedCode && i.ExpiresAt > DateTimeOffset.UtcNow && i.AcceptedAt == null);
+            if (invitation == null)
+                return Results.NotFound("Invitation not found or expired.");
+        
+            var tenant = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantContext.TenantId);
+            if (tenant == null)
+                return Results.NotFound("Tenant not found.");
+        
+            return Results.Ok(new TenantInvitationPreviewDto(tenant.Id, tenant.Name, tenant.Slug, invitation.Roles.First(), invitation.InviteeEmail, invitation.ExpiresAt));
+        }
+        catch (Exception e)
+        {
+            return Results.BadRequest("Invalid invitation code.");
+        }
     }
     
     private static async Task<IResult> AcceptInvitationAsync(string code, HttpContext context, BinStashDbContext db, TenantContext tenantContext)
     {
         if (string.IsNullOrEmpty(code))
             return Results.BadRequest("Invitation code is required.");
-        
-        var decodedBytes = WebEncoders.Base64UrlDecode(code);
-        var decodedCode = Encoding.UTF8.GetString(decodedBytes);
-        var invitation = await db.TenantMemberInvitations.FirstOrDefaultAsync(i => i.TenantId == tenantContext.TenantId && i.Code == decodedCode && i.ExpiresAt > DateTimeOffset.UtcNow);
-        if (invitation == null)
-            return Results.NotFound("Invitation not found or expired.");
-        
-        // Check if the user is authenticated
-        var userIdStr = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
-        if (!Guid.TryParse(userIdStr, out var userId))
-            return Results.Unauthorized(); // Redirect to registration/login flow
-        
-        var existingMember = await db.TenantMembers.FirstOrDefaultAsync(tm => tm.TenantId == tenantContext.TenantId && tm.UserId == userId);
-        if (existingMember != null)
-            return Results.BadRequest("You are already a member of this tenant.");
-        
-        // Create membership
-        var membership = new TenantMember
-        {
-            TenantId = tenantContext.TenantId,
-            UserId = userId,
-            JoinedAt = DateTimeOffset.UtcNow
-        };
-        
-        await db.TenantMembers.AddAsync(membership);
-        // Assign roles
-        var roleAssignments = invitation.Roles.Select(roleName => new TenantRoleAssignment
-        {  
-            TenantId = tenantContext.TenantId,
-            UserId = userId,
-            RoleName = roleName,
-            GrantedAt = DateTimeOffset.UtcNow
-        });
-        
-        await db.TenantRoleAssignments.AddRangeAsync(roleAssignments);
-        
-        // Remove invitation
-        invitation.AcceptedAt = DateTimeOffset.UtcNow;
 
-        await db.SaveChangesAsync();
-        return Results.Ok(new TenantMemberDto(tenantContext.TenantId, userId, invitation.Roles));
+        try
+        {
+            var decodedBytes = WebEncoders.Base64UrlDecode(code);
+            var decodedCode = Encoding.UTF8.GetString(decodedBytes);
+            var invitation = await db.TenantMemberInvitations.FirstOrDefaultAsync(i => i.TenantId == tenantContext.TenantId && i.Code == decodedCode && i.ExpiresAt > DateTimeOffset.UtcNow && i.AcceptedAt == null);
+            if (invitation == null)
+                return Results.NotFound("Invitation not found or expired.");
+        
+            // Check if the user is authenticated
+            var userIdStr = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
+            if (!Guid.TryParse(userIdStr, out var userId))
+                return Results.Unauthorized(); // Redirect to registration/login flow
+        
+            var existingMember = await db.TenantMembers.FirstOrDefaultAsync(tm => tm.TenantId == tenantContext.TenantId && tm.UserId == userId);
+            if (existingMember != null)
+                return Results.BadRequest("You are already a member of this tenant.");
+        
+            // Create membership
+            var membership = new TenantMember
+            {
+                TenantId = tenantContext.TenantId,
+                UserId = userId,
+                JoinedAt = DateTimeOffset.UtcNow
+            };
+        
+            await db.TenantMembers.AddAsync(membership);
+            // Assign roles
+            var roleAssignments = invitation.Roles.Select(roleName => new TenantRoleAssignment
+            {  
+                TenantId = tenantContext.TenantId,
+                UserId = userId,
+                RoleName = roleName,
+                GrantedAt = DateTimeOffset.UtcNow
+            });
+        
+            await db.TenantRoleAssignments.AddRangeAsync(roleAssignments);
+        
+            // Remove invitation
+            invitation.AcceptedAt = DateTimeOffset.UtcNow;
+
+            await db.SaveChangesAsync();
+            return Results.Ok(new TenantMemberDto(tenantContext.TenantId, userId, invitation.Roles));
+        }
+        catch (Exception e)
+        {
+            return Results.BadRequest("Invalid invitation code.");
+        }
     }
     
     private static async Task<IResult> RemoveMemberFromTenant(Guid memberId, HttpContext context, BinStashDbContext db, TenantContext tenantContext)
@@ -462,7 +503,7 @@ public static class TenantEndpoints
             .FirstOrDefaultAsync(tm => tm.TenantId == tenantContext.TenantId && tm.UserId == userId);
         
         if (membership == null)
-            return Results.NotFound("You are not a member of this tenant.");
+            return Results.BadRequest("You are not a member of this tenant.");
         
         // Safeguard: prevent leave if last admin
         var tenantAdmins = await db.TenantRoleAssignments.Where(r => r.TenantId == tenantContext.TenantId && r.RoleName == "TenantAdmin").ToListAsync();

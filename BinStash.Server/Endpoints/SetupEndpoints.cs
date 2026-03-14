@@ -167,7 +167,7 @@ public static class SetupEndpoints
         });
     }
 
-    private static async Task<IResult> SetTenancyAsync(SetTenancyRequest req, BinStashDbContext db, IConfiguration config, IOptions<TenancyOptions> tenancyOpts)
+    private static async Task<IResult> SetTenancyAsync(SetTenancyRequest req, BinStashDbContext db, IConfiguration config, IOptions<TenancySettings> tenancyOpts)
     {
         var state = await db.SetupStates.SingleAsync(x => x.Id == 1);
         if (state.IsInitialized) return Results.Conflict("already_initialized");
@@ -313,7 +313,7 @@ public static class SetupEndpoints
         return Results.Ok(new { });
     }
     
-    private static async Task<IResult> EnsureStorageDefaultsAsync(EnsureStorageDefaultsRequest req, BinStashDbContext db, IOptions<TenancyOptions> tenancyOpts)
+    private static async Task<IResult> EnsureStorageDefaultsAsync(EnsureStorageDefaultsRequest req, BinStashDbContext db, IOptions<TenancySettings> tenancyOpts)
     {
         if (req.StorageClassDefaultMappings.Count == 0) 
             return Results.BadRequest("At least one storage class default mapping is required.");
@@ -372,7 +372,7 @@ public static class SetupEndpoints
         BinStashDbContext db,
         UserManager<BinStashUser> users,
         RoleManager<IdentityRole<Guid>> roles,
-        IOptions<TenancyOptions> tenancyOpts
+        IOptions<TenancySettings> tenancyOpts
     )
     {
         var state = await db.SetupStates.SingleAsync(x => x.Id == 1);
@@ -449,7 +449,7 @@ public static class SetupEndpoints
     private static async Task<IResult> FinishAsync(
         BinStashDbContext db,
         IConfiguration config,
-        IOptions<TenancyOptions> tenancyOpts
+        IOptions<TenancySettings> tenancyOpts
     )
     {
         var state = await db.SetupStates.SingleAsync(x => x.Id == 1);

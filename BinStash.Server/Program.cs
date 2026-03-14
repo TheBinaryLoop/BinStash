@@ -31,6 +31,7 @@ using BinStash.Server.Configuration;
 using BinStash.Server.Configuration.Tenancy;
 using BinStash.Server.Context;
 using BinStash.Server.Email;
+using BinStash.Server.Email.Providers;
 using BinStash.Server.Extensions;
 using BinStash.Server.Health;
 using BinStash.Server.Helpers;
@@ -57,11 +58,11 @@ public static class Program
         
         builder.Services.AddHealthChecks()
             .AddNpgSql(
-                connectionString: builder.Configuration.GetConnectionString("BinStashDb"),
+                connectionString: builder.Configuration.GetConnectionString("BinStashDb")!,
                 name: "PostgreSQL",
                 failureStatus: HealthStatus.Degraded,
                 tags: ["db", "sql", "postgresql"])
-            .AddCheck<ChunkStoreHealthCheck>("chunkstores_live", tags: ["live"]);;
+            .AddCheck<ChunkStoreHealthCheck>("chunkstores_live", tags: ["live"]);
 
         // connection string from appsettings/env
         var connectionString = builder.Configuration.GetConnectionString("BinStashDb")
@@ -74,15 +75,16 @@ public static class Program
         builder.Services.AddWindowsService();
         
         // Configuration
-        builder.Services.Configure<TenancyOptions>(builder.Configuration.GetSection("Tenancy"));
+        builder.Services.Configure<DomainSettings>(builder.Configuration.GetSection("Domain"));
+        builder.Services.Configure<TenancySettings>(builder.Configuration.GetSection("Tenancy"));
+        builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));
         
         // Add services to the container.
         builder.Services.AddSingleton<ChunkStoreProbeCache>();
         builder.Services.AddSingleton<IEmailTemplateRenderer, EmailTemplateRenderer>(_ => new EmailTemplateRenderer(typeof(EmailTemplateRenderer).Assembly, "BinStash.Infrastructure"));
-        builder.Services.AddHttpClient<BrevoApiClient>();
-        builder.Services.AddTransient<BrevoApiClient>();
-        builder.Services.AddTransient<IEmailSender<BinStashUser>, BrevoEmailSender>();
-        builder.Services.AddTransient<ITenantEmailSender, BrevoEmailSender>();
+        builder.Services.AddHttpClient<BrevoEmailProvider>();
+        builder.Services.AddTransient<IEmailSender<BinStashUser>, EmailSenderImplementation>();
+        builder.Services.AddTransient<ITenantEmailSender, EmailSenderImplementation>();
         builder.Services.AddScoped<ITokenService, TokenService>();
         builder.Services.AddScoped<TenantJoinService>();
         builder.Services.AddResponseCompression();
@@ -179,7 +181,7 @@ public static class Program
 
                 options.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = 401; return Task.CompletedTask; };
                 options.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = 403; return Task.CompletedTask; };
-            });;
+            });
         builder.Services.AddAuthorization(options =>
         {
             options.AddPolicy("Permission:Instance:Admin", p => p.AddRequirements(new InstancePermissionRequirement(InstancePermission.Admin)));
@@ -264,6 +266,7 @@ public static class Program
                 }
         })
         .RequireInstancePermission(InstancePermission.Admin);
+        app.MapGraphQL();
         app.MapAllEndpoints();
         
         app.Run();

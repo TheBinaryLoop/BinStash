@@ -1,4 +1,4 @@
-﻿namespace BinStash.Infrastructure.Helper;
+﻿namespace BinStash.Core.Helper;
 
 public static class BytesConverter
 {

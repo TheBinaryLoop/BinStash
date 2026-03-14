@@ -24,7 +24,7 @@ namespace BinStash.Server.Middlewares;
 
 public sealed class TenantResolutionMiddleware(RequestDelegate next)
 {
-    public async Task InvokeAsync(HttpContext http, BinStashDbContext db, TenantContext tenantContext, IOptionsMonitor<TenancyOptions> tenancyOpts)
+    public async Task InvokeAsync(HttpContext http, BinStashDbContext db, TenantContext tenantContext, IOptionsMonitor<TenancySettings> tenancyOpts)
     {
         var path = http.Request.Path;
 

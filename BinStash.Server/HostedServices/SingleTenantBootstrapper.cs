@@ -28,7 +28,7 @@ public class SingleTenantBootstrapper(IServiceProvider serviceProvider) : IHoste
         using var scope = serviceProvider.CreateScope();
         
         var db = scope.ServiceProvider.GetRequiredService<BinStashDbContext>();
-        var opt = scope.ServiceProvider.GetRequiredService<IOptions<TenancyOptions>>().Value;
+        var opt = scope.ServiceProvider.GetRequiredService<IOptions<TenancySettings>>().Value;
         
         if (opt.Mode != TenancyMode.Single)
             return;

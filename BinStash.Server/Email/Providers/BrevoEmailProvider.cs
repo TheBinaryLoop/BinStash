@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -13,34 +13,43 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.Net.Http.Json;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
+namespace BinStash.Server.Email.Providers;
 
-namespace BinStash.Infrastructure.Email.Brevo;
-
-public class BrevoApiClient
+public sealed class BrevoEmailProvider : IEmailProvider
 {
-    private readonly ILogger<BrevoApiClient> _logger;
+    private readonly ILogger<BrevoEmailProvider> _logger;
     private readonly HttpClient _httpClient;
-
-    public BrevoApiClient(IConfiguration configuration, ILogger<BrevoApiClient> logger, HttpClient httpClient)
+    
+    private bool _isSetup = false;
+    
+    public BrevoEmailProvider(ILogger<BrevoEmailProvider> logger, HttpClient httpClient)
     {
         _logger = logger;
         _httpClient = httpClient;
-
-        var apiKey = configuration["Email:Brevo:ApiKey"];
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            throw new InvalidOperationException("Brevo API key is not configured.");
-        }
-        
-        _httpClient.DefaultRequestHeaders.Add("api-key", apiKey);
-        _httpClient.BaseAddress = new Uri("https://api.brevo.com/v3/");
     }
     
-    public async Task SendEmailAsync(string senderName, string senderEmail, string toEmail, string subject, string htmlContent, string replyTo)
+    public void Setup(string apiKey)
     {
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new ArgumentException("API key cannot be null or whitespace.", nameof(apiKey));
+        }
+        
+        _httpClient.DefaultRequestHeaders.Clear();
+        _httpClient.DefaultRequestHeaders.Add("api-key", apiKey);
+        
+        _httpClient.BaseAddress = new Uri("https://api.brevo.com/v3/");
+        
+        _isSetup = true;
+    }
+    
+    public async Task SendEmailAsync(string senderName, string senderEmail, string recipientEmail, string subject, string htmlContent, string replyToEmail)
+    {
+        if (!_isSetup)
+        {
+            throw new InvalidOperationException("BrevoEmailProvider is not set up. Call Setup() with a valid API key before sending emails.");
+        }
+        
         var payload = new
         {
             htmlContent,
@@ -54,7 +63,7 @@ public class BrevoApiClient
             {
                 new
                 {
-                    email = toEmail
+                    email = recipientEmail
                 }
             }
         };
@@ -68,6 +77,6 @@ public class BrevoApiClient
             throw new InvalidOperationException("Failed to send email via Brevo.");
         }
         var responseContent = await response.Content.ReadFromJsonAsync<object>();
-        _logger.LogInformation("Email sent to {ToEmail} via Brevo. Result: {@MessageId}", toEmail, responseContent);
+        _logger.LogInformation("Email sent to {ToEmail} via Brevo. Result: {@MessageId}", recipientEmail, responseContent);
     }
 }

@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Buffers;
 using System.IO.MemoryMappedFiles;
 
 namespace BinStash.Core.Serialization.Utils;
@@ -73,6 +74,88 @@ public static class VarIntUtils
         w.Write(buffer[..len]);
     }
     
+    #endregion
+
+    #region Span Overloads
+
+    public static int WriteVarInt<T>(Span<byte> dest, T value) where T : struct
+    {
+        switch (value)
+        {
+            case int i:
+                return EncodeSignedVarInt(i, dest);
+
+            case long l:
+                return EncodeSignedVarInt(l, dest);
+
+            case uint ui:
+                return EncodeUnsignedVarInt(ui, dest);
+
+            case ulong ul:
+                return EncodeUnsignedVarInt(ul, dest);
+
+            case ushort us:
+                return EncodeUnsignedVarInt(us, dest);
+
+            default:
+                throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.");
+        }
+    }
+    
+    #endregion
+
+    #region IBufferWriter
+
+    public static void WriteVarInt<T>(IBufferWriter<byte> w, T value) where T : struct
+    {
+        switch (value)
+        {
+            case int i:
+                WriteSignedVarInt(w, i);
+                break;
+
+            case long l:
+                WriteSignedVarInt(w, l);
+                break;
+
+            case uint ui:
+                WriteUnsignedVarInt(w, ui);
+                break;
+
+            case ulong ul:
+                WriteUnsignedVarInt(w, ul);
+                break;
+
+            case ushort us:
+                WriteUnsignedVarInt(w, us);
+                break;
+
+            default:
+                throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.");
+        }
+    }
+    
+    private static void WriteSignedVarInt(IBufferWriter<byte> w, long value)
+    {
+        Span<byte> buffer = stackalloc byte[10];
+        var len = EncodeSignedVarInt(value, buffer);
+        w.Write(buffer[..len]);
+    }
+
+    private static void WriteUnsignedVarInt(IBufferWriter<byte> w, ulong value)
+    {
+        Span<byte> buffer = stackalloc byte[10];
+        var len = EncodeUnsignedVarInt(value, buffer);
+        w.Write(buffer[..len]);
+    }
+
+    private static void WriteUnsignedVarInt(IBufferWriter<byte> w, uint value)
+    {
+        Span<byte> buffer = stackalloc byte[5];
+        var len = EncodeUnsignedVarInt(value, buffer);
+        w.Write(buffer[..len]);
+    }
+
     #endregion
     
     #region Stream Overloads

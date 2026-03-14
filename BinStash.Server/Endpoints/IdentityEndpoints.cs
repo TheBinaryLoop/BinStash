@@ -95,7 +95,7 @@ public static class IdentityEndpoints
             await SendConfirmationEmailAsync(user, userManager, context, email);
             
             var tenantJoinService = sp.GetRequiredService<TenantJoinService>();
-            await tenantJoinService.JoinOnRegisterAsync(user.Id, context.RequestAborted);
+            await tenantJoinService.JoinOnRegisterAsync(user.Id, registration, context.RequestAborted);
             return TypedResults.Ok();
         });
 
@@ -225,7 +225,7 @@ public static class IdentityEndpoints
             });
         });
 
-        group.MapGet("/confirmEmail", async Task<Results<ContentHttpResult,UnauthorizedHttpResult>>
+        group.MapGet("/confirmEmail", async Task<Results<Ok,UnauthorizedHttpResult>>
             ([FromQuery] string userId, [FromQuery] string code, [FromQuery] string? changedEmail, [FromServices] IServiceProvider sp) =>
         {
             var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();
@@ -267,9 +267,10 @@ public static class IdentityEndpoints
                 return TypedResults.Unauthorized();
             }
 
-            return TypedResults.Content("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>Email Confirmed</title></head><body><h1>Email Confirmed</h1><p>Your email has been successfully confirmed. You can now close this window and return to the application.</p></body></html>", "text/html");
+            return TypedResults.Ok();
+            //return TypedResults.Content("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>Email Confirmed</title></head><body><h1>Email Confirmed</h1><p>Your email has been successfully confirmed. You can now close this window and return to the application.</p></body></html>", "text/html");
         })
-        .Add(endpointBuilder =>
+        ?.Add(endpointBuilder =>
         {
             var finalPattern = ((RouteEndpointBuilder)endpointBuilder).RoutePattern.RawText;
             confirmEmailEndpointName = $"{nameof(MapIdentityEndpoints)}-{finalPattern}";

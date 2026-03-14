@@ -13,12 +13,11 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Contracts.Tenant;
+namespace BinStash.Server.Configuration.Tenancy;
 
-public record CreateTenantDto(string Name, string Slug);
-public record UpdateTenantDto(string Name, string Slug);
-public record TenantInfoDto(Guid TenantId, string Name, string Slug, DateTimeOffset JoinedAt, string Role);
-public record UpdateTenantMemberRolesDto(List<string> Roles);
-public record TenantMemberDto(Guid TenantId, Guid UserId, List<string> Roles);
-public record InviteTenantMemberDto(string Email, List<string> Roles);
-public record TenantInvitationPreviewDto(Guid TenantId, string TenantName, string? TenantSlug, string Role, string? InvitedEmail, DateTimeOffset ExpiresAt);
+public sealed class TenancySettings
+{
+    public TenancyMode Mode { get; set; } = TenancyMode.Single;
+    public Guid DefaultTenantId { get; set; } = Guid.Empty;
+    public string? DomainSuffix { get; set; }
+}

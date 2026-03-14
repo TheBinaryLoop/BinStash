@@ -22,7 +22,7 @@ namespace BinStash.Server.Middlewares;
 
 public sealed class SetupGateMiddleware(RequestDelegate next)
 {
-    public async Task InvokeAsync(HttpContext ctx, BinStashDbContext db, IOptions<TenancyOptions> tenancyOpts)
+    public async Task InvokeAsync(HttpContext ctx, BinStashDbContext db, IOptions<TenancySettings> tenancyOpts)
     {
         var path = ctx.Request.Path;
 

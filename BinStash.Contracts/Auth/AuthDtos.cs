@@ -42,6 +42,11 @@ public sealed class RegisterRequest
     /// The user's password.
     /// </summary>
     public required string Password { get; init; }
+
+    /// <summary>
+    /// Invitation code for registration, if applicable.
+    /// </summary>
+    public string? InvitationCode { get; set; }
 }
 
 public sealed class ConfirmEmailRequest

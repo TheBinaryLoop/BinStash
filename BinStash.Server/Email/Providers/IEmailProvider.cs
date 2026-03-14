@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -13,11 +13,9 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Server.Configuration.Tenancy;
+namespace BinStash.Server.Email.Providers;
 
-public class TenancyOptions
+public interface IEmailProvider
 {
-    public TenancyMode Mode { get; set; } = TenancyMode.Single;
-    public Guid DefaultTenantId { get; set; } = Guid.Empty;
-    public string? DomainSuffix { get; set; }
+    Task SendEmailAsync(string senderName, string senderEmail, string recipientEmail, string subject, string htmlContent, string replyToEmail);
 }
