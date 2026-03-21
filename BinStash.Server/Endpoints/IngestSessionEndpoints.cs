@@ -24,9 +24,9 @@ using BinStash.Core.Extensions;
 using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Data;
-using BinStash.Infrastructure.Storage;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
+using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
 using ZstdNet;
 
@@ -179,7 +179,7 @@ public static class IngestSessionEndpoints
         }
     }
     
-    private static async Task<IResult> UploadFileDefinitionsBatchAsync(Guid repoId, BinStashDbContext db, HttpRequest request)
+    private static async Task<IResult> UploadFileDefinitionsBatchAsync(Guid repoId, BinStashDbContext db, IChunkStoreService chunkStoreService, HttpRequest request)
     {
         // Check for the ingest id header X-Ingest-Session-Id
         if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
@@ -233,8 +233,6 @@ public static class IngestSessionEndpoints
         var fileHashes = fileDefinitions.Keys.ToList();
         var existingFiles = db.FileDefinitions.Where(x => x.ChunkStoreId == storeMeta.Id && fileHashes.Contains(x.Checksum)).Select(x => x.Checksum).ToList();
         
-        var store = new ChunkStore(storeMeta.Name, storeMeta.Type, storeMeta.LocalPath, new LocalFolderObjectStorage(storeMeta.LocalPath));
-
         foreach (var fileDefinition in fileDefinitions.Where(x => !existingFiles.Contains(x.Key)))
         {
             var entry = new FileDefinition
@@ -244,7 +242,7 @@ public static class IngestSessionEndpoints
                 Length = fileDefinition.Value.Length,
             };
             
-            var storeFileDefinitionResult = await store.StoreFileDefinitionAsync(fileDefinition.Key, ChecksumCompressor.TransposeCompress(fileDefinition.Value.Chunks.Select(x => x.GetBytes()).ToList()));
+            var storeFileDefinitionResult = await chunkStoreService.StoreFileDefinitionAsync(storeMeta, fileDefinition.Key, ChecksumCompressor.TransposeCompress(fileDefinition.Value.Chunks.Select(x => x.GetBytes()).ToList()));
             
             if (!storeFileDefinitionResult.Success)
                 return Results.Problem($"Failed to store file definition ({fileDefinition.Key.ToHexString()}) in chunk store.");
@@ -300,7 +298,7 @@ public static class IngestSessionEndpoints
         }
     }
 
-    private static async Task<IResult> UploadChunkAsync(Guid repoId, Guid sessionId, string chunkChecksum, BinStashDbContext db, Stream chunkStream)
+    private static async Task<IResult> UploadChunkAsync(Guid repoId, Guid sessionId, string chunkChecksum, BinStashDbContext db, Stream chunkStream, IChunkStoreService chunkStoreService)
     {
         var checksum = Hash32.FromHexString(chunkChecksum);
         
@@ -312,15 +310,13 @@ public static class IngestSessionEndpoints
         var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
         if (store == null)
             return Results.NotFound();
-            
-        store = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
-            
+        
         using var ms = new MemoryStream();
         await chunkStream.CopyToAsync(ms);
         ms.Position = 0;
 
         if (db.Chunks.Any(c => c.ChunkStoreId == repoId && c.Checksum == checksum)) return Results.Ok();
-        var (success, bytesWritten) = await store.StoreChunkAsync(chunkChecksum, ms.ToArray());
+        var (success, bytesWritten) = await chunkStoreService.StoreChunkAsync(store, chunkChecksum, ms.ToArray());
         if (!success) return Results.Problem();
         db.Chunks.Add(new Chunk
         {
@@ -333,7 +329,7 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
 
-    private static async Task<IResult> UploadChunksBatchAsync(Guid repoId, List<ChunkUploadDto> chunks, BinStashDbContext db, HttpRequest request)
+    private static async Task<IResult> UploadChunksBatchAsync(Guid repoId, List<ChunkUploadDto> chunks, BinStashDbContext db, IChunkStoreService chunkStoreService, HttpRequest request)
     {
         // Check for the ingest id header X-Ingest-Session-Id
         if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
@@ -353,12 +349,10 @@ public static class IngestSessionEndpoints
         if (repo == null)
             return Results.NotFound();
             
-        var storeMeta = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
-        if (storeMeta == null)
+        var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
+        if (store == null)
             return Results.NotFound();
-
-        var store = new ChunkStore(storeMeta.Name, storeMeta.Type, storeMeta.LocalPath, new LocalFolderObjectStorage(storeMeta.LocalPath));
-
+        
         if (chunks.Count == 0)
             return Results.BadRequest("No chunks provided.");
         
@@ -369,7 +363,7 @@ public static class IngestSessionEndpoints
             {
                 Hex = g.Key,
                 Hash = Hash32.FromHexString(g.Key),
-                Data = g.First().Data
+                g.First().Data
             })
             .ToList();
 
@@ -379,7 +373,7 @@ public static class IngestSessionEndpoints
         var checksumArray = uniqueChunks.Select(c => c.Hash).ToArray();
 
         var knownChecksums = (await db.Chunks
-                .Where(c => c.ChunkStoreId == storeMeta.Id && checksumArray.Contains(c.Checksum))
+                .Where(c => c.ChunkStoreId == store.Id && checksumArray.Contains(c.Checksum))
                 .Select(c => c.Checksum)
                 .ToListAsync())
             .ToHashSet();
@@ -398,8 +392,8 @@ public static class IngestSessionEndpoints
             if (actualHash != chunk.Hash)
                 return false;
 
-            var (success, bytesWritten) = await store.StoreChunkAsync(chunk.Hex, chunk.Data);
-            if (success)
+            var (success, bytesWritten) = await chunkStoreService.StoreChunkAsync(store, chunk.Hex, chunk.Data);
+            if (success && bytesWritten > 0)
                 missingChunksWrittenBytes[chunk.Hash] = bytesWritten;
 
             return success;
@@ -432,7 +426,7 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
     
-    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, HttpRequest request)
+    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, HttpRequest request)
     {
         var ingestSession = await db.IngestSessions.FindAsync(sessionId);
         var repo = await db.Repositories.FindAsync(repoId);
@@ -499,8 +493,7 @@ public static class IngestSessionEndpoints
         
         await db.Releases.AddAsync(release);
 
-        var chunkStore = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
-        await chunkStore.StoreReleasePackageAsync(releasePackageData);
+        await chunkStoreService.StoreReleasePackageAsync(store, releasePackageData);
         
         ingestSession.MetadataSize =+ releasePackageData.Length;
         

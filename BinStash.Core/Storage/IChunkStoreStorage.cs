@@ -17,7 +17,7 @@ using BinStash.Contracts.Hashing;
 
 namespace BinStash.Core.Storage;
 
-public interface IObjectStorage
+public interface IChunkStoreStorage
 {
     Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data);
     Task<byte[]?> RetrieveChunkAsync(string key);

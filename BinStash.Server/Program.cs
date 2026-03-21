@@ -19,7 +19,9 @@ using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
+using BinStash.Core.Storage;
 using BinStash.Infrastructure.Data;
+using BinStash.Infrastructure.Storage;
 using BinStash.Infrastructure.Templates;
 using BinStash.Server.Auth.ApiKeys;
 using BinStash.Server.Auth.Instance;
@@ -32,10 +34,13 @@ using BinStash.Server.Context;
 using BinStash.Server.Email;
 using BinStash.Server.Email.Providers;
 using BinStash.Server.Extensions;
+using BinStash.Server.GraphQL.ObjectTypes;
+using BinStash.Server.GraphQL.Services;
 using BinStash.Server.Health;
 using BinStash.Server.Helpers;
 using BinStash.Server.HostedServices;
 using BinStash.Server.Middlewares;
+using BinStash.Server.Services.ChunkStores;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -79,6 +84,8 @@ public static class Program
         builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));
         
         // Add services to the container.
+        builder.Services.AddSingleton<IChunkStoreStorageFactory, ChunkStoreStorageFactory>();
+        builder.Services.AddScoped<IChunkStoreService, ChunkStoreService>();
         builder.Services.AddSingleton<ChunkStoreProbeCache>();
         builder.Services.AddSingleton<IEmailTemplateRenderer, EmailTemplateRenderer>(_ => new EmailTemplateRenderer(typeof(EmailTemplateRenderer).Assembly, "BinStash.Infrastructure"));
         builder.Services.AddHttpClient<BrevoEmailProvider>();
@@ -86,6 +93,15 @@ public static class Program
         builder.Services.AddTransient<ITenantEmailSender, EmailSenderImplementation>();
         builder.Services.AddScoped<ITokenService, TokenService>();
         builder.Services.AddScoped<TenantJoinService>();
+        builder.Services.AddScoped<ChunkStoreQueryService>();
+        builder.Services.AddScoped<ReleaseQueryService>();
+        builder.Services.AddScoped<RepositoryMutationService>();
+        builder.Services.AddScoped<RepositoryQueryService>();
+        builder.Services.AddScoped<ServiceAccountMutationService>();
+        builder.Services.AddScoped<ServiceAccountQueryService>();
+        builder.Services.AddScoped<TenantMutationService>();
+        builder.Services.AddScoped<TenantQueryService>();
+        builder.Services.AddScoped<UserQueryService>();
         builder.Services.AddResponseCompression();
         builder.Services.AddProblemDetails();
 
@@ -209,6 +225,18 @@ public static class Program
         //builder.Services.AddHostedService<SingleTenantBootstrapper>();
         builder.Services.AddHostedService<ChunkStoreProbeService>();
 
+        builder.Services.AddGraphQLServer()
+            .ModifyCostOptions(options =>
+            {
+                options.EnforceCostLimits = false;
+            })
+            .AddAuthorization()
+            .AddQueryType<QueryType>()
+            .AddMutationType<MutationType>()
+            .AddFiltering()
+            .AddSorting()
+            .AddProjections();
+            
         
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
         builder.Services.AddOpenApi();

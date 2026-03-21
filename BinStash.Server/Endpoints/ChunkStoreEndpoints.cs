@@ -20,8 +20,8 @@ using BinStash.Core.Auth.Instance;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
-using BinStash.Infrastructure.Storage;
 using BinStash.Server.Extensions;
+using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
 using Path = System.IO.Path;
 
@@ -33,42 +33,42 @@ public static class ChunkStoreEndpoints
     {
         // TODO: Add ProducesError
         
-        var group = app.MapGroup("/api/chunk-stores")
+        var group = app.MapGroup("/api/chunk-stores")!
             .WithTags("ChunkStore")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .RequireInstancePermission(InstancePermission.Admin);
             //.WithDescription("Endpoints for managing chunk stores. Chunk stores are used to store chunks of data that are referenced by repositories. They can be local or remote, and support various chunking algorithms.");
 
-        group.MapGet("/enabled-types", GetChunkStoreTypes)
+        group.MapGet("/enabled-types", GetChunkStoreTypes)!
             .WithDescription("Get available chunk store types.")
             .WithSummary("Get Chunk Store Types")
             .Produces(StatusCodes.Status200OK);
-        group.MapPost("/", CreateChunkStoreAsync)
+        group.MapPost("/", CreateChunkStoreAsync)!
             .WithDescription("Creates a new chunk store.")
             .WithSummary("Create Chunk Store")
             .Produces<ChunkStoreSummaryDto>(StatusCodes.Status201Created);
-        group.MapGet("/", ListChunkStoresAsync)
+        group.MapGet("/", ListChunkStoresAsync)!
             .WithDescription("Lists all chunk stores.")
             .WithSummary("List Chunk Stores")
             .Produces<List<ChunkStoreSummaryDto>>();
-        group.MapGet("/{id:guid}", GetChunkStoreByIdAsync)
+        group.MapGet("/{id:guid}", GetChunkStoreByIdAsync)!
             .WithDescription("Gets a chunk store by its ID.")
             .WithSummary("Get Chunk Store By ID")
             .Produces<ChunkStoreDetailDto>()
             .Produces(StatusCodes.Status404NotFound);
-        group.MapGet("/{id:guid}/stats", GetChunkStoreStatsAsync)
+        group.MapGet("/{id:guid}/stats", GetChunkStoreStatsAsync)!
             .WithDescription("Gets statistics about a chunk store, such as total size, number of chunks, etc.")
             .WithSummary("Get Chunk Store Stats")
             .Produces<ChunkStoreStatsDto>()
             .Produces(StatusCodes.Status404NotFound);
         
-        group.MapGet("/{id:guid}/rebuild", RebuildChunkStoreAsync)
+        group.MapPost("/{id:guid}/rebuild", RebuildChunkStoreAsync)!
             .WithDescription(
                 "Rebuilds the chunk store by scanning the underlying storage and rewriting the pack and index files.")
             .WithSummary("Rebuild Chunk Store")
             .Produces(StatusCodes.Status200OK);
-        group.MapGet("/{id:guid}/upgrade", UpgradeReleasesToLatestVersionAsync)
+        group.MapPost("/{id:guid}/upgrade", UpgradeReleasesToLatestVersionAsync)!
             .WithDescription("Upgrades all releases in the chunk store to the latest version.")
             .WithSummary("Upgrade Releases")
             .Produces(StatusCodes.Status200OK);
@@ -132,7 +132,7 @@ public static class ChunkStoreEndpoints
         if (chunkerOptions.MinChunkSize <= 0 || chunkerOptions.AvgChunkSize <= 0 || chunkerOptions.MaxChunkSize <= 0)
             return Results.BadRequest("Chunk sizes must be greater than zero.");
         
-        var chunkStore = new ChunkStore(dto.Name, chunkStoreType, dto.LocalPath, new LocalFolderObjectStorage(dto.LocalPath))
+        var chunkStore = new ChunkStore(dto.Name, chunkStoreType, dto.LocalPath)
         {
             ChunkerOptions = chunkerOptions
         };
@@ -191,15 +191,13 @@ public static class ChunkStoreEndpoints
         });
     }
     
-    private static async Task<IResult> RebuildChunkStoreAsync(Guid id, BinStashDbContext db)
+    private static async Task<IResult> RebuildChunkStoreAsync(Guid id, BinStashDbContext db, IChunkStoreService chunkStoreService)
     {
         var store = await db.ChunkStores.FindAsync(id);
         if (store == null)
             return Results.NotFound();
-        
-        store = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
 
-        var result = await store.RebuildStorageAsync();
+        var result = await chunkStoreService.RebuildStorageAsync(store);
         if (!result)
             return Results.Problem("Failed to rebuild chunk store.");
         
@@ -207,7 +205,7 @@ public static class ChunkStoreEndpoints
         
     }
     
-    private static async Task<IResult> UpgradeReleasesToLatestVersionAsync(Guid id, BinStashDbContext db)
+    private static async Task<IResult> UpgradeReleasesToLatestVersionAsync(Guid id, BinStashDbContext db, IChunkStoreService chunkStoreService)
     {
         var store = await db.ChunkStores.FindAsync(id);
         if (store == null)
@@ -222,8 +220,6 @@ public static class ChunkStoreEndpoints
         var releasesToUpgrade = await db.Releases.Where(r => repoIds.Contains(r.RepoId) && r.SerializerVersion < ReleasePackageSerializer.Version).ToListAsync();
         if (!releasesToUpgrade.Any())
             return Results.Ok();
-        
-        store = new ChunkStore(store.Name, store.Type, store.LocalPath, new LocalFolderObjectStorage(store.LocalPath));
         
         foreach (var releaseFile in Directory.EnumerateFiles(Path.Combine(store.LocalPath, "Releases"), "*.rdef",
                      SearchOption.AllDirectories))
@@ -247,7 +243,7 @@ public static class ChunkStoreEndpoints
         
         foreach (var release in releasesToUpgrade)
         {
-            var releaseData = await store.RetrieveReleasePackageAsync(release.ReleaseDefinitionChecksum.ToHexString());
+            var releaseData = await chunkStoreService.RetrieveReleasePackageAsync(store, release.ReleaseDefinitionChecksum.ToHexString());
             if (releaseData == null)
             {
                 failedReleases[release] = "Failed to retrieve release package.";
@@ -273,13 +269,13 @@ public static class ChunkStoreEndpoints
                 grownReleases[release] = serializedReleasePackage.Length - releaseData.Length;
             
             var hash = new Hash32(Blake3.Hasher.Hash(serializedReleasePackage).AsSpan());
-            await store.StoreReleasePackageAsync(serializedReleasePackage);
+            await chunkStoreService.StoreReleasePackageAsync(store, serializedReleasePackage);
             release.SerializerVersion = ReleasePackageSerializer.Version;
             release.ReleaseDefinitionChecksum = hash;
             await db.SaveChangesAsync();
             try
             {
-               await store.DeleteReleasePackageAsync(oldReleaseDefinitionChecksum.ToHexString());
+               await chunkStoreService.DeleteReleasePackageAsync(store, oldReleaseDefinitionChecksum.ToHexString());
             }
             catch (Exception e)
             {

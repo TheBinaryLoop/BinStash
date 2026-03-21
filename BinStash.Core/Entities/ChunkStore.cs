@@ -13,9 +13,6 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Contracts.Hashing;
-using BinStash.Core.Storage;
-
 namespace BinStash.Core.Entities;
 
 public class ChunkStore
@@ -37,109 +34,15 @@ public class ChunkStore
 
     public long? MinFreeBytes { get; set; }
     
-    private readonly IObjectStorage? _storage;
-    
+    private ChunkStore() { } // EF
     
     public ChunkStore(string name, ChunkStoreType type, string localPath)
     {
         Id = Guid.CreateVersion7();
-        Name = name;
-        
+        Name = name ?? throw new ArgumentNullException(nameof(name));
         Type = type;
-        LocalPath = localPath;
-        if (!Directory.Exists(localPath))
-            Directory.CreateDirectory(localPath);
-    }
-    
-    public ChunkStore(string name, ChunkStoreType type, string localPath, IObjectStorage storage)
-        : this(name, type, localPath)
-    {
-        _storage = storage ?? throw new ArgumentNullException(nameof(storage), "Storage cannot be null.");
-    }
-    
-    public Task<bool> RebuildStorageAsync()
-    {
-        if (_storage == null)
-            throw new InvalidOperationException("Chunk storage is not initialized.");
-
-        return _storage.RebuildStorageAsync();
-    }
-    
-    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string chunkId, byte[] chunkData)
-    {
-        if (_storage == null)
-            throw new InvalidOperationException("Chunk storage is not initialized.");
-        
-        if (string.IsNullOrWhiteSpace(chunkId))
-            throw new ArgumentException("Chunk ID cannot be null or empty.", nameof(chunkId));
-        
-        if (chunkData == null || chunkData.Length == 0)
-            throw new ArgumentException("Chunk data cannot be null or empty.", nameof(chunkData));
-        
-        return await _storage.StoreChunkAsync(chunkId, chunkData);
-    }
-
-    public async Task<byte[]?> RetrieveChunkAsync(string chunkId)
-    {
-        if (_storage == null)
-            throw new InvalidOperationException("Chunk storage is not initialized.");
-        
-        if (string.IsNullOrWhiteSpace(chunkId))
-            throw new ArgumentException("Chunk ID cannot be null or empty.", nameof(chunkId));
-        
-        return await _storage.RetrieveChunkAsync(chunkId);
-    }
-    
-    public async Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, byte[] fileDefinitionData)
-    {
-        if (_storage == null)
-            throw new InvalidOperationException("Chunk storage is not initialized.");
-        
-        if (fileDefinitionData == null || fileDefinitionData.Length == 0)
-            throw new ArgumentException("Chunk data cannot be null or empty.", nameof(fileDefinitionData));
-        
-        return await _storage.StoreFileDefinitionAsync(fileHash, fileDefinitionData);
-    }
-
-    public async Task<byte[]?> RetrieveFileDefinitionAsync(string fileHash)
-    {
-        if (_storage == null)
-            throw new InvalidOperationException("Chunk storage is not initialized.");
-        
-        if (string.IsNullOrWhiteSpace(fileHash))
-            throw new ArgumentException("File hash cannot be null or empty.", nameof(fileHash));
-        
-        return await _storage.RetrieveFileDefinitionAsync(fileHash);
-    }
-
-    public async Task<bool> StoreReleasePackageAsync(byte[] packageData)
-    {
-        if (_storage == null)
-            throw new InvalidOperationException("Chunk storage is not initialized.");
-        
-        if (packageData == null || packageData.Length == 0)
-            throw new ArgumentException("Package data cannot be null or empty.", nameof(packageData));
-        
-        return await _storage.StoreReleasePackageAsync(packageData);
-    }
-
-    public async Task<byte[]?> RetrieveReleasePackageAsync(string packageId)
-    {
-        if (_storage == null)
-            throw new InvalidOperationException("Chunk storage is not initialized.");
-
-        if (string.IsNullOrWhiteSpace(packageId))
-            throw new ArgumentException("Package ID cannot be null or empty.", nameof(packageId));
-
-        return await _storage.RetrieveReleasePackageAsync(packageId);
-    }
-    
-    public async Task<bool> DeleteReleasePackageAsync(string packageId)
-    {
-        if (_storage == null)
-            throw new InvalidOperationException("Chunk storage is not initialized.");
-        
-        return await _storage.DeleteReleasePackageAsync(packageId);
+        LocalPath = localPath ?? throw new ArgumentNullException(nameof(localPath));
+        ProbeMode = ProbeMode.ReadWrite;
     }
 }
 

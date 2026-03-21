@@ -91,17 +91,11 @@ public static class InstanceEndpoints
 
     private static async Task<IResult> GetInstanceStats(HttpContext context, BinStashDbContext db)
     {
-        var userCountTask = db.Users.CountAsync();
-        var tenantCountTask = db.Tenants.CountAsync();
-        var repoCountTask = db.Repositories.CountAsync();
-
-        await Task.WhenAll(userCountTask, tenantCountTask, repoCountTask);
-        
         return Results.Ok(new
         {
-            UserCount = userCountTask.Result,
-            TenantCount = tenantCountTask.Result,
-            RepositoryCount = repoCountTask.Result
+            UserCount = await db.Users.CountAsync(),
+            TenantCount = await db.Tenants.CountAsync(),
+            RepositoryCount = await db.Repositories.CountAsync()
         });
     }
     

@@ -16,8 +16,8 @@
 using System.Security.Claims;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
-using BinStash.Infrastructure.Storage;
 using BinStash.Server.Configuration.Tenancy;
+using BinStash.Server.Services.ChunkStores;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -240,7 +240,7 @@ public static class SetupEndpoints
         return Results.Ok(types);
     }
     
-    private static async Task<IResult> EnsureChunkStoreAsync(EnsureChunkStoreRequest req, BinStashDbContext db)
+    private static async Task<IResult> EnsureChunkStoreAsync(EnsureChunkStoreRequest req, BinStashDbContext db, IChunkStoreService chunkStoreService)
     {
         var state = await db.SetupStates.SingleAsync(x => x.Id == 1);
         if (state.IsInitialized) 
@@ -267,7 +267,7 @@ public static class SetupEndpoints
         var existing = await db.ChunkStores.SingleOrDefaultAsync(x => x.Name == req.Name);
         if (existing is null)
         {
-            var store = new ChunkStore(req.Name, req.Type, req.LocalPath, new LocalFolderObjectStorage(req.LocalPath)); // TODO: Support other types
+            var store = new ChunkStore(req.Name, req.Type, req.LocalPath); // TODO: Support other types
             db.ChunkStores.Add(store);
             await db.SaveChangesAsync();
             existing = store;

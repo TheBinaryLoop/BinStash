@@ -31,13 +31,13 @@ public static class RepositoryEndpoints
 {
     public static RouteGroupBuilder MapRepositoryEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/tenants/{tenantId:guid}/repositories")
+        var group = app.MapGroup("/api/tenants/{tenantId:guid}/repositories")!
             .WithTags("Repositories")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .RequireAuthorization();
         
-        var tenantFromHostGroup = app.MapGroup("/api/repositories")
+        var tenantFromHostGroup = app.MapGroup("/api/repositories")!
             .WithTags("Repositories")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -51,7 +51,7 @@ public static class RepositoryEndpoints
 
     private static void MapGroup(RouteGroupBuilder group)
     {
-        group.MapPost("/", CreateRepositoryAsync)
+        group.MapPost("/", CreateRepositoryAsync)!
             .WithDescription("Create a new repository.")
             .WithSummary("Create Repository")
             .Produces<RepositorySummaryDto>(StatusCodes.Status201Created)
@@ -59,48 +59,48 @@ public static class RepositoryEndpoints
             .Produces(StatusCodes.Status409Conflict)
             .Produces(StatusCodes.Status404NotFound)
             .RequireTenantPermission(TenantPermission.Admin);
-        
-        group.MapGet("/", ListRepositoriesAsync)
+
+        group.MapGet("/", ListRepositoriesAsync)!
             .WithDescription("List all repositories.")
             .WithSummary("List Repositories")
             .Produces<IEnumerable<RepositorySummaryDto>>()
             .Produces(StatusCodes.Status404NotFound)
             .RequireTenantPermission(TenantPermission.Member);
         
-        group.MapGet("/{repoId:guid}", GetRepositoryByIdAsync)
+        group.MapGet("/{repoId:guid}", GetRepositoryByIdAsync)!
             .WithDescription("Get a repository by ID.")
             .WithSummary("Get Repository")
             .Produces<RepositorySummaryDto>()
             .Produces(StatusCodes.Status404NotFound)
             .RequireRepoPermission(RepositoryPermission.Read);
         
-        group.MapGet("/{repoId:guid}/access", GetRepositoryMemberAccessInfosAsync)
+        group.MapGet("/{repoId:guid}/access", GetRepositoryMemberAccessInfosAsync)!
             .WithDescription("Get access control information for a repository.")
             .WithSummary("Get Repository Access Info")
             .Produces<List<RepositoryAccessDto>>()
             .Produces(StatusCodes.Status404NotFound)
             .RequireRepoPermission(RepositoryPermission.Admin);
         
-        group.MapPost("/{repoId:guid}/access", SetRepositoryMemberAccessInfosAsync)
+        group.MapPost("/{repoId:guid}/access", SetRepositoryMemberAccessInfosAsync)!
             .WithDescription("Set access control information for a repository.")
             .WithSummary("Set Repository Access Info")
             .Produces<RepositoryAccessDto>()
             .Produces(StatusCodes.Status404NotFound)
             .RequireRepoPermission(RepositoryPermission.Admin);
         
-        group.MapDelete("/{repoId:guid}/access/{subjectType}/{subjectId}", DeleteRepositoryMemberAccessAsync)
+        group.MapDelete("/{repoId:guid}/access/{subjectType}/{subjectId}", DeleteRepositoryMemberAccessAsync)!
             .WithDescription("Delete access control information for a repository.")
             .WithSummary("Delete Repository Access Info")
             .RequireRepoPermission(RepositoryPermission.Admin);
         
-        group.MapGet("/{repoId:guid}/config", GetRepositoryConfigAsync)
+        group.MapGet("/{repoId:guid}/config", GetRepositoryConfigAsync)!
             .WithDescription("Get the configuration of a repository.")
             .WithSummary("Get Repository Config")
             .Produces<RepositoryConfigDto>()
             .Produces(StatusCodes.Status404NotFound)
             .RequireRepoPermission(RepositoryPermission.Read);
         
-        group.MapGet("/{repoId:guid}/releases", GetReleasesForRepositoryAsync)
+        group.MapGet("/{repoId:guid}/releases", GetReleasesForRepositoryAsync)!
             .WithDescription("Get all releases for a repository.")
             .WithSummary("Get Repository Releases")
             .Produces<IEnumerable<ReleaseSummaryDto>>()
@@ -145,7 +145,7 @@ public static class RepositoryEndpoints
         if (string.IsNullOrWhiteSpace(dto.Name))
             return Results.BadRequest("Repository name is required.");
             
-        if (db.Repositories.Any(x => x.Name == dto.Name))
+        if (db.Repositories.Any(x => x.TenantId == tenantContext.TenantId && x.Name == dto.Name))
             return Results.Conflict($"A repository with the name '{dto.Name}' already exists.");
         
         var allowedStorageClasses = await db.StorageClassMappings.Where(x => x.TenantId == tenantContext.TenantId && x.IsEnabled).ToListAsync();

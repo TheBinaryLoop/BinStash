@@ -30,14 +30,14 @@ public static class ServiceAccountEndpoints
 {
     public static RouteGroupBuilder MapServiceAccountEndpoints(this IEndpointRouteBuilder app)
     {
-        var tenantGroup = app.MapGroup("/api/tenants/{tenantId:guid}/service-accounts")
+        var tenantGroup = app.MapGroup("/api/tenants/{tenantId:guid}/service-accounts")!
             .WithTags("Service Accounts")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .RequireAuthorization()
             .RequireTenantPermission(TenantPermission.Admin);
         
-        var group = app.MapGroup("/api/service-accounts")
+        var group = app.MapGroup("/api/service-accounts")!
             .WithTags("Service Accounts")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
@@ -52,36 +52,36 @@ public static class ServiceAccountEndpoints
 
     private static void MapGroup(RouteGroupBuilder group)
     {
-        group.MapGet("/", GetServiceAccountsAsync)
+        /*group.MapGet("/", GetServiceAccountsAsync)!
             .WithDescription("Get all service accounts for the tenant.")
             .WithSummary("Get Service Accounts")
             .Produces<List<ServiceAccountInfoDto>>();
 
-        group.MapPost("/", CreateServiceAccountAsync)
+        group.MapPost("/", CreateServiceAccountAsync)!
             .WithDescription("Create a new service account.")
             .WithSummary("Create Service Account")
             .Produces<ServiceAccountInfoDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status409Conflict);
         
-        group.MapDelete("/{serviceAccountId:guid}", DeleteServiceAccountAsync)
+        group.MapDelete("/{serviceAccountId:guid}", DeleteServiceAccountAsync)!
             .WithDescription("Delete a service account.")
             .WithSummary("Delete Service Account")
             .Produces(StatusCodes.Status204NoContent)
-            .ProducesProblem(StatusCodes.Status404NotFound);
+            .ProducesProblem(StatusCodes.Status404NotFound);*/
 
-        group.MapPost("/{serviceAccountId:guid}/api-keys", CreateApiKeyForServiceAccountAsync)
+        group.MapPost("/{serviceAccountId:guid}/api-keys", CreateApiKeyForServiceAccountAsync)!
             .WithDescription("Create a new API key for the service account.")
             .WithSummary("Create API Key for Service Account")
             .Produces<CreateApiKeyResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        group.MapGet("/{serviceAccountId:guid}/api-keys", GetApiKeyForServiceAccountAsync)
+        group.MapGet("/{serviceAccountId:guid}/api-keys", GetApiKeyForServiceAccountAsync)!
             .WithDescription("Retrieve all API keys for the service account.")
             .WithSummary("Retrieve API Keys for Service Account")
             .Produces<List<ApiKeyInfoDto>>()
             .ProducesProblem(StatusCodes.Status404NotFound);
         
-        group.MapDelete("/{serviceAccountId:guid}/api-keys/{apiKeyId:guid}", DeleteApiKeyForServiceAccountAsync)
+        group.MapDelete("/{serviceAccountId:guid}/api-keys/{apiKeyId:guid}", DeleteApiKeyForServiceAccountAsync)!
             .WithDescription("Delete an API key for the service account.")
             .WithSummary("Delete API Key for Service Account")
             .Produces(StatusCodes.Status204NoContent)

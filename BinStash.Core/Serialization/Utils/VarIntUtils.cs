@@ -210,6 +210,56 @@ public static class VarIntUtils
         stream.Write(buffer[..len]);
     }
     
+    public static async Task WriteVarIntAsync<T>(Stream stream, T value, CancellationToken ct = default) where T : struct
+    {
+        switch (value)
+        {
+            case int i:
+                await WriteSignedVarIntAsync(stream, i, ct);
+                break;
+
+            case long l:
+                await WriteSignedVarIntAsync(stream, l, ct);
+                break;
+
+            case uint ui:
+                await WriteUnsignedVarIntAsync(stream, ui, ct);
+                break;
+
+            case ulong ul:
+                await WriteUnsignedVarIntAsync(stream, ul, ct);
+                break;
+
+            case ushort us:
+                await WriteUnsignedVarIntAsync(stream, us, ct);
+                break;
+
+            default:
+                throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.");
+        }
+    }
+
+    private static async Task WriteSignedVarIntAsync(Stream stream, long value, CancellationToken ct)
+    {
+        Span<byte> buffer = stackalloc byte[10];
+        var len = EncodeSignedVarInt(value, buffer);
+        await stream.WriteAsync(buffer[..len].ToArray(), ct);
+    }
+
+    private static async Task WriteUnsignedVarIntAsync(Stream stream, ulong value, CancellationToken ct)
+    {
+        Span<byte> buffer = stackalloc byte[10];
+        var len = EncodeUnsignedVarInt(value, buffer);
+        await stream.WriteAsync(buffer[..len].ToArray(), ct);
+    }
+
+    private static async Task WriteUnsignedVarIntAsync(Stream stream, uint value, CancellationToken ct)
+    {
+        Span<byte> buffer = stackalloc byte[5];
+        var len = EncodeUnsignedVarInt(value, buffer);
+        await stream.WriteAsync(buffer[..len].ToArray(), ct);
+    }
+    
     #endregion
     
     #endregion

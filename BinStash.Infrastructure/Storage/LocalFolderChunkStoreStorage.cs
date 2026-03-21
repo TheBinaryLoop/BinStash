@@ -18,14 +18,13 @@ using BinStash.Core.Storage;
 
 namespace BinStash.Infrastructure.Storage;
 
-public class LocalFolderObjectStorage : IObjectStorage
+public class LocalFolderChunkStoreStorage : IChunkStoreStorage
 {
     private readonly ObjectStore _objectStore;
     
-    public LocalFolderObjectStorage(string basePath)
+    public LocalFolderChunkStoreStorage(string basePath)
     {
-        if (!Directory.Exists(basePath))
-            Directory.CreateDirectory(basePath);
+        Directory.CreateDirectory(basePath);
         _objectStore = ObjectStoreManager.GetOrCreateChunkStorage(basePath);
     }
 
