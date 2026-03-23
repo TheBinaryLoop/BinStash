@@ -14,6 +14,7 @@
     <ItemGroup>
         <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
         <PackageReference Include="Blake3" Version="2.2.0" />
+        <PackageReference Include="Grpc.AspNetCore" Version="2.76.0" />
         <PackageReference Include="HotChocolate.AspNetCore" Version="15.1.12" />
         <PackageReference Include="HotChocolate.AspNetCore.Authorization" Version="15.1.12" />
         <PackageReference Include="HotChocolate.Data" Version="15.1.12" />
@@ -43,6 +44,10 @@
       <ProjectReference Include="..\BinStash.Contracts\BinStash.Contracts.csproj" />
       <ProjectReference Include="..\BinStash.Core\BinStash.Core.csproj" />
       <ProjectReference Include="..\BinStash.Infrastructure\BinStash.Infrastructure.csproj" />
+    </ItemGroup>
+    
+    <ItemGroup>
+        <Protobuf Include="..\BinStash.Contracts\Protos\ingest.proto" GrpcServices="Server" />
     </ItemGroup>
 
 </Project>

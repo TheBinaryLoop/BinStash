@@ -20,7 +20,7 @@ namespace BinStash.Cli.Infrastructure.Svn;
 
 public sealed class ImportStateStore : IAsyncDisposable
 {
-    private readonly SqliteConnection _connection;
+    private readonly string _connectionString;
 
     public ImportStateStore(string sqliteFile)
     {
@@ -31,12 +31,19 @@ public sealed class ImportStateStore : IAsyncDisposable
             Cache = SqliteCacheMode.Shared
         }.ToString();
 
-        _connection = new SqliteConnection(cs);
+        _connectionString = cs;
     }
 
+    private async Task<SqliteConnection> OpenConnectionAsync()
+    {
+        var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync();
+        return connection;
+    }
+    
     public async Task InitializeAsync()
     {
-        await _connection.OpenAsync();
+        await using var connection = await OpenConnectionAsync();
         
         var sql = """
                   create table if not exists import_source (
@@ -86,21 +93,22 @@ public sealed class ImportStateStore : IAsyncDisposable
                   );
                   """;
 
-        await using var cmd = _connection.CreateCommand();
+        await using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
         await cmd.ExecuteNonQueryAsync();
     }
 
     public async Task<long> GetOrCreateSourceAsync(string svnRoot, string tenantSlug, string repoName)
     {
-        await using var check = _connection.CreateCommand();
+        await using var connection = await OpenConnectionAsync();
+        await using var check = connection.CreateCommand();
         check.CommandText = "select id from import_source where svn_root = $svnRoot";
         check.Parameters.AddWithValue("$svnRoot", svnRoot);
         var existing = await check.ExecuteScalarAsync();
         if (existing is long id)
             return id;
 
-        await using var insert = _connection.CreateCommand();
+        await using var insert = connection.CreateCommand();
         insert.CommandText = """
                              insert into import_source (svn_root, tenant_slug, repo_name, created_at)
                              values ($svnRoot, $tenantSlug, $repoName, $createdAt);
@@ -117,7 +125,8 @@ public sealed class ImportStateStore : IAsyncDisposable
 
     public async Task UpsertTagAsync(long sourceId, SvnTagInfo tag, string version)
     {
-        await using var cmd = _connection.CreateCommand();
+        await using var connection = await OpenConnectionAsync();
+        await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
                           insert into svn_tag (
                               source_id, tag_name, tag_url, version, list_revision, last_changed_revision, status, created_at, updated_at
@@ -150,7 +159,8 @@ public sealed class ImportStateStore : IAsyncDisposable
             ? new[] { (int)ImportTagStatus.Discovered, (int)ImportTagStatus.Scanned, (int)ImportTagStatus.Failed }
             : new[] { (int)ImportTagStatus.Discovered };
         
-        await using var cmd = _connection.CreateCommand();
+        await using var connection = await OpenConnectionAsync();
+        await using var cmd = connection.CreateCommand();
         cmd.CommandText = $"""
                            select id, tag_name, tag_url, version, status
                            from svn_tag
@@ -179,9 +189,10 @@ public sealed class ImportStateStore : IAsyncDisposable
 
     public async Task SaveTagFilesAsync(long tagId, IReadOnlyList<SvnFileEntry> files)
     {
-        await using var tx = (SqliteTransaction)await _connection.BeginTransactionAsync();
+        await using var connection = await OpenConnectionAsync();
+        await using var tx = (SqliteTransaction)await connection.BeginTransactionAsync();
 
-        await using (var del = _connection.CreateCommand())
+        await using (var del = connection.CreateCommand())
         {
             del.Transaction = tx;
             del.CommandText = "delete from svn_tag_file where tag_id = $tagId";
@@ -191,7 +202,7 @@ public sealed class ImportStateStore : IAsyncDisposable
 
         foreach (var file in files)
         {
-            await using var ins = _connection.CreateCommand();
+            await using var ins = connection.CreateCommand();
             ins.Transaction = tx;
             ins.CommandText = """
                               insert into svn_tag_file (
@@ -207,7 +218,7 @@ public sealed class ImportStateStore : IAsyncDisposable
             await ins.ExecuteNonQueryAsync();
         }
 
-        await using (var upd = _connection.CreateCommand())
+        await using (var upd = connection.CreateCommand())
         {
             upd.Transaction = tx;
             upd.CommandText = """
@@ -227,7 +238,8 @@ public sealed class ImportStateStore : IAsyncDisposable
 
     public async Task<List<(string RelativePath, long FileSize, long LastChangedRevision, string CandidateKey, string? FileHashHex)>> GetTagFilesAsync(long tagId)
     {
-        await using var cmd = _connection.CreateCommand();
+        await using var connection = await OpenConnectionAsync();
+        await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
                           select relative_path, file_size, last_changed_revision, candidate_key, file_hash_hex
                           from svn_tag_file
@@ -254,7 +266,8 @@ public sealed class ImportStateStore : IAsyncDisposable
 
     public async Task<CachedFileResult?> TryGetCachedFileAsync(string candidateKey)
     {
-        await using var cmd = _connection.CreateCommand();
+        await using var connection = await OpenConnectionAsync();
+        await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
                           select candidate_key, file_hash_hex, file_size, chunk_map_json
                           from file_cache
@@ -275,7 +288,8 @@ public sealed class ImportStateStore : IAsyncDisposable
 
     public async Task SaveCachedFileAsync(CachedFileResult result)
     {
-        await using var cmd = _connection.CreateCommand();
+        await using var connection = await OpenConnectionAsync();
+        await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
                           insert into file_cache (
                               candidate_key, file_hash_hex, file_size, chunk_map_json, first_seen_at, last_used_at
@@ -297,7 +311,8 @@ public sealed class ImportStateStore : IAsyncDisposable
 
     public async Task SetTagImportedAsync(long tagId, string releaseId)
     {
-        await using var cmd = _connection.CreateCommand();
+        await using var connection = await OpenConnectionAsync();
+        await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
                           update svn_tag
                           set status = $status,
@@ -315,7 +330,8 @@ public sealed class ImportStateStore : IAsyncDisposable
 
     public async Task SetTagFailedAsync(long tagId, string error)
     {
-        await using var cmd = _connection.CreateCommand();
+        await using var connection = await OpenConnectionAsync();
+        await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
                           update svn_tag
                           set status = $status,
@@ -330,8 +346,5 @@ public sealed class ImportStateStore : IAsyncDisposable
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        await _connection.DisposeAsync();
-    }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

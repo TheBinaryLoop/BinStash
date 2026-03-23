@@ -27,7 +27,11 @@ using BinStash.Core.Chunking;
 using BinStash.Core.Compression;
 using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
+using BinStash.Grpc;
 using CliFx.Infrastructure;
+using Google.Protobuf;
+using Grpc.Core;
+using Grpc.Net.Client;
 using Microsoft.Extensions.Http;
 using Polly;
 using Polly.Extensions.Http;
@@ -38,14 +42,13 @@ namespace BinStash.Cli.Infrastructure;
 public class BinStashApiClient
 {
     private readonly HttpClient _httpClient;
-    private readonly Func<Task<string>> _authTokenFactory;
+    private readonly Grpc.IngestService.IngestServiceClient _ingestClient;
     private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy = HttpPolicyExtensions.HandleTransientHttpError().OrResult(msg => msg.StatusCode == HttpStatusCode.TooManyRequests).WaitAndRetryAsync(5, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
     private readonly IConsole? _console;
     
     public BinStashApiClient(string rootUrl, Func<Task<string>>? authTokenFactory = null!, IConsole? console = null)
     {
         authTokenFactory ??= () => Task.FromResult(string.Empty);
-        _authTokenFactory = authTokenFactory;
         // Wire it into the handler pipeline manually
         var sockets = new SocketsHttpHandler
         {
@@ -73,6 +76,21 @@ public class BinStashApiClient
                 { "User-Agent", "BinStash.Cli/1.0" }
             }
         };
+        
+        var grpcHttpHandler = new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+            EnableMultipleHttp2Connections = true
+        };
+
+        var grpcChannel = GrpcChannel.ForAddress(rootUrl, new GrpcChannelOptions
+        {
+            HttpHandler = grpcHttpHandler
+        });
+
+        _ingestClient = new Grpc.IngestService.IngestServiceClient(grpcChannel);
+        
         _console = console;
     }
 
@@ -135,32 +153,51 @@ public class BinStashApiClient
         => await PostAsTransposedCompressedByteArrayAsync($"repositories/{repoId}/ingest/sessions/{ingestSessionId}/files/missing", fileChecksums);
     
     // TODO: Implement gRPC-based upload method to support smoother chunk uploads
-    public async Task UploadChunksAsync(Guid repoId, Guid ingestSessionId, IChunker chunker, IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
+    public async Task UploadChunksAsync(Guid repoId, Guid ingestSessionId, IChunker chunker, IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100, Func<int, int, Task>? progressCallback = null, Func<UploadChunksReply, Task>? completedCallback = null, CancellationToken cancellationToken = default)
     {
-        var allChunks = chunksToUpload.ToList();
-        var total = allChunks.Count;
+        var chunkList = chunksToUpload as IList<ChunkMapEntry> ?? chunksToUpload.ToList();
+        var total = chunkList.Count;
         var uploaded = 0;
 
-        foreach (var batch in allChunks.Chunk(batchSize))
+        var headers = new Metadata
         {
-            var uploadDtos = new List<ChunkUploadDto>();
-            foreach (var entry in batch)
+            { "x-ingest-session-id", ingestSessionId.ToString() }
+        };
+
+        using var call = _ingestClient.UploadChunks(headers: headers, cancellationToken: cancellationToken);
+
+        foreach (var chunk in chunkList)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var data = (await chunker.LoadChunkDataAsync(chunk, cancellationToken)).Data;
+
+            await call.RequestStream.WriteAsync(new UploadChunkRequest
             {
-                var data = (await chunker.LoadChunkDataAsync(entry, cancellationToken)).Data;
-                uploadDtos.Add(new ChunkUploadDto { Checksum = entry.Checksum.ToHexString(), Data = data });
-            }
+                RepoId = repoId.ToString(),
+                Checksum = ByteString.CopyFrom(chunk.Checksum.GetBytes()),
+                Data = ByteString.CopyFrom(data)
+            }, cancellationToken);
 
-            var request = new HttpRequestMessage(HttpMethod.Post, $"repositories/{repoId}/ingest/sessions/{ingestSessionId}/chunks/batch");
-            request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
-            request.Content = JsonContent.Create(uploadDtos);
-            
-            var response = await _httpClient.SendAsync(request, cancellationToken);
-            response.EnsureSuccessStatusCode();
+            uploaded++;
 
-            uploaded += batch.Length;
             if (progressCallback != null)
                 await progressCallback(uploaded, total);
         }
+
+        await call.RequestStream.CompleteAsync();
+
+        var reply = await call.ResponseAsync.ConfigureAwait(false);
+
+        /*_console?.WriteLine(
+            $"gRPC upload complete: seen_total={reply.ChunksSeenTotal}, " +
+            $"seen_unique={reply.ChunksSeenUnique}, " +
+            $"written_new={reply.ChunksWrittenNew}, " +
+            $"logical_bytes={reply.NewUniqueLogicalBytes}, " +
+            $"compressed_bytes={reply.NewCompressedBytes}");*/
+
+        if (completedCallback != null)
+            await completedCallback(reply);
     }
     
     public async Task UploadFileDefinitionsAsync(Guid repoId, Guid ingestSessionId, Dictionary<Hash32, (List<Hash32> Chunks, long Length)> fileDefinitionsToUpload, int batchSize = 1000, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)

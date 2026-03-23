@@ -16,6 +16,12 @@
 
     <ItemGroup>
       <PackageReference Include="CliFx" Version="2.3.6" />
+      <PackageReference Include="Google.Protobuf" Version="3.34.1" />
+      <PackageReference Include="Grpc.Net.Client" Version="2.76.0" />
+      <PackageReference Include="Grpc.Tools" Version="2.78.0">
+        <PrivateAssets>all</PrivateAssets>
+        <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      </PackageReference>
       <PackageReference Include="Microsoft.AspNetCore.DataProtection" Version="10.0.0" />
       <PackageReference Include="Microsoft.AspNetCore.DataProtection.Extensions" Version="10.0.0" />
       <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.5" />
@@ -23,6 +29,10 @@
       <PackageReference Include="Spectre.Console" Version="0.54.0" />
       <PackageReference Include="System.IO.Hashing" Version="10.0.4" />
       <PackageReference Include="ZstdNetNGX" Version="1.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Protobuf Include="..\BinStash.Contracts\Protos\ingest.proto" GrpcServices="Client" />
     </ItemGroup>
 
 </Project>

@@ -36,6 +36,7 @@ using BinStash.Server.Email.Providers;
 using BinStash.Server.Extensions;
 using BinStash.Server.GraphQL.ObjectTypes;
 using BinStash.Server.GraphQL.Services;
+using BinStash.Server.Grpc;
 using BinStash.Server.Health;
 using BinStash.Server.Helpers;
 using BinStash.Server.HostedServices;
@@ -240,7 +241,8 @@ public static class Program
             .AddFiltering()
             .AddSorting()
             .AddProjections();
-            
+
+        builder.Services.AddGrpc();
         
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
         builder.Services.AddOpenApi();
@@ -297,6 +299,7 @@ public static class Program
                 }
         })
         .RequireInstancePermission(InstancePermission.Admin);
+        app.MapGrpcService<IngestGrpcService>();
         app.MapGraphQL();
         app.MapAllEndpoints();
         

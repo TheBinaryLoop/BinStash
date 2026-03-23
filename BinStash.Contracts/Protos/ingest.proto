@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+option csharp_namespace = "BinStash.Grpc";
+
+package binstash.ingest;
+
+service IngestService {
+  rpc UploadChunks (stream UploadChunkRequest) returns (UploadChunksReply);
+}
+
+message UploadChunkRequest {
+  string repo_id = 1;
+  bytes checksum = 2;
+  bytes data = 3;
+}
+
+message UploadChunksReply {
+  int32 chunks_seen_total = 1;
+  int32 chunks_seen_unique = 2;
+  int32 chunks_written_new = 3;
+  int64 new_unique_logical_bytes = 4;
+  int64 new_compressed_bytes = 5;
+}
