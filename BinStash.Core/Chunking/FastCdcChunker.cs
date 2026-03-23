@@ -21,13 +21,13 @@ namespace BinStash.Core.Chunking;
 
 public class FastCdcChunker : IChunker
 {
-    private const int MMF_THRESHOLD = 16 * 1024 * 1024; // 16MB
+    private const int MmfThreshold = 16 * 1024 * 1024; // 16MB
     
-    private readonly int _MinSize;
-    private readonly int _AvgSize;
-    private readonly int _MaxSize;
-    private readonly uint _MaskS;
-    private readonly uint _MaskL;
+    private readonly int _minSize;
+    private readonly int _avgSize;
+    private readonly int _maxSize;
+    private readonly uint _maskS;
+    private readonly uint _maskL;
 
     private static readonly uint[] GearTable = new uint[256];
 
@@ -44,13 +44,13 @@ public class FastCdcChunker : IChunker
 
     public FastCdcChunker(int minSize, int avgSize, int maxSize)
     {
-        _MinSize = minSize;
-        _AvgSize = avgSize;
-        _MaxSize = maxSize;
+        _minSize = minSize;
+        _avgSize = avgSize;
+        _maxSize = maxSize;
 
         var bits = (int)Math.Log(avgSize, 2);
-        _MaskS = (1u << (bits + 1)) - 1;
-        _MaskL = (1u << (bits - 1)) - 1;
+        _maskS = (1u << (bits + 1)) - 1;
+        _maskL = (1u << (bits - 1)) - 1;
     }
     
     public IReadOnlyList<ChunkMapEntry> GenerateChunkMap(string filePath, CancellationToken cancellationToken = default)
@@ -70,7 +70,7 @@ public class FastCdcChunker : IChunker
     
     private IReadOnlyList<ChunkMapEntry> GenerateChunkMapInternal(Stream input, string? filePath = null, CancellationToken cancellationToken = default)
     {
-        return input.Length > MMF_THRESHOLD && input is FileStream fs
+        return input.Length > MmfThreshold && input is FileStream fs
             ? ChunkUsingMemoryMappedFile(fs, filePath, cancellationToken)
             : ChunkUsingBuffer(input, filePath, cancellationToken);
     }
@@ -90,9 +90,9 @@ public class FastCdcChunker : IChunker
 
             var currentLength = (int)(detectionPos - chunkStart);
 
-            if ((currentLength >= _MinSize && (hash & _MaskS) == 0) ||
-                (currentLength >= _AvgSize && (hash & _MaskL) == 0) ||
-                currentLength >= _MaxSize)
+            if ((currentLength >= _minSize && (hash & _maskS) == 0) ||
+                (currentLength >= _avgSize && (hash & _maskL) == 0) ||
+                currentLength >= _maxSize)
             {
                 stream.Seek(chunkStart, SeekOrigin.Begin);
                 var buffer = new byte[currentLength];
@@ -133,9 +133,9 @@ public class FastCdcChunker : IChunker
             hash = (hash << 1) + GearTable[b & 0xFF];
             var currentLength = (int)(pos + 1 - chunkStart);
 
-            if ((currentLength >= _MinSize && (hash & _MaskS) == 0) ||
-                (currentLength >= _AvgSize && (hash & _MaskL) == 0) ||
-                currentLength >= _MaxSize)
+            if ((currentLength >= _minSize && (hash & _maskS) == 0) ||
+                (currentLength >= _avgSize && (hash & _maskL) == 0) ||
+                currentLength >= _maxSize)
             {
                 var buffer = new byte[currentLength];
                 view.ReadArray(chunkStart, buffer, 0, currentLength);
@@ -202,6 +202,9 @@ public class FastCdcChunker : IChunker
             Data = buffer
         };
     }
+
+    public IStreamingChunker CreateStreamingChunker()
+        => new FastCdcStreamingChunker(_minSize, _avgSize, _maxSize, _maskS, _maskL);
 
     public Task<RecommendationResult> RecommendChunkerSettingsForTargetAsync(string folderPath, ChunkAnalysisTarget target, Action<string>? log = null, CancellationToken cancellationToken = default)
     {
@@ -302,7 +305,6 @@ public class FastCdcChunker : IChunker
             DedupeRatio = best.DedupeRatio
         });
     }
-
     
     private static int RoundToNearestPowerOfTwo(int value)
     {
@@ -310,5 +312,130 @@ public class FastCdcChunker : IChunker
         while (power < value)
             power <<= 1;
         return power;
+    }
+}
+
+internal sealed class FastCdcStreamingChunker : IStreamingChunker
+{
+    private readonly int _minSize;
+    private readonly int _avgSize;
+    private readonly int _maxSize;
+    private readonly uint _maskS;
+    private readonly uint _maskL;
+    
+    private static readonly uint[] GearTable = new uint[256];
+
+    private readonly List<(long Offset, int Length, Hash32 Checksum)> _chunks = new();
+
+    private Blake3.Hasher _currentChunkHasher = Blake3.Hasher.New();
+
+    private long _currentChunkStart;
+    private int _currentChunkLength;
+    private long _totalBytesProcessed;
+    private uint _rollingHash;
+    private bool _completed;
+
+    static FastCdcStreamingChunker()
+    {
+        var rng = new Random(1);
+        for (var i = 0; i < 256; i++)
+        {
+            var buffer = new byte[4];
+            rng.NextBytes(buffer);
+            GearTable[i] = BitConverter.ToUInt32(buffer, 0);
+        }
+    }
+    
+    public FastCdcStreamingChunker(int minSize, int avgSize, int maxSize, uint maskS, uint maskL)
+    {
+        _minSize = minSize;
+        _avgSize = avgSize;
+        _maxSize = maxSize;
+        _maskS = maskS;
+        _maskL = maskL;
+    }
+
+    public void Append(ReadOnlySpan<byte> buffer)
+    {
+        if (_completed)
+            throw new InvalidOperationException("Cannot append after completion.");
+
+        if (buffer.IsEmpty)
+            return;
+
+        var segmentStart = 0;
+
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            var b = buffer[i];
+            _rollingHash = (_rollingHash << 1) + GearTable[b];
+            _currentChunkLength++;
+            _totalBytesProcessed++;
+
+            var shouldCut =
+                (_currentChunkLength >= _minSize && (_rollingHash & _maskS) == 0) ||
+                (_currentChunkLength >= _avgSize && (_rollingHash & _maskL) == 0) ||
+                _currentChunkLength >= _maxSize;
+
+            if (!shouldCut)
+                continue;
+
+            // Feed the remaining bytes of the current chunk from this input buffer.
+            var segmentLength = i - segmentStart + 1;
+            if (segmentLength > 0)
+                _currentChunkHasher.Update(buffer.Slice(segmentStart, segmentLength));
+
+            FinalizeCurrentChunk();
+
+            segmentStart = i + 1;
+        }
+
+        // Feed any trailing bytes that belong to the still-open chunk.
+        if (segmentStart < buffer.Length)
+            _currentChunkHasher.Update(buffer[segmentStart..]);
+    }
+
+    public IReadOnlyList<ChunkBoundary> Complete()
+    {
+        if (_completed)
+            throw new InvalidOperationException("Complete has already been called.");
+
+        _completed = true;
+
+        if (_currentChunkLength > 0)
+            FinalizeCurrentChunk();
+
+        return _chunks
+            .Select(x => new ChunkBoundary
+            {
+                Offset = x.Offset,
+                Length = x.Length,
+                Checksum = x.Checksum
+            })
+            .ToArray();
+    }
+
+    private void FinalizeCurrentChunk()
+    {
+        if (_currentChunkLength <= 0)
+            return;
+
+        var checksum = new Hash32(_currentChunkHasher.Finalize().AsSpan());
+
+        _chunks.Add((
+            Offset: _currentChunkStart,
+            Length: _currentChunkLength,
+            Checksum: checksum));
+
+        _currentChunkStart = _totalBytesProcessed;
+        _currentChunkLength = 0;
+        _rollingHash = 0;
+        _currentChunkHasher = Blake3.Hasher.New();
+    }
+
+    public void Dispose()
+    {
+        // Nothing unmanaged here, but keeping IDisposable matches the interface
+        // and gives flexibility if you later pool resources.
     }
 }

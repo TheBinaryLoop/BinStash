@@ -13,8 +13,10 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Collections.Concurrent;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Storage;
+using BinStash.Core.Storage.Stats;
 
 namespace BinStash.Infrastructure.Storage;
 
@@ -26,6 +28,11 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage
     {
         Directory.CreateDirectory(basePath);
         _objectStore = ObjectStoreManager.GetOrCreateChunkStorage(basePath);
+    }
+
+    public Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync()
+    {
+        return _objectStore.GetPhysicalStatsAsync();
     }
 
     public Task<bool> RebuildStorageAsync()
@@ -69,6 +76,52 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage
     public async Task<bool> DeleteReleasePackageAsync(string packageId)
     {
         return await _objectStore.DeleteReleasePackageAsync(packageId);
+    }
+
+    public async Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> fileHashes)
+    {
+        var result = new ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        using var throttler = new SemaphoreSlim(16);
+
+        await Task.WhenAll(fileHashes.Select(async hash =>
+        {
+            await throttler.WaitAsync();
+            try
+            {
+                var data = await RetrieveFileDefinitionAsync(hash);
+                if (data != null)
+                    result[hash] = data;
+            }
+            finally
+            {
+                throttler.Release();
+            }
+        }));
+
+        return new Dictionary<string, byte[]>(result, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task<Dictionary<string, byte[]>> RetrieveReleasePackagesAsync(IReadOnlyCollection<string> packageIds)
+    {
+        var result = new ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        using var throttler = new SemaphoreSlim(16);
+
+        await Task.WhenAll(packageIds.Select(async hash =>
+        {
+            await throttler.WaitAsync();
+            try
+            {
+                var data = await RetrieveReleasePackageAsync(hash);
+                if (data != null)
+                    result[hash] = data;
+            }
+            finally
+            {
+                throttler.Release();
+            }
+        }));
+
+        return new Dictionary<string, byte[]>(result, StringComparer.OrdinalIgnoreCase);
     }
 
     public Task<Dictionary<string, object>> GetStorageStatsAsync()

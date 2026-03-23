@@ -18,7 +18,7 @@ namespace BinStash.Infrastructure.Data.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.9")
+                .HasAnnotation("ProductVersion", "10.0.4")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -211,6 +211,106 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.ToTable("ChunkStores", (string)null);
                 });
 
+            modelBuilder.Entity("BinStash.Core.Entities.ChunkStoreStatsSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AvgChunkSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("AvgCompressedChunkSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ChunkCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ChunkPackBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ChunkPackFileCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ChunkStoreId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CollectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("CompressionRatio")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("double precision");
+
+                    b.Property<long>("CompressionSavedBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("DeduplicationRatio")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("double precision");
+
+                    b.Property<long>("DeduplicationSavedBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("EffectiveStorageRatio")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("double precision");
+
+                    b.Property<long>("FileDefinitionCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("FileDefinitionPackBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("FileDefinitionPackFileCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("IndexBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("IndexFileCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("PhysicalBytesTotal")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ReferencedUniqueChunkBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ReleaseCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ReleasePackageBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ReleasePackageFileCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("TotalLogicalBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("UniqueCompressedChunkBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("UniqueFileBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("UniqueLogicalChunkBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("VolumeFreeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("VolumeTotalBytes")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChunkStoreId", "CollectedAt");
+
+                    b.ToTable("ChunkStoreStatsSnapshots", (string)null);
+                });
+
             modelBuilder.Entity("BinStash.Core.Entities.FileDefinition", b =>
                 {
                     b.Property<Guid>("ChunkStoreId")
@@ -235,33 +335,17 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
-                    b.Property<int>("ChunksSeenNew")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                    b.Property<long>("ChunksSeenNew")
+                        .HasColumnType("bigint");
 
-                    b.Property<int>("ChunksSeenTotal")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                    b.Property<long>("ChunksSeenTotal")
+                        .HasColumnType("bigint");
 
-                    b.Property<int>("ChunksSeenUnique")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                    b.Property<long>("ChunksSeenUnique")
+                        .HasColumnType("bigint");
 
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<long>("DataSizeTotal")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint")
-                        .HasDefaultValue(0L);
-
-                    b.Property<long>("DataSizeUnique")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint")
-                        .HasDefaultValue(0L);
 
                     b.Property<string>("ErrorMessage")
                         .HasColumnType("text");
@@ -269,20 +353,14 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.Property<DateTimeOffset>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("FilesSeenNew")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                    b.Property<long>("FilesSeenNew")
+                        .HasColumnType("bigint");
 
-                    b.Property<int>("FilesSeenTotal")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                    b.Property<long>("FilesSeenTotal")
+                        .HasColumnType("bigint");
 
-                    b.Property<int>("FilesSeenUnique")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                    b.Property<long>("FilesSeenUnique")
+                        .HasColumnType("bigint");
 
                     b.Property<DateTimeOffset>("LastUpdatedAt")
                         .ValueGeneratedOnAdd()
@@ -290,9 +368,13 @@ namespace BinStash.Infrastructure.Data.Migrations
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<int>("MetadataSize")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                        .HasColumnType("integer");
+
+                    b.Property<long>("NewCompressedBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("NewUniqueLogicalBytes")
+                        .HasColumnType("bigint");
 
                     b.Property<Guid>("RepoId")
                         .HasColumnType("uuid");
@@ -304,6 +386,9 @@ namespace BinStash.Infrastructure.Data.Migrations
 
                     b.Property<short>("State")
                         .HasColumnType("smallint");
+
+                    b.Property<long>("TotalLogicalBytes")
+                        .HasColumnType("bigint");
 
                     b.HasKey("Id");
 
@@ -382,52 +467,57 @@ namespace BinStash.Infrastructure.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<int>("ChunksInRelease")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                        .HasColumnType("integer");
 
                     b.Property<int>("ComponentsInRelease")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                        .HasColumnType("integer");
+
+                    b.Property<long>("CompressionSavedBytes")
+                        .HasColumnType("bigint");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
+                    b.Property<long>("DeduplicationSavedBytes")
+                        .HasColumnType("bigint");
+
                     b.Property<int>("FilesInRelease")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                        .HasColumnType("integer");
+
+                    b.Property<double>("IncrementalCompressionRatio")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("IncrementalDeduplicationRatio")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("IncrementalEffectiveRatio")
+                        .HasColumnType("double precision");
 
                     b.Property<Guid>("IngestSessionId")
                         .HasColumnType("uuid");
 
                     b.Property<int>("MetaBytesFull")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                        .HasColumnType("integer");
 
                     b.Property<int>("MetaBytesFullDiff")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                        .HasColumnType("integer");
 
                     b.Property<int>("NewChunks")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(0);
+                        .HasColumnType("integer");
 
                     b.Property<long>("NewCompressedBytes")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint")
-                        .HasDefaultValue(0L);
+                        .HasColumnType("bigint");
 
-                    b.Property<decimal>("TotalUncompressedSize")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("numeric(20,0)")
-                        .HasDefaultValue(0m);
+                    b.Property<double>("NewDataPercent")
+                        .HasColumnType("double precision");
+
+                    b.Property<long>("NewUniqueLogicalBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("TotalLogicalBytes")
+                        .HasColumnType("numeric(20,0)");
 
                     b.HasKey("ReleaseId");
 

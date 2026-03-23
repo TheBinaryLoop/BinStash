@@ -14,6 +14,7 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.Hashing;
+using BinStash.Core.Storage.Stats;
 
 namespace BinStash.Core.Storage;
 
@@ -28,6 +29,9 @@ public interface IChunkStoreStorage
     Task<bool> StoreReleasePackageAsync(byte[] packageData);
     Task<byte[]?> RetrieveReleasePackageAsync(string key);
     Task<bool> DeleteReleasePackageAsync(string packageId);
+    Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> fileHashes);
+    Task<Dictionary<string, byte[]>> RetrieveReleasePackagesAsync(IReadOnlyCollection<string> packageIds);
+    Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync();
 
     Task<bool> RebuildStorageAsync();
     Task<Dictionary<string, object>> GetStorageStatsAsync();

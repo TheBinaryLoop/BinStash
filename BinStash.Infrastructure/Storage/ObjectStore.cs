@@ -14,6 +14,7 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.Hashing;
+using BinStash.Core.Storage.Stats;
 using BinStash.Infrastructure.Storage.Indexing;
 using BinStash.Infrastructure.Storage.Stats;
 using Blake3;
@@ -21,7 +22,7 @@ using Blake3;
 namespace BinStash.Infrastructure.Storage;
 
 /// <summary>
-/// High-level API for chunk, file-definition and release-package storage.
+/// High-level API for chunk, file-definition, and release-package storage.
 /// </summary>
 public class ObjectStore
 {
@@ -150,6 +151,90 @@ public class ObjectStore
     {
         var hash = Hasher.Hash(data);
         return new Hash32(hash.AsSpan());
+    }
+    
+    public Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync()
+    {
+        long chunkPackBytes = 0;
+        long fileDefinitionPackBytes = 0;
+        long releasePackageBytes = 0;
+        long indexBytes = 0;
+
+        var chunkPackFileCount = 0;
+        var fileDefinitionPackFileCount = 0;
+        var releasePackageFileCount = 0;
+        var indexFileCount = 0;
+
+        if (Directory.Exists(_basePath))
+        {
+            foreach (var filePath in Directory.EnumerateFiles(_basePath, "*", SearchOption.AllDirectories))
+            {
+                var fileInfo = new FileInfo(filePath);
+                var fileName = fileInfo.Name;
+                var normalizedPath = filePath.Replace('\\', '/');
+
+                if (fileName.EndsWith(".idx", StringComparison.OrdinalIgnoreCase))
+                {
+                    indexBytes += fileInfo.Length;
+                    indexFileCount++;
+                    continue;
+                }
+
+                if (fileName.EndsWith(".rdef", StringComparison.OrdinalIgnoreCase))
+                {
+                    releasePackageBytes += fileInfo.Length;
+                    releasePackageFileCount++;
+                    continue;
+                }
+
+                if (fileName.EndsWith(".pack", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (normalizedPath.Contains("/Chunks/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        chunkPackBytes += fileInfo.Length;
+                        chunkPackFileCount++;
+                    }
+                    else if (normalizedPath.Contains("/FileDefs/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        fileDefinitionPackBytes += fileInfo.Length;
+                        fileDefinitionPackFileCount++;
+                    }
+                }
+            }
+        }
+
+        var root = Path.GetPathRoot(Path.GetFullPath(_basePath));
+        long volumeTotalBytes = 0;
+        long volumeFreeBytes = 0;
+
+        if (!string.IsNullOrWhiteSpace(root))
+        {
+            var drive = new DriveInfo(root);
+            if (drive.IsReady)
+            {
+                volumeTotalBytes = drive.TotalSize;
+                volumeFreeBytes = drive.AvailableFreeSpace;
+            }
+        }
+
+        var result = new ChunkStorePhysicalStats
+        {
+            ChunkPackBytes = chunkPackBytes,
+            FileDefinitionPackBytes = fileDefinitionPackBytes,
+            ReleasePackageBytes = releasePackageBytes,
+            IndexBytes = indexBytes,
+            PhysicalBytesTotal = chunkPackBytes + fileDefinitionPackBytes + releasePackageBytes + indexBytes,
+
+            ChunkPackFileCount = chunkPackFileCount,
+            FileDefinitionPackFileCount = fileDefinitionPackFileCount,
+            ReleasePackageFileCount = releasePackageFileCount,
+            IndexFileCount = indexFileCount,
+
+            VolumeTotalBytes = volumeTotalBytes,
+            VolumeFreeBytes = volumeFreeBytes
+        };
+
+        return Task.FromResult(result);
     }
     
     public StorageStatistics GetStatistics()

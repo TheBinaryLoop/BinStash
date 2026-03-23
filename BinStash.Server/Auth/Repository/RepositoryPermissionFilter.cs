@@ -53,7 +53,7 @@ public class RepositoryPermissionFilter(RepositoryPermission permission) : IEndp
         var result = await auth.AuthorizeAsync(http.User, resource, policyName);
         if (!result.Succeeded)
             return Results.Forbid();
-
+        
         return await next(context);
     }
 }

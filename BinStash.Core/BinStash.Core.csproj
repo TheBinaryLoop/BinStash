@@ -20,5 +20,4 @@
     <ItemGroup>
       <ProjectReference Include="..\BinStash.Contracts\BinStash.Contracts.csproj" />
     </ItemGroup>
-
 </Project>

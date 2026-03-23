@@ -19,6 +19,7 @@ using BinStash.Contracts.Release;
 using BinStash.Core.Auth.Instance;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
+using BinStash.Core.Storage;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Extensions;
 using BinStash.Server.Services.ChunkStores;

@@ -18,6 +18,7 @@
         <PackageReference Include="HotChocolate.AspNetCore.Authorization" Version="15.1.12" />
         <PackageReference Include="HotChocolate.Data" Version="15.1.12" />
         <PackageReference Include="HotChocolate.Data.EntityFramework" Version="15.1.12" />
+        <PackageReference Include="HotChocolate.Types.Scalars" Version="15.1.12" />
         <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.4">

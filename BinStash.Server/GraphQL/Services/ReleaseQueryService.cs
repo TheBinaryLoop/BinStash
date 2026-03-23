@@ -72,6 +72,55 @@ public sealed class ReleaseQueryService
         };
     }
 
+    public async Task<ReleaseMetricsGql?> GetReleaseMetricsForReleaseIdAsync(Guid releaseId, CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+
+        var releaseMeta = await _db.Releases
+            .AsNoTracking()
+            .Where(r => r.Id == releaseId && r.Repository.TenantId == tenantContext.TenantId)
+            .Select(r => new
+            {
+                r.Id,
+                r.RepoId
+            })
+            .FirstOrDefaultAsync(ct);
+        
+        if (releaseMeta is null)
+            return null;
+        
+        await GraphQlAuth.EnsureRepositoryPermissionAsync(user, _authorizationService, tenantContext.TenantId, releaseMeta.RepoId, RepositoryPermission.Read);
+
+        var releaseMetrics = await _db.ReleaseMetrics
+            .AsNoTracking()
+            .Where(r => r.ReleaseId == releaseId)
+            .Select(r => new ReleaseMetricsGql
+            {
+                ChunksInRelease = r.ChunksInRelease,
+                ComponentsInRelease = r.ComponentsInRelease,
+                CompressionSavedBytes = r.CompressionSavedBytes,
+                DeduplicationSavedBytes = r.DeduplicationSavedBytes,
+                FilesInRelease = r.FilesInRelease,
+                IncrementalCompressionRatio = r.IncrementalCompressionRatio,
+                IncrementalDeduplicationRatio = r.IncrementalDeduplicationRatio,
+                IncrementalEffectiveRatio = r.IncrementalEffectiveRatio,
+                MetaBytesFull = r.MetaBytesFull,
+                NewChunks = r.NewChunks,
+                NewCompressedBytes = r.NewCompressedBytes,
+                NewDataPercent = r.NewDataPercent,
+                NewUniqueLogicalBytes = r.NewUniqueLogicalBytes,
+                TotalLogicalBytes = r.TotalLogicalBytes
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (releaseMetrics is null)
+            return null;
+        
+        return releaseMetrics;
+    }
+
     private static object? ParseJsonOrNull(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))

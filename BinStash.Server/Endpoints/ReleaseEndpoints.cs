@@ -24,6 +24,7 @@ using BinStash.Core.Auth.Repository;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
+using BinStash.Core.Storage;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Extensions;
 using BinStash.Server.Helpers;

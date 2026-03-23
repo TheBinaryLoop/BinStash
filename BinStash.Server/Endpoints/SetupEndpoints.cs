@@ -15,6 +15,7 @@
 
 using System.Security.Claims;
 using BinStash.Core.Entities;
+using BinStash.Core.Storage;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Configuration.Tenancy;
 using BinStash.Server.Services.ChunkStores;

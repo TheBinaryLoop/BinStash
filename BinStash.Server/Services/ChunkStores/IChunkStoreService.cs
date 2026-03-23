@@ -15,6 +15,8 @@
 
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Entities;
+using BinStash.Core.Storage.Stats;
+using BinStash.Infrastructure.Storage.Stats;
 
 namespace BinStash.Server.Services.ChunkStores;
 
@@ -28,4 +30,7 @@ public interface IChunkStoreService
     Task<byte[]?> RetrieveReleasePackageAsync(ChunkStore store, string packageId);
     Task<bool> DeleteReleasePackageAsync(ChunkStore store, string packageId);
     Task<bool> RebuildStorageAsync(ChunkStore store);
+    Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(ChunkStore store, IReadOnlyCollection<string> fileHashes);
+    Task<Dictionary<string, byte[]>> RetrieveReleasePackagesAsync(ChunkStore store, IReadOnlyCollection<string> packageIds);
+    Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync(ChunkStore store);
 }

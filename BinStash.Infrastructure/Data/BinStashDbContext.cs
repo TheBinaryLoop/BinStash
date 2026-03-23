@@ -26,6 +26,7 @@ public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     public DbSet<ApiKey> ApiKeys { get; set; }
     public DbSet<Chunk> Chunks { get; set; }
     public DbSet<ChunkStore> ChunkStores { get; set; }
+    public DbSet<ChunkStoreStatsSnapshot> ChunkStoreStatsSnapshots { get; set; }
     public DbSet<FileDefinition> FileDefinitions { get; set; }
     public DbSet<IngestSession> IngestSessions { get; set; }
     public DbSet<Release> Releases { get; set; }

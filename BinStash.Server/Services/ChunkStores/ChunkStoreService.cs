@@ -16,6 +16,8 @@
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Entities;
 using BinStash.Core.Storage;
+using BinStash.Core.Storage.Stats;
+using BinStash.Infrastructure.Storage.Stats;
 
 namespace BinStash.Server.Services.ChunkStores;
 
@@ -102,5 +104,23 @@ public sealed class ChunkStoreService : IChunkStoreService
     {
         var storage = _storageFactory.Create(store);
         return storage.RebuildStorageAsync();
+    }
+
+    public Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(ChunkStore store, IReadOnlyCollection<string> fileHashes)
+    {
+        var storage = _storageFactory.Create(store);
+        return storage.RetrieveFileDefinitionsAsync(fileHashes);
+    }
+
+    public Task<Dictionary<string, byte[]>> RetrieveReleasePackagesAsync(ChunkStore store, IReadOnlyCollection<string> packageIds)
+    {
+        var storage = _storageFactory.Create(store);
+        return storage.RetrieveReleasePackagesAsync(packageIds);
+    }
+
+    public Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync(ChunkStore store)
+    {
+        var storage = _storageFactory.Create(store);
+        return storage.GetPhysicalStatsAsync();
     }
 }

@@ -86,6 +86,7 @@ public static class Program
         // Add services to the container.
         builder.Services.AddSingleton<IChunkStoreStorageFactory, ChunkStoreStorageFactory>();
         builder.Services.AddScoped<IChunkStoreService, ChunkStoreService>();
+        builder.Services.AddScoped<ChunkStoreStatsCollector>();
         builder.Services.AddSingleton<ChunkStoreProbeCache>();
         builder.Services.AddSingleton<IEmailTemplateRenderer, EmailTemplateRenderer>(_ => new EmailTemplateRenderer(typeof(EmailTemplateRenderer).Assembly, "BinStash.Infrastructure"));
         builder.Services.AddHttpClient<BrevoEmailProvider>();
@@ -224,6 +225,7 @@ public static class Program
         builder.Services.AddHostedService<SetupBootstrapper>();
         //builder.Services.AddHostedService<SingleTenantBootstrapper>();
         builder.Services.AddHostedService<ChunkStoreProbeService>();
+        builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
 
         builder.Services.AddGraphQLServer()
             .ModifyCostOptions(options =>
@@ -233,6 +235,8 @@ public static class Program
             .AddAuthorization()
             .AddQueryType<QueryType>()
             .AddMutationType<MutationType>()
+            .BindRuntimeType<ulong, UnsignedLongType>()
+            .BindRuntimeType<ulong?, UnsignedLongType>()
             .AddFiltering()
             .AddSorting()
             .AddProjections();

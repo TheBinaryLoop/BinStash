@@ -38,17 +38,19 @@ public class IngestSession
     public DateTimeOffset ExpiresAt { get; set; }
     public string? ErrorMessage { get; set; }
     
-    // Chunk & Data stats
-    public int ChunksSeenTotal { get; set; }
-    public int ChunksSeenUnique { get; set; }
-    public int ChunksSeenNew { get; set; }
-    public long DataSizeTotal { get; set; }
-    public long DataSizeUnique { get; set; }
+    // Chunk stats
+    public long ChunksSeenTotal { get; set; }
+    public long ChunksSeenUnique { get; set; }
+    public long ChunksSeenNew { get; set; }
     
     // File stats
-    public int FilesSeenTotal { get; set; }
-    public int FilesSeenUnique { get; set; }
-    public int FilesSeenNew { get; set; }
+    public long FilesSeenTotal { get; set; }
+    public long FilesSeenUnique { get; set; }
+    public long FilesSeenNew { get; set; }
+    
+    public long NewUniqueLogicalBytes { get; set; }
+    public long NewCompressedBytes { get; set; }
+    public long TotalLogicalBytes { get; set; }
     
     // Metadata stats
     public int MetadataSize { get; set; }

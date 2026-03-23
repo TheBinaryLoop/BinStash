@@ -14,7 +14,6 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Buffers;
-using System.Collections;
 using System.Text;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;

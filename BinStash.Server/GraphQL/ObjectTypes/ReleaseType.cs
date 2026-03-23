@@ -27,14 +27,18 @@ public sealed class ReleaseType : ObjectType<ReleaseGql>
         descriptor.Field("repository")
             .Authorize()
             .ResolveWith<Resolvers>(x => x.GetRepositoryAsync(null!, null!, CancellationToken.None!));
+        
+        descriptor.Field("metrics")
+            .Authorize()
+            .ResolveWith<Resolvers>(x => x.GetReleaseMetricsAsync(null!, null!, CancellationToken.None!));
     }
 
     private sealed class Resolvers
     {
-        public Task<RepositoryGql?> GetRepositoryAsync(
-            [Parent] ReleaseGql release,
-            [Service] RepositoryQueryService service,
-            CancellationToken ct)
+        public Task<RepositoryGql?> GetRepositoryAsync([Parent] ReleaseGql release, [Service] RepositoryQueryService service, CancellationToken ct)
             => service.GetRepositoryByIdAsync(release.RepoId, ct);
+        
+        public Task<ReleaseMetricsGql?> GetReleaseMetricsAsync([Parent] ReleaseGql release, [Service] ReleaseQueryService service, CancellationToken ct)
+            => service.GetReleaseMetricsForReleaseIdAsync(release.Id, ct);
     }
 }

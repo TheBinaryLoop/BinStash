@@ -266,31 +266,32 @@ public static class IngestSessionEndpoints
         try
         {
             var chunkChecksums = (await ChecksumCompressor.TransposeDecompressHashesAsync(request.Body)).ToArray();
-            
+
             var ingestSession = await db.IngestSessions.FindAsync(sessionId);
             var repo = await db.Repositories.FindAsync(repoId);
             if (repo == null || ingestSession == null)
                 return Results.NotFound();
-            
+
             var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
             if (store == null)
                 return Results.NotFound();
-            
-            // Return a list of all chunks that are in the dto but not in the database with the store id
+
             if (!chunkChecksums.Any())
                 return Results.Bytes(ChecksumCompressor.TransposeCompress([]), "application/octet-stream");
-            
-            var knownChecksums = db.Chunks
-                .Where(c => c.ChunkStoreId == sessionId && ((IEnumerable<Hash32>)chunkChecksums).Contains(c.Checksum))
+
+            var knownChecksums = await db.Chunks
+                .Where(c => c.ChunkStoreId == store.Id && chunkChecksums.Contains(c.Checksum))
                 .Select(c => c.Checksum)
-                .ToList();
-            
+                .ToListAsync();
+
             var missingChecksums = chunkChecksums.Except(knownChecksums).ToList();
-            
+
             if (!missingChecksums.Any())
                 return Results.Bytes(ChecksumCompressor.TransposeCompress([]), "application/octet-stream");
-        
-            return Results.Bytes(ChecksumCompressor.TransposeCompress(missingChecksums.Select(x => x.GetBytes()).ToList()), "application/octet-stream");
+
+            return Results.Bytes(
+                ChecksumCompressor.TransposeCompress(missingChecksums.Select(x => x.GetBytes()).ToList()),
+                "application/octet-stream");
         }
         catch (Exception)
         {
@@ -331,45 +332,52 @@ public static class IngestSessionEndpoints
 
     private static async Task<IResult> UploadChunksBatchAsync(Guid repoId, List<ChunkUploadDto> chunks, BinStashDbContext db, IChunkStoreService chunkStoreService, HttpRequest request)
     {
-        // Check for the ingest id header X-Ingest-Session-Id
-        if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
+        if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) ||
+            !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
+        {
             return Results.BadRequest("Missing or invalid X-Ingest-Session-Id header.");
-        
+        }
+
         var ingestSession = await db.IngestSessions.FindAsync(ingestId);
         if (ingestSession == null)
             return Results.BadRequest("Invalid X-Ingest-Session-Id header value.");
-        
-        if (ingestSession.State == IngestSessionState.Completed || ingestSession.State == IngestSessionState.Failed || ingestSession.State == IngestSessionState.Aborted || ingestSession.State == IngestSessionState.Expired || ingestSession.ExpiresAt < DateTimeOffset.UtcNow)
+
+        if (ingestSession.State == IngestSessionState.Completed ||
+            ingestSession.State == IngestSessionState.Failed ||
+            ingestSession.State == IngestSessionState.Aborted ||
+            ingestSession.State == IngestSessionState.Expired ||
+            ingestSession.ExpiresAt < DateTimeOffset.UtcNow)
+        {
             return Results.BadRequest("Ingest session is not active.");
-        
+        }
+
         if (ingestSession.State == IngestSessionState.Created)
             ingestSession.State = IngestSessionState.InProgress;
-        
+
         var repo = await db.Repositories.FindAsync(repoId);
         if (repo == null)
             return Results.NotFound();
-            
+
         var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
         if (store == null)
             return Results.NotFound();
-        
+
         if (chunks.Count == 0)
             return Results.BadRequest("No chunks provided.");
-        
-        // Deduplicate
+
         var uniqueChunks = chunks
             .GroupBy(c => c.Checksum, StringComparer.OrdinalIgnoreCase)
             .Select(g => new
             {
                 Hex = g.Key,
                 Hash = Hash32.FromHexString(g.Key),
-                g.First().Data
+                Data = g.First().Data
             })
             .ToList();
 
         ingestSession.ChunksSeenTotal += chunks.Count;
         ingestSession.ChunksSeenUnique += uniqueChunks.Count;
-        
+
         var checksumArray = uniqueChunks.Select(c => c.Hash).ToArray();
 
         var knownChecksums = (await db.Chunks
@@ -378,15 +386,14 @@ public static class IngestSessionEndpoints
                 .ToListAsync())
             .ToHashSet();
 
-        var missingChunks = uniqueChunks
+        var candidateChunks = uniqueChunks
             .Where(c => !knownChecksums.Contains(c.Hash))
             .ToList();
 
-        ingestSession.ChunksSeenNew += missingChunks.Count;
+        var newlyWrittenCompressedBytes = new ConcurrentDictionary<Hash32, int>();
+        var newlyWrittenLogicalBytes = new ConcurrentDictionary<Hash32, int>();
 
-        var missingChunksWrittenBytes = new ConcurrentDictionary<Hash32, int>();
-
-        var results = await Task.WhenAll(missingChunks.Select(async chunk =>
+        var results = await Task.WhenAll(candidateChunks.Select(async chunk =>
         {
             var actualHash = new Hash32(Blake3.Hasher.Hash(chunk.Data).AsSpan());
             if (actualHash != chunk.Hash)
@@ -394,7 +401,10 @@ public static class IngestSessionEndpoints
 
             var (success, bytesWritten) = await chunkStoreService.StoreChunkAsync(store, chunk.Hex, chunk.Data);
             if (success && bytesWritten > 0)
-                missingChunksWrittenBytes[chunk.Hash] = bytesWritten;
+            {
+                newlyWrittenCompressedBytes[chunk.Hash] = bytesWritten;
+                newlyWrittenLogicalBytes[chunk.Hash] = chunk.Data.Length;
+            }
 
             return success;
         }));
@@ -402,26 +412,50 @@ public static class IngestSessionEndpoints
         if (results.Any(r => !r))
             return Results.Problem("Some chunks failed checksum or storage.");
 
-        ingestSession.DataSizeTotal += missingChunks.Sum(c => c.Data.Length);
-        ingestSession.DataSizeUnique += missingChunksWrittenBytes.Sum(c => c.Value);
-        
-        if (results.Any(r => r == false))
-            return Results.Problem("Some chunks failed checksum or storage.");
+        var chunksToAdd = candidateChunks
+            .Where(chunk => newlyWrittenCompressedBytes.ContainsKey(chunk.Hash))
+            .Select(chunk => new Chunk
+            {
+                Checksum = chunk.Hash,
+                ChunkStoreId = repo.ChunkStoreId,
+                Length = chunk.Data.Length,
+                CompressedLength = newlyWrittenCompressedBytes[chunk.Hash]
+            })
+            .ToList();
 
-        
-        var chunksToAdd = missingChunks.Select(chunk => new Chunk
-        {
-            Checksum = chunk.Hash,
-            ChunkStoreId = repo.ChunkStoreId,
-            Length = chunk.Data.Length,
-            CompressedLength = missingChunksWrittenBytes[chunk.Hash]
-        });
-        
+        ingestSession.ChunksSeenNew += chunksToAdd.Count;
+        ingestSession.NewUniqueLogicalBytes += newlyWrittenLogicalBytes.Values.Sum();
+        ingestSession.NewCompressedBytes += newlyWrittenCompressedBytes.Values.Sum();
         ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;
         ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
 
-        db.Chunks.AddRange(chunksToAdd);
-        await db.SaveChangesAsync();
+        if (chunksToAdd.Count > 0)
+        {
+            db.Chunks.AddRange(chunksToAdd);
+
+            try
+            {
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex) when (
+                ex.InnerException is Npgsql.PostgresException pg &&
+                pg.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation)
+            {
+                db.ChangeTracker.Clear();
+
+                ingestSession = await db.IngestSessions.FindAsync(ingestId);
+                if (ingestSession != null)
+                {
+                    ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;
+                    ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
+                    await db.SaveChangesAsync();
+                }
+            }
+        }
+        else
+        {
+            await db.SaveChangesAsync();
+        }
 
         return Results.Ok();
     }
@@ -432,27 +466,32 @@ public static class IngestSessionEndpoints
         var repo = await db.Repositories.FindAsync(repoId);
         if (repo == null || ingestSession == null)
             return Results.NotFound();
-        
+
         if (ingestSession.State == IngestSessionState.Completed)
             return Results.Ok();
-        
-        if (ingestSession.State == IngestSessionState.Completed || ingestSession.State == IngestSessionState.Failed || ingestSession.State == IngestSessionState.Aborted || ingestSession.State == IngestSessionState.Expired || ingestSession.ExpiresAt < DateTimeOffset.UtcNow)
+
+        if (ingestSession.State == IngestSessionState.Completed ||
+            ingestSession.State == IngestSessionState.Failed ||
+            ingestSession.State == IngestSessionState.Aborted ||
+            ingestSession.State == IngestSessionState.Expired ||
+            ingestSession.ExpiresAt < DateTimeOffset.UtcNow)
+        {
             return Results.BadRequest("Ingest session is not active.");
-        
+        }
+
         if (ingestSession.State == IngestSessionState.Created)
             ingestSession.State = IngestSessionState.InProgress;
-        
+
         if (!request.HasFormContentType)
             return Results.BadRequest("Content-Type must be multipart/form-data.");
-        
+
         var form = await request.ReadFormAsync();
-        
+
         var file = form.Files.GetFile("releaseDefinition");
         if (file == null || file.Length == 0)
             return Results.BadRequest("Missing or empty release definition file.");
-        
-        var contentType = file.ContentType;
-        if (contentType is not "application/x-bs-rdef" )
+
+        if (file.ContentType is not "application/x-bs-rdef")
             return Results.BadRequest("Unsupported Content-Type.");
 
         var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
@@ -460,23 +499,23 @@ public static class IngestSessionEndpoints
             return Results.NotFound("Chunk store not found.");
 
         var releaseId = Guid.CreateVersion7();
-        await using var stream = file.OpenReadStream();
 
+        await using var stream = file.OpenReadStream();
         var releasePackage = await ReleasePackageSerializer.DeserializeAsync(stream);
-        
-        if (db.Releases.Any(r => r.RepoId == repo.Id && r.Version == releasePackage.Version))
+
+        if (await db.Releases.AnyAsync(r => r.RepoId == repo.Id && r.Version == releasePackage.Version))
             return Results.Conflict($"A release with version '{releasePackage.Version}' already exists for this repository.");
 
         var createdAt = DateTimeOffset.UtcNow;
-        
+
         releasePackage.CreatedAt = createdAt;
         releasePackage.ReleaseId = releaseId.ToString();
         releasePackage.RepoId = repo.Id.ToString();
-        
+
         await using var releasePackageStream = new MemoryStream();
         await ReleasePackageSerializer.SerializeAsync(releasePackageStream, releasePackage);
         var releasePackageData = releasePackageStream.ToArray();
-        var hash = new Hash32(Blake3.Hasher.Hash(releasePackageData).AsSpan());
+        var releasePackageHash = new Hash32(Blake3.Hasher.Hash(releasePackageData).AsSpan());
 
         var release = new Release
         {
@@ -486,40 +525,98 @@ public static class IngestSessionEndpoints
             Notes = releasePackage.Notes,
             RepoId = repo.Id,
             Repository = repo,
-            ReleaseDefinitionChecksum = hash,
+            ReleaseDefinitionChecksum = releasePackageHash,
             CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null,
             SerializerVersion = ReleasePackageSerializer.Version
         };
-        
+
         await db.Releases.AddAsync(release);
 
         await chunkStoreService.StoreReleasePackageAsync(store, releasePackageData);
-        
-        ingestSession.MetadataSize =+ releasePackageData.Length;
-        
+
+        ingestSession.MetadataSize += releasePackageData.Length;
         ingestSession.State = IngestSessionState.Completed;
         ingestSession.CompletedAt = DateTimeOffset.UtcNow;
+        ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;
+        ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
 
-        var chunkHashes = releasePackage.Chunks.Select(ci => ci.Checksum).Select(x => new Hash32(x)).ToList();
-        var rawSize = await db.Chunks.Where(c => chunkHashes.Contains(c.Checksum)).SumAsync(x => x.Length);
-        
+        // Compute total logical bytes from file definitions, counting every file in the release.
+        var releaseFiles = releasePackage.Components.SelectMany(c => c.Files).ToList();
+        var distinctFileHashes = releaseFiles.Select(f => f.Hash).Distinct().ToList();
+
+        var fileLengths = await db.FileDefinitions
+            .AsNoTracking()
+            .Where(x => x.ChunkStoreId == repo.ChunkStoreId && distinctFileHashes.Contains(x.Checksum))
+            .ToDictionaryAsync(x => x.Checksum, x => x.Length);
+
+        ulong totalLogicalBytes = 0;
+        foreach (var fileEntry in releaseFiles)
+        {
+            if (fileLengths.TryGetValue(fileEntry.Hash, out var len))
+                totalLogicalBytes += (ulong)len;
+        }
+
+        ingestSession.TotalLogicalBytes = (long)totalLogicalBytes;
+
+        // Derive unique chunk count in release from the file definitions.
+        var fileDefinitionBytes = await chunkStoreService.RetrieveFileDefinitionsAsync(
+            store,
+            distinctFileHashes.Select(x => x.ToHexString()).ToArray());
+
+        var releaseUniqueChunks = new HashSet<Hash32>();
+        foreach (var fd in fileDefinitionBytes.Values)
+        {
+            foreach (var chunkHash in ChecksumCompressor.TransposeDecompressHashes(fd))
+                releaseUniqueChunks.Add(chunkHash);
+        }
+
         var releaseMetrics = new ReleaseMetrics
         {
             ReleaseId = release.Id,
             IngestSessionId = ingestSession.Id,
             CreatedAt = release.CreatedAt,
-            ChunksInRelease = releasePackage.Chunks.Count,
-            NewChunks = ingestSession.ChunksSeenNew,
-            TotalUncompressedSize = (ulong)rawSize,
-            NewCompressedBytes = ingestSession.DataSizeUnique,
+
+            ChunksInRelease = releaseUniqueChunks.Count,
+            NewChunks = (int)ingestSession.ChunksSeenNew,
+
+            TotalLogicalBytes = totalLogicalBytes,
+            NewUniqueLogicalBytes = ingestSession.NewUniqueLogicalBytes,
+            NewCompressedBytes = ingestSession.NewCompressedBytes,
+
             MetaBytesFull = ingestSession.MetadataSize,
-            MetaBytesFullDiff = 0, // Set if we save a patch/diff instead of the full release definition
+            MetaBytesFullDiff = 0,
+
             ComponentsInRelease = releasePackage.Components.Count,
-            FilesInRelease = releasePackage.Components.Sum(c => c.Files.Count)
+            FilesInRelease = releasePackage.Components.Sum(c => c.Files.Count),
+
+            IncrementalCompressionRatio =
+                ingestSession.NewCompressedBytes > 0
+                    ? (double)ingestSession.NewUniqueLogicalBytes / ingestSession.NewCompressedBytes
+                    : 1.0,
+
+            IncrementalDeduplicationRatio =
+                ingestSession.NewUniqueLogicalBytes > 0
+                    ? (double)totalLogicalBytes / ingestSession.NewUniqueLogicalBytes
+                    : 1.0,
+
+            IncrementalEffectiveRatio =
+                (ingestSession.NewCompressedBytes + ingestSession.MetadataSize) > 0
+                    ? (double)totalLogicalBytes / (ingestSession.NewCompressedBytes + ingestSession.MetadataSize)
+                    : 1.0,
+
+            CompressionSavedBytes =
+                Math.Max(0, ingestSession.NewUniqueLogicalBytes - ingestSession.NewCompressedBytes),
+
+            DeduplicationSavedBytes =
+                Math.Max(0, (long)totalLogicalBytes - ingestSession.NewUniqueLogicalBytes),
+
+            NewDataPercent =
+                totalLogicalBytes > 0
+                    ? (double)ingestSession.NewUniqueLogicalBytes / (double)totalLogicalBytes * 100.0
+                    : 0.0
         };
 
         await db.ReleaseMetrics.AddAsync(releaseMetrics);
-
         await db.SaveChangesAsync();
 
         return Results.Created($"/api/releases/{releaseId}", null);

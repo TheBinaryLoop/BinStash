@@ -34,16 +34,6 @@ public class IngestSessionEntityTypeConfiguration : IEntityTypeConfiguration<Ing
         builder.Property(e => e.LastUpdatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.Property(e => e.ExpiresAt).IsRequired();
         builder.Property(e => e.State).IsRequired();
-        builder.Property(e => e.ChunksSeenTotal).IsRequired().HasDefaultValue(0);
-        builder.Property(e => e.ChunksSeenUnique).IsRequired().HasDefaultValue(0);
-        builder.Property(e => e.ChunksSeenNew).IsRequired().HasDefaultValue(0);
-        builder.Property(e => e.DataSizeTotal).IsRequired().HasDefaultValue(0L);
-        builder.Property(e => e.DataSizeUnique).IsRequired().HasDefaultValue(0L);
-        builder.Property(e => e.FilesSeenTotal).IsRequired().HasDefaultValue(0L);
-        builder.Property(e => e.FilesSeenUnique).IsRequired().HasDefaultValue(0L);
-        builder.Property(e => e.FilesSeenNew).IsRequired().HasDefaultValue(0L);
-        builder.Property(e => e.MetadataSize).IsRequired().HasDefaultValue(0L);
-        
         
         builder.HasIndex(e => e.State);
         

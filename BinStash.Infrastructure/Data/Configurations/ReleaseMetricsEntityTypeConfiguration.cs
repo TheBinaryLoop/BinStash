@@ -15,14 +15,7 @@ public class ReleaseMetricsEntityTypeConfiguration : IEntityTypeConfiguration<Re
         builder.Property(rm => rm.ReleaseId).ValueGeneratedNever();
         builder.Property(rm => rm.IngestSessionId).IsRequired();
         builder.Property(rm => rm.CreatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
-        builder.Property(rm => rm.ChunksInRelease).IsRequired().HasDefaultValue(0);
-        builder.Property(rm => rm.NewChunks).IsRequired().HasDefaultValue(0);
-        builder.Property(rm => rm.NewCompressedBytes).IsRequired().HasDefaultValue(0);
-        builder.Property(rm => rm.ComponentsInRelease).IsRequired().HasDefaultValue(0);
-        builder.Property(rm => rm.FilesInRelease).IsRequired().HasDefaultValue(0);
-        builder.Property(rm => rm.MetaBytesFull).IsRequired().HasDefaultValue(0);
-        builder.Property(rm => rm.MetaBytesFullDiff).IsRequired().HasDefaultValue(0);
-        builder.Property(rm => rm.TotalUncompressedSize).IsRequired().HasDefaultValue(0);
+
         
         builder.HasIndex(rm => rm.CreatedAt);
 

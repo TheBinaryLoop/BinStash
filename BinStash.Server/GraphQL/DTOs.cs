@@ -43,6 +43,40 @@ public sealed class ReleaseGql
     public object? CustomProperties { get; init; }
 }
 
+public sealed class ReleaseMetricsGql
+{
+    public required int ChunksInRelease { get; set; }
+    public required int NewChunks { get; set; }
+
+    // Full logical size of the release as users see it
+    public required ulong TotalLogicalBytes { get; set; }
+
+    // Unique uncompressed bytes newly added by this release
+    public required long NewUniqueLogicalBytes { get; set; }
+
+    // Unique compressed bytes newly added by this release
+    public required long NewCompressedBytes { get; set; }
+
+    // Total metadata bytes for full release package
+    public required int MetaBytesFull { get; set; }
+
+    // Reserved for later diff/patch metadata
+    //public int MetaBytesFullDiff { get; set; }
+
+    public required int ComponentsInRelease { get; set; }
+    public required int FilesInRelease { get; set; }
+
+    // Derived-but-stored metrics for easy querying/charting
+    public required double IncrementalCompressionRatio { get; set; }
+    public required double IncrementalDeduplicationRatio { get; set; }
+    public required double IncrementalEffectiveRatio { get; set; }
+
+    public required long CompressionSavedBytes { get; set; }
+    public required long DeduplicationSavedBytes { get; set; }
+
+    public required double NewDataPercent { get; set; }
+}
+
 public sealed class ServiceAccountGql
 {
     public required Guid Id { get; init; }

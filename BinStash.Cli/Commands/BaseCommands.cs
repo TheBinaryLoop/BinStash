@@ -75,7 +75,7 @@ public abstract class AuthenticatedCommandBase : UrlCommandBase
     [CommandOption("no-auth", 'n', Description = "Disable authentication.")]
     public bool NoAuth { get; set; }
 
-    protected Func<string> AuthTokenFactory { get; private set; } = () => string.Empty;
+    protected Func<Task<string>> AuthTokenFactory { get; private set; } = () => Task.FromResult(string.Empty);
 
     protected override async ValueTask<bool> PreCheckAsync(IConsole console)
     {
@@ -94,7 +94,7 @@ public abstract class AuthenticatedCommandBase : UrlCommandBase
             {
                 await console.Output.WriteLineAsync("Using stored authentication token.");
                 Token = accessToken;
-                AuthTokenFactory = () => auth.GetValidAccessTokenAsync().Result;
+                AuthTokenFactory = () => auth.GetValidAccessTokenAsync();
             }
         }
         catch (Exception ex)

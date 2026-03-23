@@ -16,6 +16,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Web;
+using BinStash.Cli.Auth;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Ingest;
@@ -37,12 +38,14 @@ namespace BinStash.Cli.Infrastructure;
 public class BinStashApiClient
 {
     private readonly HttpClient _httpClient;
+    private readonly Func<Task<string>> _authTokenFactory;
     private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy = HttpPolicyExtensions.HandleTransientHttpError().OrResult(msg => msg.StatusCode == HttpStatusCode.TooManyRequests).WaitAndRetryAsync(5, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
     private readonly IConsole? _console;
     
-    public BinStashApiClient(string rootUrl, Func<string>? authTokenFactory = null!, IConsole? console = null)
+    public BinStashApiClient(string rootUrl, Func<Task<string>>? authTokenFactory = null!, IConsole? console = null)
     {
-        authTokenFactory ??= () => string.Empty;
+        authTokenFactory ??= () => Task.FromResult(string.Empty);
+        _authTokenFactory = authTokenFactory;
         // Wire it into the handler pipeline manually
         var sockets = new SocketsHttpHandler
         {
@@ -56,14 +59,18 @@ public class BinStashApiClient
             InnerHandler = sockets
         };
         
-        _httpClient = new HttpClient(policyHandler)
+        var authHandler = new AuthHeaderHandler(authTokenFactory)
+        {
+            InnerHandler = policyHandler
+        };
+        
+        _httpClient = new HttpClient(authHandler)
         {
             BaseAddress = new Uri(rootUrl),
             DefaultRequestHeaders =
             {
                 { "Accept", "application/json" },
-                { "User-Agent", "BinStash.Cli/1.0" },
-                { "Authorization", $"Bearer {authTokenFactory()}" }
+                { "User-Agent", "BinStash.Cli/1.0" }
             }
         };
         _console = console;
@@ -327,7 +334,6 @@ public class BinStashApiClient
 
     private async Task<T?> GetAsync<T>(string path)
     {
-        _console?.WriteLine($"{_httpClient.BaseAddress}{path}");
         var response = await _httpClient.GetAsync(path);
         response.EnsureSuccessStatusCode();
         var content = await response.Content.ReadFromJsonAsync<T>();
@@ -336,7 +342,6 @@ public class BinStashApiClient
 
     private async Task<T?> PostAsJsonAsync<T>(string path, object? body)
     {
-        _console?.WriteLine($"POST: {_httpClient.BaseAddress}{path}");
         var response = await _httpClient.PostAsJsonAsync(path, body);
         response.EnsureSuccessStatusCode();
         var content = await response.Content.ReadFromJsonAsync<T>();
@@ -345,7 +350,6 @@ public class BinStashApiClient
     
     private async Task<List<Hash32>> PostAsTransposedCompressedByteArrayAsync(string path, List<Hash32> checksums)
     {
-        _console?.WriteLine($"POST: {_httpClient.BaseAddress}{path}");
         var compressedContent = ChecksumCompressor.TransposeCompress(checksums.Select(x => x.GetBytes()).ToList());
         var response = await _httpClient.PostAsync(path, new ByteArrayContent(compressedContent));
         response.EnsureSuccessStatusCode();
