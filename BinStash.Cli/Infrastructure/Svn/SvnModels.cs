@@ -19,7 +19,8 @@ public sealed record SvnTagInfo(
     string TagName,
     string TagUrl,
     long? ListRevision,
-    long? LastChangedRevision);
+    long? LastChangedRevision,
+    DateTimeOffset? CreatedAt);
 
 public sealed record SvnFileEntry(
     string RelativePath,

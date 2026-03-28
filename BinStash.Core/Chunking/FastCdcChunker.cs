@@ -16,6 +16,7 @@
 using System.Collections.Concurrent;
 using System.IO.MemoryMappedFiles;
 using BinStash.Contracts.Hashing;
+using BinStash.Core.Ingestion.Formats.Zip;
 
 namespace BinStash.Core.Chunking;
 
@@ -57,22 +58,26 @@ public class FastCdcChunker : IChunker
     {
         using var stream = File.OpenRead(filePath);
         if (!stream.CanRead) throw new ArgumentException("File stream must be readable.", nameof(filePath));
-        if (!stream.CanSeek) throw new ArgumentException("Stream must be seekable.", nameof(filePath));
+
         return GenerateChunkMapInternal(stream, filePath, cancellationToken);
     }
 
     public IReadOnlyList<ChunkMapEntry> GenerateChunkMap(Stream stream, CancellationToken cancellationToken = default)
     {
         if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
-        if (!stream.CanSeek) throw new ArgumentException("Stream must be seekable.", nameof(stream));
+
         return GenerateChunkMapInternal(stream, null, cancellationToken);
     }
     
     private IReadOnlyList<ChunkMapEntry> GenerateChunkMapInternal(Stream input, string? filePath = null, CancellationToken cancellationToken = default)
     {
-        return input.Length > MmfThreshold && input is FileStream fs
-            ? ChunkUsingMemoryMappedFile(fs, filePath, cancellationToken)
-            : ChunkUsingBuffer(input, filePath, cancellationToken);
+        if (input is FileStream fs && input.CanSeek && input.Length > MmfThreshold)
+            return ChunkUsingMemoryMappedFile(fs, filePath, cancellationToken);
+
+        if (input.CanSeek)
+            return ChunkUsingBuffer(input, filePath, cancellationToken);
+
+        return ChunkUsingNonSeekableStream(input, filePath, cancellationToken);
     }
     
     private IReadOnlyList<ChunkMapEntry> ChunkUsingBuffer(Stream stream, string? filePath, CancellationToken ct)
@@ -156,6 +161,50 @@ public class FastCdcChunker : IChunker
         return HashChunksParallel(chunks, filePath, ct);
     }
 
+    private IReadOnlyList<ChunkMapEntry> ChunkUsingNonSeekableStream(Stream stream, string? filePath, CancellationToken ct)
+    {
+        const int readBufferSize = 64 * 1024;
+
+        var results = new List<ChunkMapEntry>();
+        using var streamingChunker = CreateStreamingChunker();
+
+        var readBuffer = new byte[readBufferSize];
+
+        int bytesRead;
+        while ((bytesRead = stream.Read(readBuffer, 0, readBuffer.Length)) > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            streamingChunker.Append(readBuffer.AsSpan(0, bytesRead));
+
+            var completed = streamingChunker.GetCompletedChunks();
+            foreach (var boundary in completed)
+            {
+                results.Add(new ChunkMapEntry
+                {
+                    FilePath = filePath ?? string.Empty,
+                    Offset = boundary.Offset,
+                    Length = boundary.Length,
+                    Checksum = boundary.Checksum
+                });
+            }
+        }
+
+        var finalCompleted = streamingChunker.Complete();
+        foreach (var boundary in finalCompleted)
+        {
+            results.Add(new ChunkMapEntry
+            {
+                FilePath = filePath ?? string.Empty,
+                Offset = boundary.Offset,
+                Length = boundary.Length,
+                Checksum = boundary.Checksum
+            });
+        }
+
+        return results;
+    }
+    
     private static IReadOnlyList<ChunkMapEntry> HashChunksParallel(List<(long Offset, byte[] Data)> chunks, string? filePath, CancellationToken ct)
     {
         var results = new ChunkMapEntry[chunks.Count];
@@ -176,6 +225,15 @@ public class FastCdcChunker : IChunker
     
     public async Task<ChunkData> LoadChunkDataAsync(ChunkMapEntry chunkInfo, CancellationToken cancellationToken = default)
     {
+        if (TryParseContainerEntryLocator(chunkInfo.FilePath, out var containerType, out var archivePath, out var entryPath))
+        {
+            return containerType switch
+            {
+                "zip" => await LoadChunkDataFromZipEntryAsync(archivePath, entryPath, chunkInfo, cancellationToken),
+                _ => throw new NotSupportedException($"Unsupported container locator type: {containerType}")
+            };
+        }
+
         await using var fs = File.OpenRead(chunkInfo.FilePath);
         return await LoadChunkDataAsync(fs, chunkInfo, cancellationToken);
     }
@@ -183,17 +241,31 @@ public class FastCdcChunker : IChunker
     public async Task<ChunkData> LoadChunkDataAsync(Stream stream, ChunkMapEntry chunkInfo, CancellationToken cancellationToken = default)
     {
         if (!stream.CanRead) throw new ArgumentException("Stream must be readable.", nameof(stream));
-        if (!stream.CanSeek) throw new ArgumentException("Stream must be seekable.", nameof(stream));
-        
-        stream.Seek(chunkInfo.Offset, SeekOrigin.Begin);
-        
+
+        if (stream.CanSeek)
+        {
+            stream.Seek(chunkInfo.Offset, SeekOrigin.Begin);
+        }
+        else
+        {
+            await SkipExactlyAsync(stream, chunkInfo.Offset, cancellationToken);
+        }
+
         var buffer = new byte[chunkInfo.Length];
         var read = 0;
         while (read < buffer.Length)
         {
             var bytesRead = await stream.ReadAsync(buffer.AsMemory(read, buffer.Length - read), cancellationToken);
-            if (bytesRead == 0) break;
+            if (bytesRead == 0)
+                throw new EndOfStreamException($"Unexpected EOF while reading chunk at offset {chunkInfo.Offset} with length {chunkInfo.Length}.");
+
             read += bytesRead;
+        }
+
+        var actualChecksum = new Hash32(Blake3.Hasher.Hash(buffer).AsSpan());
+        if (actualChecksum != chunkInfo.Checksum)
+        {
+            throw new InvalidDataException($"Chunk checksum mismatch while loading chunk at offset {chunkInfo.Offset} from '{chunkInfo.FilePath}'. Expected {chunkInfo.Checksum}, got {actualChecksum}.");
         }
 
         return new ChunkData
@@ -313,6 +385,63 @@ public class FastCdcChunker : IChunker
             power <<= 1;
         return power;
     }
+    
+    private static bool TryParseContainerEntryLocator(string locator, out string containerType, out string archivePath, out string entryPath)
+    {
+        containerType = string.Empty;
+        archivePath = string.Empty;
+        entryPath = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(locator))
+            return false;
+
+        var firstSep = locator.IndexOf('|');
+        if (firstSep < 0)
+            return false;
+
+        var secondSep = locator.IndexOf('|', firstSep + 1);
+        if (secondSep < 0)
+            return false;
+
+        containerType = locator[..firstSep];
+        archivePath = locator.Substring(firstSep + 1, secondSep - firstSep - 1);
+        entryPath = locator[(secondSep + 1)..];
+
+        return !string.IsNullOrWhiteSpace(containerType) && !string.IsNullOrWhiteSpace(archivePath) && !string.IsNullOrWhiteSpace(entryPath);
+    }
+
+    private async Task<ChunkData> LoadChunkDataFromZipEntryAsync(string zipFilePath, string entryPath, ChunkMapEntry chunkInfo, CancellationToken cancellationToken)
+    {
+        await using var stream = OpenZipEntryStream(zipFilePath, entryPath);
+        return await LoadChunkDataAsync(stream, chunkInfo, cancellationToken);
+    }
+
+    private static Stream OpenZipEntryStream(string zipFilePath, string entryPath)
+    {
+        return new ZipEntryStreamFactory().Create(zipFilePath, entryPath)();
+    }
+
+    private static async Task SkipExactlyAsync(Stream stream, long bytesToSkip, CancellationToken cancellationToken)
+    {
+        if (bytesToSkip < 0)
+            throw new ArgumentOutOfRangeException(nameof(bytesToSkip));
+
+        if (bytesToSkip == 0)
+            return;
+
+        var buffer = new byte[64 * 1024];
+        long remaining = bytesToSkip;
+
+        while (remaining > 0)
+        {
+            var toRead = (int)Math.Min(buffer.Length, remaining);
+            var read = await stream.ReadAsync(buffer.AsMemory(0, toRead), cancellationToken);
+            if (read == 0)
+                throw new EndOfStreamException($"Unexpected EOF while skipping {bytesToSkip} bytes.");
+
+            remaining -= read;
+        }
+    }
 }
 
 internal sealed class FastCdcStreamingChunker : IStreamingChunker
@@ -331,6 +460,7 @@ internal sealed class FastCdcStreamingChunker : IStreamingChunker
 
     private long _currentChunkStart;
     private int _currentChunkLength;
+    private int _completedChunksConsumed;
     private long _totalBytesProcessed;
     private uint _rollingHash;
     private bool _completed;
@@ -433,6 +563,25 @@ internal sealed class FastCdcStreamingChunker : IStreamingChunker
         _currentChunkHasher = Blake3.Hasher.New();
     }
 
+    public IReadOnlyList<ChunkBoundary> GetCompletedChunks()
+    {
+        if (_completedChunksConsumed >= _chunks.Count)
+            return [];
+
+        var newChunks = _chunks
+            .Skip(_completedChunksConsumed)
+            .Select(x => new ChunkBoundary
+            {
+                Offset = x.Offset,
+                Length = x.Length,
+                Checksum = x.Checksum
+            })
+            .ToArray();
+
+        _completedChunksConsumed = _chunks.Count;
+        return newChunks;
+    }
+    
     public void Dispose()
     {
         // Nothing unmanaged here, but keeping IDisposable matches the interface

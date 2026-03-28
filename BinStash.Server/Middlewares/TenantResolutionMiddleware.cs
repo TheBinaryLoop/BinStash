@@ -89,6 +89,27 @@ public sealed class TenantResolutionMiddleware(RequestDelegate next)
             return;
         }
         
+        // Try to resolve tenant from header
+        if (http.Request.Headers.TryGetValue("X-Tenant-Id", out var tenantIdHeader) && Guid.TryParse(tenantIdHeader, out tenantId))
+        {
+            var tenant = await db.Tenants
+                .Where(t => t.Id == tenantId)
+                .Select(t => new { t.Id, t.Slug })
+                .SingleOrDefaultAsync();
+            if (tenant is null)
+            {
+                http.Response.StatusCode = StatusCodes.Status404NotFound;
+                await http.Response.WriteAsync("Unknown tenant.");
+                return;
+            }
+
+            tenantContext.TenantId = tenant.Id;
+            tenantContext.TenantSlug = tenant.Slug;
+            tenantContext.IsResolved = true;
+            await next(http);
+            return;
+        }
+        
         // Try to resolve tenant from host
         // Example host: "acme.api.tld" (or "acme.api.tld:443")
         var slug = ExtractTenantSlug(http.Request.Host.Host, tenancyOptions.DomainSuffix);

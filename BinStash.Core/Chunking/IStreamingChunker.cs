@@ -17,6 +17,7 @@ namespace BinStash.Core.Chunking;
 
 public interface IStreamingChunker : IDisposable
 {
-    void Append(ReadOnlySpan<byte> data);
+    void Append(ReadOnlySpan<byte> buffer);
+    IReadOnlyList<ChunkBoundary> GetCompletedChunks();
     IReadOnlyList<ChunkBoundary> Complete();
 }

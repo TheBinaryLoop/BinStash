@@ -17,8 +17,7 @@ using System.Security.Claims;
 using BinStash.Core.Auth.Instance;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
-using BinStash.Server.Auth.Repository;
-using BinStash.Server.Auth.Tenant;
+using BinStash.Server.Auth;
 using BinStash.Server.Context;
 using Microsoft.AspNetCore.Authorization;
 
@@ -28,14 +27,7 @@ public static class GraphQlAuth
 {
     public static async Task EnsureInstancePermissionAsync(ClaimsPrincipal user, IAuthorizationService authorizationService, InstancePermission permission)
     {
-        var policyName = permission switch
-        {
-            InstancePermission.Admin => "Permission:Instance:Admin",
-            _ => throw new ArgumentOutOfRangeException(nameof(permission), permission, null)
-        };
-
-        var result = await authorizationService.AuthorizeAsync(user, null, policyName);
-
+        var result = await AuthChecker.CheckInstancePermissionAsync(user, authorizationService, permission);
         if (!result.Succeeded)
             throw new GraphQLException(ErrorBuilder.New()
                 .SetMessage("Forbidden.")
@@ -46,16 +38,7 @@ public static class GraphQlAuth
     
     public static async Task EnsureTenantPermissionAsync(ClaimsPrincipal user, IAuthorizationService authorizationService, Guid tenantId, TenantPermission permission)
     {
-        var policyName = permission switch
-        {
-            TenantPermission.Member => "Permission:Tenant:Member",
-            TenantPermission.Admin => "Permission:Tenant:Admin",
-            TenantPermission.BillingAdmin => "Permission:Tenant:BillingAdmin",
-            _ => throw new ArgumentOutOfRangeException(nameof(permission), permission, null)
-        };
-
-        var result = await authorizationService.AuthorizeAsync(user, new TenantAuthResource(tenantId), policyName);
-
+        var result = await AuthChecker.CheckTenantPermissionAsync(user, authorizationService, tenantId, permission);
         if (!result.Succeeded)
             throw new GraphQLException(ErrorBuilder.New()
                 .SetMessage("Forbidden.")
@@ -65,16 +48,7 @@ public static class GraphQlAuth
 
     public static async Task EnsureRepositoryPermissionAsync(ClaimsPrincipal user, IAuthorizationService authorizationService, Guid tenantId, Guid repoId, RepositoryPermission permission)
     {
-        var policyName = permission switch
-        {
-            RepositoryPermission.Read => "Permission:Repo:Read",
-            RepositoryPermission.Write => "Permission:Repo:Write",
-            RepositoryPermission.Admin => "Permission:Repo:Admin",
-            _ => throw new ArgumentOutOfRangeException(nameof(permission), permission, null)
-        };
-
-        var result = await authorizationService.AuthorizeAsync(user, new RepositoryAuthResource(tenantId, repoId), policyName);
-
+        var result = await AuthChecker.CheckRepositoryPermissionAsync(user, authorizationService, tenantId, repoId, permission);
         if (!result.Succeeded)
             throw new GraphQLException(ErrorBuilder.New()
                 .SetMessage("Forbidden.")

@@ -5,13 +5,17 @@ option csharp_namespace = "BinStash.Grpc";
 package binstash.ingest;
 
 service IngestService {
-  rpc UploadChunks (stream UploadChunkRequest) returns (UploadChunksReply);
+  rpc UploadFileDefinitions(stream UploadFileDefinitionsRequest) returns (UploadFileDefinitionsReply);
+  rpc UploadChunks(stream UploadChunkRequest) returns (UploadChunksReply);
 }
 
 message UploadChunkRequest {
-  string repo_id = 1;
-  bytes checksum = 2;
-  bytes data = 3;
+  bytes checksum = 1;
+  bytes data = 2;
+}
+
+message UploadFileDefinitionsRequest {
+  bytes payload = 1;
 }
 
 message UploadChunksReply {
@@ -20,4 +24,11 @@ message UploadChunksReply {
   int32 chunks_written_new = 3;
   int64 new_unique_logical_bytes = 4;
   int64 new_compressed_bytes = 5;
+}
+
+message UploadFileDefinitionsReply {
+  int32 files_seen_total = 1;
+  int32 files_seen_unique = 2;
+  int32 files_written_new = 3;
+  int64 metadata_bytes_written = 4;
 }

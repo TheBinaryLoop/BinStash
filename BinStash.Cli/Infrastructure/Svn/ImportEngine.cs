@@ -32,6 +32,7 @@ public sealed class SvnImportEngine
 {
     private readonly SvnCliClient _svn;
     private readonly BinStashApiClient _api;
+    private readonly BinStashGrpcClient _ingestClient;
     private readonly ImportStateStore _state;
     private readonly RepositorySummaryDto _repository;
     private readonly IChunker _chunker;
@@ -40,10 +41,11 @@ public sealed class SvnImportEngine
     private readonly SvnGlobFilter _globFilter;
     private readonly SvnImportProgress _progress;
 
-    public SvnImportEngine(SvnCliClient svn, BinStashApiClient api, ImportStateStore state, RepositorySummaryDto repository, IChunker chunker, IConsole console, int concurrency, SvnComponentMapper componentMapper, IEnumerable<string> includes, IEnumerable<string> excludes)
+    public SvnImportEngine(SvnCliClient svn, BinStashApiClient api, BinStashGrpcClient ingestClient, ImportStateStore state, RepositorySummaryDto repository, IChunker chunker, IConsole console, int concurrency, SvnComponentMapper componentMapper, IEnumerable<string> includes, IEnumerable<string> excludes)
     {
         _svn = svn;
         _api = api;
+        _ingestClient = ingestClient;
         _state = state;
         _repository = repository;
         _chunker = chunker;
@@ -62,7 +64,7 @@ public sealed class SvnImportEngine
             var tags = await _svn.ListTagsAsync(svnRoot);
             ctx.Status($"Discovered {tags.Count} tags, updating local state ...");
 
-            foreach (var tag in tags.OrderBy(x => x.TagName, NaturalStringComparer.Instance))
+            foreach (var tag in tags.OrderBy(x => x.CreatedAt))
             {
                 var version = MapTagNameToVersion(tag.TagName);
                 await _state.UpsertTagAsync(sourceId, tag, version);
@@ -116,15 +118,20 @@ public sealed class SvnImportEngine
             _progress.Success($"{tagName}: dry-run completed.");
             return;
         }
+        
+        SvnLogInfo? tagLog = null;
+        await _progress.RunStatusAsync($"Reading SVN log for {tagName} ...", async _ =>
+        {
+            tagLog = await _svn.GetTagLogAsync(tagUrl);
+            _progress.Info($"{tagName}: log message found");
+        });
 
         var tagFiles = await _state.GetTagFilesAsync(tagId);
-
-        _progress.Info($"DEBUG tagUrl: '{tagUrl}'");
         
         var releasePackage = new ReleasePackage
         {
             Version = version,
-            Notes = $"Imported from SVN tag {tagName}",
+            Notes = string.IsNullOrEmpty(tagLog?.Message) ? $"Imported from SVN tag {tagName}" : tagLog.Message,
             CustomProperties = new Dictionary<string, string>
             {
                 ["svn:tag"] = tagName,
@@ -135,14 +142,20 @@ public sealed class SvnImportEngine
             Stats = new ReleaseStats()
         };
 
+        if (tagLog is not null)
+        {
+            releasePackage.CustomProperties["svn:revision"] = tagLog!.Revision!.ToString()!;
+            releasePackage.CustomProperties["svn:author"] = tagLog!.Author!;
+        }
+
         var componentsByName = new Dictionary<string, Component>(StringComparer.OrdinalIgnoreCase);
         var fileHashToChunkMap = new ConcurrentDictionary<Hash32, List<ChunkMapEntry>>();
         var fileSizeMap = new ConcurrentDictionary<Hash32, long>();
         var processedFiles =
             new ConcurrentBag<(string ComponentName, ReleaseFile File, List<ChunkMapEntry> ChunkMap, long FileSize)>();
 
-        int cacheHits = 0;
-        int cacheMisses = 0;
+        var cacheHits = 0;
+        var cacheMisses = 0;
 
         using var throttler = new SemaphoreSlim(_concurrency);
 
@@ -419,7 +432,8 @@ public sealed class SvnImportEngine
 
             await _progress.RunStatusAsync($"Uploading {selectedEntries.Count} chunks for {version} ...", async ctx =>
             {
-                await _api.UploadChunksAsync(
+                // TODO: Fallback to rest if grpc upload fails (e.g. due to large batch size or network issues)
+                await _ingestClient.UploadChunksAsync(
                     _repository.Id,
                     ingestSessionId,
                     _chunker,
@@ -429,6 +443,16 @@ public sealed class SvnImportEngine
                         ctx.Status($"Uploading chunks {uploaded}/{total} ...");
                         return Task.CompletedTask;
                     });
+                /*await _api.UploadChunksAsync(
+                    _repository.Id,
+                    ingestSessionId,
+                    _chunker,
+                    selectedEntries,
+                    progressCallback: (uploaded, total) =>
+                    {
+                        ctx.Status($"Uploading chunks {uploaded}/{total} ...");
+                        return Task.CompletedTask;
+                    });*/
             });
         }
 
@@ -444,7 +468,8 @@ public sealed class SvnImportEngine
             await _progress.RunStatusAsync($"Uploading {fileDefs.Count} file definitions for {version} ...",
                 async ctx =>
                 {
-                    await _api.UploadFileDefinitionsAsync(
+                    // TODO: Fallback to rest if grpc upload fails (e.g. due to large batch size or network issues)
+                    await _ingestClient.UploadFileDefinitionsAsync(
                         _repository.Id,
                         ingestSessionId,
                         fileDefs,
@@ -453,6 +478,15 @@ public sealed class SvnImportEngine
                             ctx.Status($"Uploading file definitions {uploaded}/{total} ...");
                             return Task.CompletedTask;
                         });
+                    /*await _api.UploadFileDefinitionsAsync(
+                        _repository.Id,
+                        ingestSessionId,
+                        fileDefs,
+                        progressCallback: (uploaded, total) =>
+                        {
+                            ctx.Status($"Uploading file definitions {uploaded}/{total} ...");
+                            return Task.CompletedTask;
+                        });*/
                 });
         }
 

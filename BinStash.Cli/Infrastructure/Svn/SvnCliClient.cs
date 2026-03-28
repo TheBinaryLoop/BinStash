@@ -16,7 +16,6 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
-using BinStash.Cli.Utils;
 
 namespace BinStash.Cli.Infrastructure.Svn;
 
@@ -40,7 +39,8 @@ public sealed class SvnCliClient
             .Select(x => new
             {
                 Name = x.Name.TrimEnd('/'),
-                x.Revision
+                x.Revision,
+                x.Date
             })
             .Where(x => !string.IsNullOrWhiteSpace(x.Name))
             .Where(x => x.Name != "." && x.Name != "..")
@@ -48,8 +48,9 @@ public sealed class SvnCliClient
                 TagName: x.Name,
                 TagUrl: BuildEncodedSvnUrl(svnRoot, x.Name),
                 ListRevision: x.Revision,
-                LastChangedRevision: x.Revision))
-            .OrderBy(x => ExtractBuildNumber(x.TagName))
+                LastChangedRevision: x.Revision,
+                CreatedAt: x.Date))
+            .OrderBy(x => x.CreatedAt)
             .ToList();
     }
 
@@ -145,6 +146,35 @@ public sealed class SvnCliClient
         }
     }
     
+    public async Task<SvnLogInfo?> GetTagLogAsync(string tagUrl)
+    {
+        var output = await RunSvnAsync($"log --xml -l 1 \"{tagUrl}\"");
+
+        var doc = System.Xml.Linq.XDocument.Parse(output);
+        var logEntry = doc.Descendants("logentry").FirstOrDefault();
+        if (logEntry == null)
+            return null;
+
+        long? revision = null;
+        var revisionAttr = logEntry.Attribute("revision")?.Value;
+        if (!string.IsNullOrWhiteSpace(revisionAttr) && long.TryParse(revisionAttr, out var parsedRevision))
+            revision = parsedRevision;
+
+        var author = logEntry.Element("author")?.Value;
+        var message = logEntry.Element("msg")?.Value;
+
+        DateTimeOffset? date = null;
+        var dateValue = logEntry.Element("date")?.Value;
+        if (!string.IsNullOrWhiteSpace(dateValue) && DateTimeOffset.TryParse(dateValue, out var parsedDate))
+            date = parsedDate;
+
+        return new SvnLogInfo(
+            Revision: revision,
+            Author: string.IsNullOrWhiteSpace(author) ? null : author,
+            Date: date,
+            Message: string.IsNullOrWhiteSpace(message) ? null : message.Trim());
+    }
+    
     public static string BuildEncodedSvnUrl(string baseUrl, string relativePath)
     {
         var encodedSegments = relativePath
@@ -182,11 +212,17 @@ public sealed class SvnCliClient
             if (!string.IsNullOrWhiteSpace(revisionAttr) && long.TryParse(revisionAttr, out var parsedRevision))
                 revision = parsedRevision;
 
+            DateTimeOffset? date = null;
+            var dateElement = entry.Element("date")?.Value;
+            if (!string.IsNullOrWhiteSpace(dateElement) && DateTimeOffset.TryParse(dateElement, out var parsedDate))
+                date = parsedDate;
+
             result.Add(new SvnListEntry(
                 Kind: kind,
                 Name: name,
                 Size: size,
-                Revision: revision));
+                Revision: revision,
+                Date: date));
         }
 
         return result;
@@ -281,4 +317,5 @@ public sealed class SvnPathNotFoundException : Exception
     }
 }
 
-internal sealed record SvnListEntry(string Kind, string Name, long? Size, long? Revision);
+internal sealed record SvnListEntry(string Kind, string Name, long? Size, long? Revision, DateTimeOffset? Date);
+public sealed record SvnLogInfo(long? Revision, string? Author, DateTimeOffset? Date, string? Message);

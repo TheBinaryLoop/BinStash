@@ -65,6 +65,7 @@ public sealed class SvnImportTagsCommand : TenantCommandBase
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
         var api = new BinStashApiClient(GetUrl(), AuthTokenFactory, console);
+        var ingestClient = new BinStashGrpcClient(GetUrl(), AuthTokenFactory);
 
         var repositories = await api.GetRepositoriesAsync();
         var repository = repositories?.FirstOrDefault(r => r.Name.Equals(RepositoryName, StringComparison.OrdinalIgnoreCase));
@@ -93,7 +94,7 @@ public sealed class SvnImportTagsCommand : TenantCommandBase
 
         var componentMapper = SvnComponentMapper.Load(ComponentMapFile);
 
-        var engine = new SvnImportEngine(svn, api, state, repository, chunker, console, Concurrency, componentMapper, Includes, Excludes);
+        var engine = new SvnImportEngine(svn, api, ingestClient, state, repository, chunker, console, Concurrency, componentMapper, Includes, Excludes);
 
         await engine.RunAsync(svnRoot: SvnRoot, tenantSlug: TenantSlug!, dryRun: DryRun, resume: Resume, limit: Limit);
     }

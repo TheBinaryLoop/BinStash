@@ -81,7 +81,7 @@ public class TenantJoinService(BinStashDbContext db, IOptionsMonitor<TenancySett
                 
                     invitation.AcceptedAt = DateTimeOffset.UtcNow;
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     // LOG: Warn about invalid code format with exception details for debugging
                     // Invalid code format, ignore it and continue without joining a tenant. The user can still join a tenant later via a valid code or by creating their own.

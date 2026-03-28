@@ -39,54 +39,93 @@ public sealed class ChunkStoreProbeService : BackgroundService
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var semaphore = new SemaphoreSlim(_maxConcurrency);
+        using var semaphore = new SemaphoreSlim(_maxConcurrency);
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            IReadOnlyList<ChunkStore> stores;
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                using var scope = _services.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<BinStashDbContext>();
-                stores = await db.ChunkStores.AsNoTracking().ToListAsync(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to query chunk stores");
-                await Task.Delay(_interval, stoppingToken);
-                continue;
-            }
+                IReadOnlyList<ChunkStore> stores;
 
-            var tasks = stores.Select(async s =>
-            {
-                await semaphore.WaitAsync(stoppingToken);
                 try
                 {
-                    return await ProbeChunkStoreAsync(s, stoppingToken);
+                    using var scope = _services.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<BinStashDbContext>();
+                    stores = await db.ChunkStores.AsNoTracking().ToListAsync(stoppingToken);
                 }
-                finally
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
-                    semaphore.Release();
+                    break;
                 }
-            }).ToArray();
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to query chunk stores");
 
-            var results = await Task.WhenAll(tasks);
-            _cache.Update(results);
+                    try
+                    {
+                        await Task.Delay(_interval, stoppingToken);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
 
-            await Task.Delay(_interval, stoppingToken);
+                    continue;
+                }
+
+                var tasks = stores.Select(async s =>
+                {
+                    await semaphore.WaitAsync(stoppingToken);
+                    try
+                    {
+                        return await ProbeChunkStoreAsync(s, stoppingToken);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }).ToArray();
+
+                ChunkStoreProbeResult[] results;
+                try
+                {
+                    results = await Task.WhenAll(tasks);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                _cache.Update(results);
+
+                try
+                {
+                    await Task.Delay(_interval, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Normal shutdown
         }
     }
-    
-    private static async Task<ChunkStoreProbeResult> ProbeChunkStoreAsync(ChunkStore store, CancellationToken cancellationToken)
+
+    private static async Task<ChunkStoreProbeResult> ProbeChunkStoreAsync(
+        ChunkStore store,
+        CancellationToken cancellationToken)
     {
         var ts = DateTimeOffset.UtcNow;
-        
+
         try
         {
             var root = store.LocalPath;
             if (!Directory.Exists(root))
                 return new(store.Id, store.Name, root, "Unhealthy", "RootPath does not exist", 0, null, 0, 0, ts);
-            
+
             var drive = new DriveInfo(Path.GetPathRoot(root)!);
             var free = drive.AvailableFreeSpace;
             var total = drive.TotalSize;
@@ -96,23 +135,29 @@ public sealed class ChunkStoreProbeService : BackgroundService
 
             if (store.ProbeMode == ProbeMode.ReadOnly)
                 return new(store.Id, store.Name, root, "Healthy", null, free, total, 0, 0, ts);
-            
+
             var healthDir = Path.Combine(root, ".health");
             Directory.CreateDirectory(healthDir);
-            
+
             var file = Path.Combine(healthDir, $"probe-{store.Id}-{Guid.NewGuid():N}.bin");
             var data = new byte[16 * 1024];
             Random.Shared.NextBytes(data);
-            
+
             var sw = Stopwatch.StartNew();
-            await using (var fs = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough | FileOptions.Asynchronous))
+            await using (var fs = new FileStream(
+                             file,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             4096,
+                             FileOptions.WriteThrough | FileOptions.Asynchronous))
             {
                 await fs.WriteAsync(data, cancellationToken);
                 await fs.FlushAsync(cancellationToken);
             }
             sw.Stop();
             var writeMs = sw.Elapsed.TotalMilliseconds;
-            
+
             sw.Restart();
             var readBack = await File.ReadAllBytesAsync(file, cancellationToken);
             sw.Stop();
@@ -122,8 +167,12 @@ public sealed class ChunkStoreProbeService : BackgroundService
 
             if (!readBack.AsSpan().SequenceEqual(data))
                 return new(store.Id, store.Name, root, "Unhealthy", "Readback mismatch", free, total, writeMs, readMs, ts);
-            
+
             return new(store.Id, store.Name, root, "Healthy", null, free, total, writeMs, readMs, ts);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -132,12 +181,10 @@ public sealed class ChunkStoreProbeService : BackgroundService
         catch (IOException ex)
         {
             return new(store.Id, store.Name, store.LocalPath, "Unhealthy", ex.Message, 0, null, 0, 0, ts);
-
         }
         catch (Exception ex)
         {
             return new(store.Id, store.Name, store.LocalPath, "Unhealthy", ex.ToString(), 0, null, 0, 0, ts);
-
         }
     }
 }

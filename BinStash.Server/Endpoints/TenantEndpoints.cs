@@ -409,7 +409,7 @@ public static class TenantEndpoints
         
             return Results.Ok(new TenantInvitationPreviewDto(tenant.Id, tenant.Name, tenant.Slug, invitation.Roles.First(), invitation.InviteeEmail, invitation.ExpiresAt));
         }
-        catch (Exception e)
+        catch (Exception)
         {
             return Results.BadRequest("Invalid invitation code.");
         }
@@ -463,7 +463,7 @@ public static class TenantEndpoints
             await db.SaveChangesAsync();
             return Results.Ok(new TenantMemberDto(tenantContext.TenantId, userId, invitation.Roles));
         }
-        catch (Exception e)
+        catch (Exception)
         {
             return Results.BadRequest("Invalid invitation code.");
         }
