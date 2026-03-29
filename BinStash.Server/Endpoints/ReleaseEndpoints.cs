@@ -24,7 +24,6 @@ using BinStash.Core.Auth.Repository;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
-using BinStash.Core.Storage;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Extensions;
 using BinStash.Server.Helpers;
@@ -32,7 +31,6 @@ using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
 using ZstdNet;
 using KeyNotFoundException = System.Collections.Generic.KeyNotFoundException;
-using Path = System.IO.Path;
 
 namespace BinStash.Server.Endpoints;
 
@@ -365,10 +363,7 @@ public static class ReleaseEndpoints
                     for (var i = 0; i < fileDefinition.Count; i++)
                     {
                         var chunkData = await chunkStoreService.RetrieveChunkAsync(repo.ChunkStore, fileDefinition[i].Hash.ToHexString());
-                        var chunkData = await chunkStoreService.RetrieveChunkAsync(
-                            repo.ChunkStore,
-                            fileDefinition[i].Hash.ToHexString());
-
+                        
                         if (chunkData == null)
                             throw new FileNotFoundException($"Chunk {fileDefinition[i].Hash} not found in the chunk store.");
 
