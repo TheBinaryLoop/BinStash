@@ -16,7 +16,7 @@
 using BinStash.Core.Chunking;
 using FluentAssertions;
 
-namespace BinStash.Core.Tests;
+namespace BinStash.Core.Tests.Helpers;
 
 public static class ChunkerTestHelpers
 {
@@ -76,5 +76,23 @@ public static class ChunkerTestHelpers
             else break;
         }
         return bytes;
+    }
+    
+    public static IEnumerable<ReadOnlyMemory<byte>> SplitIntoRandomSegments(byte[] data, int seed, int maxSegmentSize)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSegmentSize);
+
+        var rng = new Random(seed);
+        var offset = 0;
+
+        while (offset < data.Length)
+        {
+            var remaining = data.Length - offset;
+            var size = rng.Next(1, Math.Min(maxSegmentSize, remaining) + 1);
+
+            yield return data.AsMemory(offset, size);
+            offset += size;
+        }
     }
 }

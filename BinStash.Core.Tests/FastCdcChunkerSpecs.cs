@@ -15,6 +15,7 @@
 
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Chunking;
+using BinStash.Core.Tests.Helpers;
 using FluentAssertions;
 using FsCheck;
 using FsCheck.Fluent;
@@ -191,5 +192,209 @@ public class FastCdcChunkerSpecs
         var suffix = ChunkerTestHelpers.CommonSuffixBytes(m1, m2, Math.Min(baseData.Length, edited.Length));
 
         (prefix + suffix).Should().BeGreaterThan((long)(baseData.Length * 0.4)); // tune threshold if needed
+    }
+    
+    [Fact]
+    public void Streaming_chunker_matches_regular_chunker()
+    {
+        var chunker = New(8 * 1024, 16 * 1024, 128 * 1024);
+        var data = ChunkerTestHelpers.RandomBytes(2 * 1024 * 1024, seed: 123);
+
+        using var ms = new MemoryStream(data);
+        var expected = chunker.GenerateChunkMap(ms);
+
+        using var streaming = chunker.CreateStreamingChunker();
+        foreach (var segment in ChunkerTestHelpers.SplitIntoRandomSegments(data, seed: 456, maxSegmentSize: 32 * 1024))
+            streaming.Append(segment.Span);
+
+        var actual = streaming.Complete();
+
+        actual.Select(x => (x.Offset, x.Length, x.Checksum))
+            .Should()
+            .Equal(expected.Select(x => (x.Offset, x.Length, x.Checksum)));
+    }
+    
+    [Fact]
+    public void Streaming_chunker_result_is_independent_of_append_boundaries()
+    {
+        var chunker = New(8 * 1024, 16 * 1024, 128 * 1024);
+        var data = ChunkerTestHelpers.RandomBytes(1 * 1024 * 1024, seed: 789);
+
+        using var a = chunker.CreateStreamingChunker();
+        a.Append(data);
+        var resultA = a.Complete();
+
+        using var b = chunker.CreateStreamingChunker();
+        foreach (var segment in ChunkerTestHelpers.SplitIntoRandomSegments(data, seed: 42, maxSegmentSize: 4096))
+            b.Append(segment.Span);
+        var resultB = b.Complete();
+
+        resultB.Select(x => (x.Offset, x.Length, x.Checksum))
+            .Should()
+            .Equal(resultA.Select(x => (x.Offset, x.Length, x.Checksum)));
+    }
+    
+    [Fact]
+    public void GetCompletedChunks_returns_only_new_chunks()
+    {
+        var chunker = New(4 * 1024, 8 * 1024, 64 * 1024);
+        var data = ChunkerTestHelpers.RandomBytes(512 * 1024, seed: 1);
+
+        using var streaming = chunker.CreateStreamingChunker();
+
+        streaming.Append(data.AsSpan(0, data.Length / 2));
+        var first = streaming.GetCompletedChunks();
+
+        var again = streaming.GetCompletedChunks();
+        again.Should().BeEmpty();
+
+        streaming.Append(data.AsSpan(data.Length / 2));
+        var second = streaming.GetCompletedChunks();
+
+        var final = streaming.Complete();
+
+        first.Concat(second).Select(x => (x.Offset, x.Length, x.Checksum))
+            .Should()
+            .BeSubsetOf(final.Select(x => (x.Offset, x.Length, x.Checksum)));
+    }
+    
+    [Fact]
+    public void Seekable_and_nonseekable_streams_produce_identical_maps()
+    {
+        var chunker = New(8 * 1024, 16 * 1024, 128 * 1024);
+        var data = ChunkerTestHelpers.RandomBytes(2 * 1024 * 1024, seed: 99);
+
+        using var seekable = new MemoryStream(data);
+        using var nonSeekable = new NonSeekableReadStream(data);
+
+        var a = chunker.GenerateChunkMap(seekable);
+        var b = chunker.GenerateChunkMap(nonSeekable);
+
+        var expected = a.Select(x => (x.Offset, x.Length, x.Checksum)).ToArray();
+        var actual = b.Select(x => (x.Offset, x.Length, x.Checksum)).ToArray();
+
+        actual.Length.Should().Be(expected.Length);
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            actual[i].Offset.Should().Be(expected[i].Offset, $"offset mismatch at index {i}");
+            actual[i].Length.Should().Be(expected[i].Length, $"length mismatch at index {i}");
+            actual[i].Checksum.Should().Be(expected[i].Checksum, $"checksum mismatch at index {i}");
+        }
+    }
+    
+    [Fact]
+    public async Task LoadChunkDataAsync_works_with_nonseekable_stream()
+    {
+        var chunker = New(4 * 1024, 8 * 1024, 64 * 1024);
+        var data = ChunkerTestHelpers.RandomBytes(300_000, seed: 55);
+
+        using var seekable = new MemoryStream(data);
+        var map = chunker.GenerateChunkMap(seekable);
+        var chunk = map[map.Count / 2];
+
+        await using var nonSeekable = new NonSeekableReadStream(data);
+        var loaded = await chunker.LoadChunkDataAsync(nonSeekable, chunk);
+
+        loaded.Data.Should().Equal(data.AsSpan((int)chunk.Offset, chunk.Length).ToArray());
+        loaded.Checksum.Should().Be(chunk.Checksum);
+    }
+    
+    [Fact]
+    public async Task LoadChunkDataAsync_throws_on_checksum_mismatch()
+    {
+        var chunker = New(4 * 1024, 8 * 1024, 64 * 1024);
+        var data = ChunkerTestHelpers.RandomBytes(200_000, seed: 11);
+
+        using var ms = new MemoryStream(data);
+        var map = chunker.GenerateChunkMap(ms);
+
+        var chunk = map[0];
+        var corrupted = new ChunkMapEntry
+        {
+            FilePath = chunk.FilePath,
+            Offset = chunk.Offset,
+            Length = chunk.Length,
+            Checksum = new Hash32(new byte[32]) // or any clearly wrong hash
+        };
+
+        ms.Position = 0;
+        var act = () => chunker.LoadChunkDataAsync(ms, corrupted);
+
+        await act.Should().ThrowAsync<InvalidDataException>();
+    }
+    
+    [Fact]
+    public async Task LoadChunkDataAsync_throws_on_unexpected_eof()
+    {
+        var chunker = New(4 * 1024, 8 * 1024, 64 * 1024);
+        var data = ChunkerTestHelpers.RandomBytes(100_000, seed: 22);
+
+        using var ms = new MemoryStream(data);
+        var map = chunker.GenerateChunkMap(ms);
+        var chunk = map[^1];
+
+        var truncated = data.Take((int)(chunk.Offset + chunk.Length - 1)).ToArray();
+        await using var truncatedStream = new MemoryStream(truncated);
+
+        var act = () => chunker.LoadChunkDataAsync(truncatedStream, chunk);
+
+        await act.Should().ThrowAsync<EndOfStreamException>();
+    }
+    
+    [Fact]
+    public void GenerateChunkMap_honors_cancellation_for_nonseekable_stream()
+    {
+        var chunker = New(8 * 1024, 16 * 1024, 128 * 1024);
+        var data = ChunkerTestHelpers.RandomBytes(16 * 1024 * 1024, seed: 44);
+        using var stream = new SlowNonSeekableReadStream(data);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => chunker.GenerateChunkMap(stream, cts.Token);
+
+        act.Should().Throw<OperationCanceledException>();
+    }
+    
+    [Theory]
+    [InlineData(0, 8192, 65536)]
+    [InlineData(8192, 4096, 65536)]
+    [InlineData(8192, 16384, 8192)]
+    public void Constructor_rejects_invalid_sizes(int min, int avg, int max)
+    {
+        var act = () => new FastCdcChunker(min, avg, max);
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+    
+    [Fact]
+    public void Streaming_complete_on_empty_input_returns_no_chunks()
+    {
+        var chunker = New(8 * 1024, 16 * 1024, 128 * 1024);
+        using var streaming = chunker.CreateStreamingChunker();
+
+        var result = streaming.Complete();
+
+        result.Should().BeEmpty();
+    }
+    
+    [Fact]
+    public void Complete_followed_by_GetCompletedChunks_returns_only_final_unconsumed_chunks()
+    {
+        var chunker = new FastCdcChunker(4 * 1024, 8 * 1024, 64 * 1024);
+        var data = ChunkerTestHelpers.RandomBytes(300_000, seed: 123);
+
+        using var streaming = chunker.CreateStreamingChunker();
+
+        streaming.Append(data.AsSpan(0, data.Length / 2));
+        _ = streaming.GetCompletedChunks();
+
+        streaming.Append(data.AsSpan(data.Length / 2));
+        var beforeComplete = streaming.GetCompletedChunks();
+
+        streaming.Complete();
+        var afterComplete = streaming.GetCompletedChunks();
+
+        afterComplete.Should().HaveCountLessThanOrEqualTo(1);
     }
 }

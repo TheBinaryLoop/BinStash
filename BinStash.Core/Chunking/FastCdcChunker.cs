@@ -20,6 +20,26 @@ using BinStash.Core.Ingestion.Formats.Zip;
 
 namespace BinStash.Core.Chunking;
 
+internal static class FastCdcConstants
+{
+    public static readonly uint[] GearTable = CreateGearTable();
+
+    private static uint[] CreateGearTable()
+    {
+        var table = new uint[256];
+        var rng = new Random(1);
+
+        for (var i = 0; i < 256; i++)
+        {
+            Span<byte> buffer = stackalloc byte[4];
+            rng.NextBytes(buffer);
+            table[i] = BitConverter.ToUInt32(buffer);
+        }
+
+        return table;
+    }
+}
+
 public class FastCdcChunker : IChunker
 {
     private const int MmfThreshold = 16 * 1024 * 1024; // 16MB
@@ -29,22 +49,13 @@ public class FastCdcChunker : IChunker
     private readonly int _maxSize;
     private readonly uint _maskS;
     private readonly uint _maskL;
-
-    private static readonly uint[] GearTable = new uint[256];
-
-    static FastCdcChunker()
-    {
-        var rng = new Random(1);
-        for (var i = 0; i < 256; i++)
-        {
-            var buffer = new byte[4];
-            rng.NextBytes(buffer);
-            GearTable[i] = BitConverter.ToUInt32(buffer, 0);
-        }
-    }
-
+    
     public FastCdcChunker(int minSize, int avgSize, int maxSize)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(minSize, 0);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(avgSize, minSize);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxSize, avgSize);
+        
         _minSize = minSize;
         _avgSize = avgSize;
         _maxSize = maxSize;
@@ -90,7 +101,7 @@ public class FastCdcChunker : IChunker
 
         while ((b = stream.ReadByte()) != -1)
         {
-            hash = (hash << 1) + GearTable[b & 0xFF];
+            hash = (hash << 1) + FastCdcConstants.GearTable[b & 0xFF];
             detectionPos++;
 
             var currentLength = (int)(detectionPos - chunkStart);
@@ -135,7 +146,7 @@ public class FastCdcChunker : IChunker
         for (long pos = 0; pos < fileLength; pos++)
         {
             var b = view.ReadByte(pos);
-            hash = (hash << 1) + GearTable[b & 0xFF];
+            hash = (hash << 1) + FastCdcConstants.GearTable[b & 0xFF];
             var currentLength = (int)(pos + 1 - chunkStart);
 
             if ((currentLength >= _minSize && (hash & _maskS) == 0) ||
@@ -177,8 +188,7 @@ public class FastCdcChunker : IChunker
 
             streamingChunker.Append(readBuffer.AsSpan(0, bytesRead));
 
-            var completed = streamingChunker.GetCompletedChunks();
-            foreach (var boundary in completed)
+            foreach (var boundary in streamingChunker.GetCompletedChunks())
             {
                 results.Add(new ChunkMapEntry
                 {
@@ -190,8 +200,9 @@ public class FastCdcChunker : IChunker
             }
         }
 
-        var finalCompleted = streamingChunker.Complete();
-        foreach (var boundary in finalCompleted)
+        streamingChunker.Complete();
+
+        foreach (var boundary in streamingChunker.GetCompletedChunks())
         {
             results.Add(new ChunkMapEntry
             {
@@ -452,8 +463,6 @@ internal sealed class FastCdcStreamingChunker : IStreamingChunker
     private readonly uint _maskS;
     private readonly uint _maskL;
     
-    private static readonly uint[] GearTable = new uint[256];
-
     private readonly List<(long Offset, int Length, Hash32 Checksum)> _chunks = new();
 
     private Blake3.Hasher _currentChunkHasher = Blake3.Hasher.New();
@@ -465,17 +474,6 @@ internal sealed class FastCdcStreamingChunker : IStreamingChunker
     private uint _rollingHash;
     private bool _completed;
 
-    static FastCdcStreamingChunker()
-    {
-        var rng = new Random(1);
-        for (var i = 0; i < 256; i++)
-        {
-            var buffer = new byte[4];
-            rng.NextBytes(buffer);
-            GearTable[i] = BitConverter.ToUInt32(buffer, 0);
-        }
-    }
-    
     public FastCdcStreamingChunker(int minSize, int avgSize, int maxSize, uint maskS, uint maskL)
     {
         _minSize = minSize;
@@ -498,7 +496,7 @@ internal sealed class FastCdcStreamingChunker : IStreamingChunker
         for (var i = 0; i < buffer.Length; i++)
         {
             var b = buffer[i];
-            _rollingHash = (_rollingHash << 1) + GearTable[b];
+            _rollingHash = (_rollingHash << 1) + FastCdcConstants.GearTable[b];
             _currentChunkLength++;
             _totalBytesProcessed++;
 

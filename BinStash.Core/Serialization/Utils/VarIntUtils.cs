@@ -21,455 +21,289 @@ namespace BinStash.Core.Serialization.Utils;
 public static class VarIntUtils
 {
     #region Write Methods
-    
-    #region BinaryWriter Overloads
-    
+
     public static void WriteVarInt<T>(BinaryWriter w, T value) where T : struct
-    {
-        switch (value)
-        {
-            case int i:
-                WriteSignedVarInt(w, i);
-                break;
+        => WriteVarIntCore(value, bytes => w.Write(bytes));
 
-            case long l:
-                WriteSignedVarInt(w, l);
-                break;
+    public static void WriteVarInt<T>(Stream stream, T value) where T : struct
+        => WriteVarIntCore(value, bytes => stream.Write(bytes));
 
-            case uint ui:
-                WriteUnsignedVarInt(w, ui);
-                break;
-
-            case ulong ul:
-                WriteUnsignedVarInt(w, ul);
-                break;
-
-            case ushort us:
-                WriteUnsignedVarInt(w, us);
-                break;
-
-            default:
-                throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.");
-        }
-    }
-    
-    private static void WriteSignedVarInt(BinaryWriter w, long value)
-    {
-        Span<byte> buffer = stackalloc byte[10];
-        var len = EncodeSignedVarInt(value, buffer);
-        w.Write(buffer[..len]);
-    }
-
-    private static void WriteUnsignedVarInt(BinaryWriter w, ulong value)
-    {
-        Span<byte> buffer = stackalloc byte[10];
-        var len = EncodeUnsignedVarInt(value, buffer);
-        w.Write(buffer[..len]);
-    }
-
-    private static void WriteUnsignedVarInt(BinaryWriter w, uint value)
-    {
-        Span<byte> buffer = stackalloc byte[5];
-        var len = EncodeUnsignedVarInt(value, buffer);
-        w.Write(buffer[..len]);
-    }
-    
-    #endregion
-
-    #region Span Overloads
+    public static void WriteVarInt<T>(IBufferWriter<byte> w, T value) where T : struct
+        => WriteVarIntCore(value, bytes => w.Write(bytes));
 
     public static int WriteVarInt<T>(Span<byte> dest, T value) where T : struct
     {
-        switch (value)
+        return value switch
         {
-            case int i:
-                return EncodeSignedVarInt(i, dest);
-
-            case long l:
-                return EncodeSignedVarInt(l, dest);
-
-            case uint ui:
-                return EncodeUnsignedVarInt(ui, dest);
-
-            case ulong ul:
-                return EncodeUnsignedVarInt(ul, dest);
-
-            case ushort us:
-                return EncodeUnsignedVarInt(us, dest);
-
-            default:
-                throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.");
-        }
-    }
-    
-    #endregion
-
-    #region IBufferWriter
-
-    public static void WriteVarInt<T>(IBufferWriter<byte> w, T value) where T : struct
-    {
-        switch (value)
-        {
-            case int i:
-                WriteSignedVarInt(w, i);
-                break;
-
-            case long l:
-                WriteSignedVarInt(w, l);
-                break;
-
-            case uint ui:
-                WriteUnsignedVarInt(w, ui);
-                break;
-
-            case ulong ul:
-                WriteUnsignedVarInt(w, ul);
-                break;
-
-            case ushort us:
-                WriteUnsignedVarInt(w, us);
-                break;
-
-            default:
-                throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.");
-        }
-    }
-    
-    private static void WriteSignedVarInt(IBufferWriter<byte> w, long value)
-    {
-        Span<byte> buffer = stackalloc byte[10];
-        var len = EncodeSignedVarInt(value, buffer);
-        w.Write(buffer[..len]);
+            int i => EncodeSignedVarInt(i, dest),
+            long l => EncodeSignedVarInt(l, dest),
+            uint ui => EncodeUnsignedVarInt(ui, dest),
+            ulong ul => EncodeUnsignedVarInt(ul, dest),
+            ushort us => EncodeUnsignedVarInt(us, dest),
+            _ => throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.")
+        };
     }
 
-    private static void WriteUnsignedVarInt(IBufferWriter<byte> w, ulong value)
-    {
-        Span<byte> buffer = stackalloc byte[10];
-        var len = EncodeUnsignedVarInt(value, buffer);
-        w.Write(buffer[..len]);
-    }
-
-    private static void WriteUnsignedVarInt(IBufferWriter<byte> w, uint value)
-    {
-        Span<byte> buffer = stackalloc byte[5];
-        var len = EncodeUnsignedVarInt(value, buffer);
-        w.Write(buffer[..len]);
-    }
-
-    #endregion
-    
-    #region Stream Overloads
-    
-    public static void WriteVarInt<T>(Stream output, T value) where T : struct
-    {
-        switch (value)
-        {
-            case int i:
-                WriteSignedVarInt(output, i);
-                break;
-
-            case long l:
-                WriteSignedVarInt(output, l);
-                break;
-
-            case uint ui:
-                WriteUnsignedVarInt(output, ui);
-                break;
-
-            case ulong ul:
-                WriteUnsignedVarInt(output, ul);
-                break;
-
-            case ushort us:
-                WriteUnsignedVarInt(output, us);
-                break;
-
-            default:
-                throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.");
-        }
-    }
-    
-    private static void WriteSignedVarInt(Stream stream, long value)
-    {
-        Span<byte> buffer = stackalloc byte[10];
-        var len = EncodeSignedVarInt(value, buffer);
-        stream.Write(buffer[..len]);
-    }
-
-    private static void WriteUnsignedVarInt(Stream stream, ulong value)
-    {
-        Span<byte> buffer = stackalloc byte[10];
-        var len = EncodeUnsignedVarInt(value, buffer);
-        stream.Write(buffer[..len]);
-    }
-
-    private static void WriteUnsignedVarInt(Stream stream, uint value)
-    {
-        Span<byte> buffer = stackalloc byte[5];
-        var len = EncodeUnsignedVarInt(value, buffer);
-        stream.Write(buffer[..len]);
-    }
-    
     public static async Task WriteVarIntAsync<T>(Stream stream, T value, CancellationToken ct = default) where T : struct
     {
-        switch (value)
+        byte[] rented = ArrayPool<byte>.Shared.Rent(10);
+        try
         {
-            case int i:
-                await WriteSignedVarIntAsync(stream, i, ct);
-                break;
+            var span = rented.AsSpan();
+            var len = value switch
+            {
+                int i => EncodeSignedVarInt(i, span),
+                long l => EncodeSignedVarInt(l, span),
+                uint ui => EncodeUnsignedVarInt(ui, span),
+                ulong ul => EncodeUnsignedVarInt(ul, span),
+                ushort us => EncodeUnsignedVarInt(us, span),
+                _ => throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.")
+            };
 
-            case long l:
-                await WriteSignedVarIntAsync(stream, l, ct);
-                break;
-
-            case uint ui:
-                await WriteUnsignedVarIntAsync(stream, ui, ct);
-                break;
-
-            case ulong ul:
-                await WriteUnsignedVarIntAsync(stream, ul, ct);
-                break;
-
-            case ushort us:
-                await WriteUnsignedVarIntAsync(stream, us, ct);
-                break;
-
-            default:
-                throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.");
+            await stream.WriteAsync(rented.AsMemory(0, len), ct);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
         }
     }
 
-    private static async Task WriteSignedVarIntAsync(Stream stream, long value, CancellationToken ct)
+    private static void WriteVarIntCore<T>(T value, Action<ReadOnlySpan<byte>> write) where T : struct
     {
         Span<byte> buffer = stackalloc byte[10];
-        var len = EncodeSignedVarInt(value, buffer);
-        await stream.WriteAsync(buffer[..len].ToArray(), ct);
+        var len = value switch
+        {
+            int i => EncodeSignedVarInt(i, buffer),
+            long l => EncodeSignedVarInt(l, buffer),
+            uint ui => EncodeUnsignedVarInt(ui, buffer),
+            ulong ul => EncodeUnsignedVarInt(ul, buffer),
+            ushort us => EncodeUnsignedVarInt(us, buffer),
+            _ => throw new NotSupportedException($"Type {typeof(T)} is not supported for varint serialization.")
+        };
+
+        write(buffer[..len]);
     }
 
-    private static async Task WriteUnsignedVarIntAsync(Stream stream, ulong value, CancellationToken ct)
-    {
-        Span<byte> buffer = stackalloc byte[10];
-        var len = EncodeUnsignedVarInt(value, buffer);
-        await stream.WriteAsync(buffer[..len].ToArray(), ct);
-    }
+    #endregion
 
-    private static async Task WriteUnsignedVarIntAsync(Stream stream, uint value, CancellationToken ct)
-    {
-        Span<byte> buffer = stackalloc byte[5];
-        var len = EncodeUnsignedVarInt(value, buffer);
-        await stream.WriteAsync(buffer[..len].ToArray(), ct);
-    }
-    
-    #endregion
-    
-    #endregion
-    
     #region Read Methods
-
-    #region BinaryReader Overloads
 
     public static T ReadVarInt<T>(BinaryReader r) where T : struct
     {
-        var result = typeof(T) switch
+        object result = typeof(T) switch
         {
-            { } t when t == typeof(int) => ReadSignedVarInt32(r),
-            { } t when t == typeof(long) => ReadSignedVarInt64(r),
-            { } t when t == typeof(uint) => ReadUnsignedVarInt32(r),
-            { } t when t == typeof(ulong) => ReadUnsignedVarInt64(r),
-            { } t when t == typeof(ushort) => (object)(ushort)ReadUnsignedVarInt32(r),
+            { } t when t == typeof(int) => ReadSignedVarInt32Core(r.ReadByte),
+            { } t when t == typeof(long) => ReadSignedVarInt64Core(r.ReadByte),
+            { } t when t == typeof(uint) => ReadUnsignedVarInt32Core(r.ReadByte),
+            { } t when t == typeof(ulong) => ReadUnsignedVarInt64Core(r.ReadByte),
+            { } t when t == typeof(ushort) => checked((ushort)ReadUnsignedVarInt32Core(r.ReadByte)),
             _ => throw new NotSupportedException($"Type {typeof(T)} is not supported for varint deserialization.")
         };
+
         return (T)result;
     }
-    
-    private static uint ReadUnsignedVarInt32(BinaryReader r)
-    {
-        uint result = 0;
-        var shift = 0;
 
-        while (true)
-        {
-            var b = r.ReadByte();
-            result |= (uint)(b & 0x7F) << shift;
-            if ((b & 0x80) == 0) break;
-            shift += 7;
-            if (shift > 35)
-                throw new FormatException("VarInt32 too long.");
-        }
-
-        return result;
-    }
-
-    private static ulong ReadUnsignedVarInt64(BinaryReader r)
-    {
-        ulong result = 0;
-        var shift = 0;
-
-        while (true)
-        {
-            var b = r.ReadByte();
-            result |= (ulong)(b & 0x7F) << shift;
-            if ((b & 0x80) == 0) break;
-            shift += 7;
-            if (shift > 70)
-                throw new FormatException("VarInt64 too long.");
-        }
-
-        return result;
-    }
-
-    private static int ReadSignedVarInt32(BinaryReader r)
-    {
-        var raw = ReadUnsignedVarInt32(r);
-        return (int)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
-    }
-
-    private static long ReadSignedVarInt64(BinaryReader r)
-    {
-        var raw = ReadUnsignedVarInt64(r);
-        return (long)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
-    }
-
-    #endregion
-    
-    #region MemoryMappedViewAccessor Overloads
-    
     public static T ReadVarInt<T>(MemoryMappedViewAccessor accessor, ref long pos) where T : struct
     {
-        var result = typeof(T) switch
+        var localPos = pos;
+
+        byte ReadByte()
         {
-            { } t when t == typeof(int) => ReadSignedVarInt32(accessor, ref pos),
-            { } t when t == typeof(long) => ReadSignedVarInt64(accessor, ref pos),
-            { } t when t == typeof(uint) => ReadUnsignedVarInt32(accessor, ref pos),
-            { } t when t == typeof(ulong) => ReadUnsignedVarInt64(accessor, ref pos),
-            { } t when t == typeof(ushort) => (object)(ushort)ReadUnsignedVarInt32(accessor, ref pos),
+            var b = accessor.ReadByte(localPos);
+            localPos++;
+            return b;
+        }
+
+        object result = typeof(T) switch
+        {
+            { } t when t == typeof(int) => ReadSignedVarInt32Core(ReadByte),
+            { } t when t == typeof(long) => ReadSignedVarInt64Core(ReadByte),
+            { } t when t == typeof(uint) => ReadUnsignedVarInt32Core(ReadByte),
+            { } t when t == typeof(ulong) => ReadUnsignedVarInt64Core(ReadByte),
+            { } t when t == typeof(ushort) => checked((ushort)ReadUnsignedVarInt32Core(ReadByte)),
             _ => throw new NotSupportedException($"Type {typeof(T)} is not supported for varint deserialization.")
         };
+
+        pos = localPos; // write back to ref var
+
         return (T)result;
     }
-    
-    private static uint ReadUnsignedVarInt32(MemoryMappedViewAccessor accessor, ref long pos)
-    {
-        uint result = 0;
-        var shift = 0;
 
-        while (true)
-        {
-            var b = accessor.ReadByte(pos++);
-            result |= (uint)(b & 0x7F) << shift;
-            if ((b & 0x80) == 0) break;
-            shift += 7;
-            if (shift > 35)
-                throw new FormatException("VarInt32 too long.");
-        }
-
-        return result;
-    }
-
-    private static ulong ReadUnsignedVarInt64(MemoryMappedViewAccessor accessor, ref long pos)
-    {
-        ulong result = 0;
-        var shift = 0;
-
-        while (true)
-        {
-            var b = accessor.ReadByte(pos++);
-            result |= (ulong)(b & 0x7F) << shift;
-            if ((b & 0x80) == 0) break;
-            shift += 7;
-            if (shift > 70)
-                throw new FormatException("VarInt64 too long.");
-        }
-
-        return result;
-    }
-
-    private static int ReadSignedVarInt32(MemoryMappedViewAccessor accessor, ref long pos)
-    {
-        var raw = ReadUnsignedVarInt32(accessor, ref pos);
-        return (int)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
-    }
-
-    private static long ReadSignedVarInt64(MemoryMappedViewAccessor accessor, ref long pos)
-    {
-        var raw = ReadUnsignedVarInt64(accessor, ref pos);
-        return (long)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
-    }
-    
-    #endregion
-    
-    #region Stream Overloads
-    
     public static async Task<T> ReadVarIntAsync<T>(Stream s) where T : struct
     {
-        var result = typeof(T) switch
+        var buffer = new byte[1];
+
+        async ValueTask<byte> ReadByteAsync()
         {
-            { } t when t == typeof(int) => await ReadSignedVarInt32Async(s),
-            { } t when t == typeof(long) => await ReadSignedVarInt64Async(s),
-            { } t when t == typeof(uint) => await ReadUnsignedVarInt32Async(s),
-            { } t when t == typeof(ulong) => await ReadUnsignedVarInt64Async(s),
-            { } t when t == typeof(ushort) => (object)(ushort)await ReadUnsignedVarInt32Async(s),
+            await s.ReadExactlyAsync(buffer);
+            return buffer[0];
+        }
+
+        object result = typeof(T) switch
+        {
+            { } t when t == typeof(int) => await ReadSignedVarInt32CoreAsync(ReadByteAsync),
+            { } t when t == typeof(long) => await ReadSignedVarInt64CoreAsync(ReadByteAsync),
+            { } t when t == typeof(uint) => await ReadUnsignedVarInt32CoreAsync(ReadByteAsync),
+            { } t when t == typeof(ulong) => await ReadUnsignedVarInt64CoreAsync(ReadByteAsync),
+            { } t when t == typeof(ushort) => checked((ushort)await ReadUnsignedVarInt32CoreAsync(ReadByteAsync)),
             _ => throw new NotSupportedException($"Type {typeof(T)} is not supported for varint deserialization.")
         };
+
         return (T)result;
     }
-    
-    private static async Task<uint> ReadUnsignedVarInt32Async(Stream s)
+
+    #endregion
+
+    #region Core Read Logic
+
+    private static uint ReadUnsignedVarInt32Core(Func<byte> readByte)
     {
         uint result = 0;
-        var shift = 0;
 
-        var b = new byte[1];
-        while (true)
+        for (var i = 0; i < 5; i++)
         {
-            await s.ReadExactlyAsync(b);
-            result |= (uint)(b[0] & 0x7F) << shift;
-            if ((b[0] & 0x80) == 0) break;
-            shift += 7;
-            if (shift > 35)
-                throw new FormatException("VarInt32 too long.");
+            var b = readByte();
+
+            if (i == 4)
+            {
+                if ((b & 0xF0) != 0)
+                    throw new FormatException("VarInt32 overflow.");
+
+                result |= (uint)(b & 0x0F) << 28;
+
+                if ((b & 0x80) != 0)
+                    throw new FormatException("VarInt32 too long.");
+
+                return result;
+            }
+
+            result |= (uint)(b & 0x7F) << (7 * i);
+
+            if ((b & 0x80) == 0)
+                return result;
         }
 
-        return result;
+        throw new FormatException("VarInt32 too long.");
     }
 
-    private static async Task<ulong> ReadUnsignedVarInt64Async(Stream s)
+    private static ulong ReadUnsignedVarInt64Core(Func<byte> readByte)
     {
         ulong result = 0;
-        var shift = 0;
 
-        var b = new byte[1];
-        while (true)
+        for (var i = 0; i < 10; i++)
         {
-            await s.ReadExactlyAsync(b);
-            result |= (ulong)(b[0] & 0x7F) << shift;
-            if ((b[0] & 0x80) == 0) break;
-            shift += 7;
-            if (shift > 70)
-                throw new FormatException("VarInt64 too long.");
+            var b = readByte();
+
+            if (i == 9)
+            {
+                if ((b & 0xFE) != 0)
+                    throw new FormatException("VarInt64 overflow.");
+
+                result |= (ulong)(b & 0x01) << 63;
+
+                if ((b & 0x80) != 0)
+                    throw new FormatException("VarInt64 too long.");
+
+                return result;
+            }
+
+            result |= (ulong)(b & 0x7F) << (7 * i);
+
+            if ((b & 0x80) == 0)
+                return result;
         }
 
-        return result;
+        throw new FormatException("VarInt64 too long.");
     }
 
-    private static async Task<int> ReadSignedVarInt32Async(Stream s)
+    private static int ReadSignedVarInt32Core(Func<byte> readByte)
     {
-        var raw = await ReadUnsignedVarInt32Async(s);
-        return (int)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
+        var raw = ReadUnsignedVarInt32Core(readByte);
+        return (int)((raw >> 1) ^ (uint)-(int)(raw & 1));
     }
 
-    private static async Task<long> ReadSignedVarInt64Async(Stream s)
+    private static long ReadSignedVarInt64Core(Func<byte> readByte)
     {
-        var raw = await ReadUnsignedVarInt64Async(s);
-        return (long)((raw >> 1) ^ (~(raw & 1) + 1)); // ZigZag decode
+        var raw = ReadUnsignedVarInt64Core(readByte);
+        return (long)((raw >> 1) ^ (ulong)-(long)(raw & 1));
     }
-    
+
+    private static async Task<uint> ReadUnsignedVarInt32CoreAsync(Func<ValueTask<byte>> readByteAsync)
+    {
+        uint result = 0;
+
+        for (var i = 0; i < 5; i++)
+        {
+            var b = await readByteAsync();
+
+            if (i == 4)
+            {
+                if ((b & 0xF0) != 0)
+                    throw new FormatException("VarInt32 overflow.");
+
+                result |= (uint)(b & 0x0F) << 28;
+
+                if ((b & 0x80) != 0)
+                    throw new FormatException("VarInt32 too long.");
+
+                return result;
+            }
+
+            result |= (uint)(b & 0x7F) << (7 * i);
+
+            if ((b & 0x80) == 0)
+                return result;
+        }
+
+        throw new FormatException("VarInt32 too long.");
+    }
+
+    private static async Task<ulong> ReadUnsignedVarInt64CoreAsync(Func<ValueTask<byte>> readByteAsync)
+    {
+        ulong result = 0;
+
+        for (var i = 0; i < 10; i++)
+        {
+            var b = await readByteAsync();
+
+            if (i == 9)
+            {
+                if ((b & 0xFE) != 0)
+                    throw new FormatException("VarInt64 overflow.");
+
+                result |= (ulong)(b & 0x01) << 63;
+
+                if ((b & 0x80) != 0)
+                    throw new FormatException("VarInt64 too long.");
+
+                return result;
+            }
+
+            result |= (ulong)(b & 0x7F) << (7 * i);
+
+            if ((b & 0x80) == 0)
+                return result;
+        }
+
+        throw new FormatException("VarInt64 too long.");
+    }
+
+    private static async Task<int> ReadSignedVarInt32CoreAsync(Func<ValueTask<byte>> readByteAsync)
+    {
+        var raw = await ReadUnsignedVarInt32CoreAsync(readByteAsync);
+        return (int)((raw >> 1) ^ (uint)-(int)(raw & 1));
+    }
+
+    private static async Task<long> ReadSignedVarInt64CoreAsync(Func<ValueTask<byte>> readByteAsync)
+    {
+        var raw = await ReadUnsignedVarInt64CoreAsync(readByteAsync);
+        return (long)((raw >> 1) ^ (ulong)-(long)(raw & 1));
+    }
+
     #endregion
-    
-    #endregion
-    
-    #region Helper Methods
-    
+
+    #region Encode Helpers
+
     private static int EncodeUnsignedVarInt(ulong value, Span<byte> buffer)
     {
         var index = 0;
@@ -478,6 +312,7 @@ public static class VarIntUtils
             buffer[index++] = (byte)((value & 0x7F) | 0x80);
             value >>= 7;
         }
+
         buffer[index++] = (byte)value;
         return index;
     }
@@ -490,6 +325,7 @@ public static class VarIntUtils
             buffer[index++] = (byte)((value & 0x7F) | 0x80);
             value >>= 7;
         }
+
         buffer[index++] = (byte)value;
         return index;
     }
@@ -500,9 +336,6 @@ public static class VarIntUtils
         return EncodeUnsignedVarInt(zigZag, buffer);
     }
 
-    
-    #endregion
-    
     internal static int VarIntSize(ulong value)
     {
         var size = 0;
@@ -511,6 +344,9 @@ public static class VarIntUtils
             size++;
             value >>= 7;
         } while (value != 0);
+
         return size;
     }
+
+    #endregion
 }
