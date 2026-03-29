@@ -13,9 +13,12 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Cli.Models.Releases;
+using BinStash.Contracts.Hashing;
 
-public class UploadPlan
+namespace BinStash.Contracts.Release;
+
+public sealed class OpaqueBlobBacking : ArtifactBacking
 {
-    
+    public Hash32? ContentHash { get; set; }
+    public long? Length { get; set; }
 }

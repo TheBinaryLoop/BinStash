@@ -15,8 +15,10 @@
 
 using BinStash.Cli.Infrastructure;
 using BinStash.Cli.Infrastructure.Svn;
+using BinStash.Cli.Services.Releases;
 using BinStash.Core.Chunking;
 using BinStash.Core.Entities;
+using BinStash.Core.Ingestion.Abstractions;
 using CliFx.Attributes;
 using CliFx.Exceptions;
 using CliFx.Infrastructure;
@@ -26,6 +28,19 @@ namespace BinStash.Cli.Commands;
 [Command("svn import-tags", Description = "Import SVN tags as BinStash releases")]
 public sealed class SvnImportTagsCommand : TenantCommandBase
 {
+    private readonly IReleaseIngestionEngine _releaseIngestionEngine;
+    private readonly IContentProcessor _contentProcessor;
+    private readonly ServerUploadPlanner _serverUploadPlanner;
+    private readonly ReleasePackageBuilder _releasePackageBuilder;
+
+    public SvnImportTagsCommand(IReleaseIngestionEngine releaseIngestionEngine, IContentProcessor contentProcessor, ServerUploadPlanner serverUploadPlanner, ReleasePackageBuilder releasePackageBuilder)
+    {
+        _releaseIngestionEngine = releaseIngestionEngine;
+        _contentProcessor = contentProcessor;
+        _serverUploadPlanner = serverUploadPlanner;
+        _releasePackageBuilder = releasePackageBuilder;
+    }
+    
     [CommandOption("repo", 'r', Description = "BinStash repository name", IsRequired = true)]
     public string RepositoryName { get; init; } = string.Empty;
 
@@ -94,7 +109,7 @@ public sealed class SvnImportTagsCommand : TenantCommandBase
 
         var componentMapper = SvnComponentMapper.Load(ComponentMapFile);
 
-        var engine = new SvnImportEngine(svn, api, ingestClient, state, repository, chunker, console, Concurrency, componentMapper, Includes, Excludes);
+        var engine = new SvnImportEngine(svn, api, ingestClient, state, repository, chunker, console, Concurrency, componentMapper, Includes, Excludes, _releaseIngestionEngine, _contentProcessor, _serverUploadPlanner, _releasePackageBuilder);
 
         await engine.RunAsync(svnRoot: SvnRoot, tenantSlug: TenantSlug!, dryRun: DryRun, resume: Resume, limit: Limit);
     }

@@ -13,19 +13,25 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Core.Ingestion.Abstractions;
-using BinStash.Core.Ingestion.Execution;
-using BinStash.Core.Ingestion.Models;
+namespace BinStash.Core.Helper;
 
-namespace BinStash.Core.Ingestion.Formats.Plain;
-
-public sealed class PlainFileFormatHandler : IInputFormatHandler
+internal sealed class ByteArrayComparer : IComparer<byte[]>
 {
-    public IReadOnlyCollection<string> SupportedFormatIds { get; } = ["file"];
+    public static readonly ByteArrayComparer Instance = new();
 
-    public Task HandleAsync(InputItem input, DetectedFormat detectedFormat, IngestionPlan plan, IngestionExecutionContext context, CancellationToken ct = default)
+    public int Compare(byte[]? x, byte[]? y)
     {
-        context.RegisterOpaqueOutputArtifact(input, detectedFormat.FormatId, true);
-        return Task.CompletedTask;
+        if (ReferenceEquals(x, y)) return 0;
+        if (x == null) return -1;
+        if (y == null) return 1;
+
+        var len = Math.Min(x.Length, y.Length);
+        for (var i = 0; i < len; i++)
+        {
+            var diff = x[i] - y[i];
+            if (diff != 0) return diff;
+        }
+
+        return x.Length - y.Length;
     }
 }

@@ -13,9 +13,17 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Core.Ingestion.Models;
+using BinStash.Contracts.Hashing;
 
-public class ContentMaterializationKind
+namespace BinStash.Contracts.Release;
+
+public sealed class ContainerMemberBinding
 {
+    public required string EntryPath { get; set; }
     
+    // Filled after storage content hashing
+    public Hash32? ContentHash { get; set; }
+    
+    // Filled after storage content hashing
+    public long? Length { get; set; }
 }

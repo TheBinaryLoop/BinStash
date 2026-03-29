@@ -22,19 +22,14 @@ public sealed class DefaultIngestionPlanner : IIngestionPlanner
 {
     public ValueTask<IngestionPlan> CreatePlanAsync(InputItem input, DetectedFormat detectedFormat, CancellationToken ct = default)
     {
-        return detectedFormat.FormatId switch
-        {
-            "zip" or "jar" or "apk" or "nupkg" => ValueTask.FromResult(new IngestionPlan(
-                Mode: IngestionMode.Hybrid,
-                PreserveOriginal: true,
-                RecurseIntoChildren: false,
-                Reason: $"ZIP-family format '{detectedFormat.FormatId}' is tracked as a container, but remains opaque for content processing in this phase.")),
-
-            _ => ValueTask.FromResult(new IngestionPlan(
-                Mode: IngestionMode.Opaque,
-                PreserveOriginal: true,
-                RecurseIntoChildren: false,
-                Reason: $"Default opaque handling for format '{detectedFormat.FormatId}'."))
-        };
+        return ValueTask.FromResult(new IngestionPlan(
+            Mode: detectedFormat.Traits.HasFlag(FormatTraits.Container)
+                ? IngestionMode.InspectOnly
+                : IngestionMode.Opaque,
+            PreserveOriginal: false,
+            RecurseIntoChildren: detectedFormat.Traits.HasFlag(FormatTraits.Container),
+            Reason: detectedFormat.Traits.HasFlag(FormatTraits.Container)
+                ? $"Container format '{detectedFormat.FormatId}' will be inspected and delegated to its handler."
+                : $"Non-container format '{detectedFormat.FormatId}' will be stored opaquely."));
     }
 }

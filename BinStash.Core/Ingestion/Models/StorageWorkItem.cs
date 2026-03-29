@@ -13,19 +13,23 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Core.Ingestion.Abstractions;
-using BinStash.Core.Ingestion.Execution;
-using BinStash.Core.Ingestion.Models;
+namespace BinStash.Core.Ingestion.Models;
 
-namespace BinStash.Core.Ingestion.Formats.Plain;
-
-public sealed class PlainFileFormatHandler : IInputFormatHandler
+public sealed class StorageWorkItem
 {
-    public IReadOnlyCollection<string> SupportedFormatIds { get; } = ["file"];
-
-    public Task HandleAsync(InputItem input, DetectedFormat detectedFormat, IngestionPlan plan, IngestionExecutionContext context, CancellationToken ct = default)
-    {
-        context.RegisterOpaqueOutputArtifact(input, detectedFormat.FormatId, true);
-        return Task.CompletedTask;
-    }
+    public required string Identity { get; init; }
+    public required StorageWorkItemKind Kind { get; init; }
+    
+    // The output artifact this content belongs to.
+    // For opaque files, this is the output file path itself.
+    // For extracted members, this is the parent output artifact path (e.g. the archive file).
+    public required string OutputArtifactPath { get; init; }
+    
+    public string? SourcePath {get; init; }
+    public string? EntryPath { get; init; }
+    public string? FormatId { get; init; }
+    
+    public long? LengthHint { get; init; }
+    
+    public required Func<Stream> OpenRead { get; init; }
 }

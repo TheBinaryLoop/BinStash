@@ -15,12 +15,13 @@
 
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Chunking;
+using BinStash.Core.Entities;
 using BinStash.Core.Ingestion.Models;
 
 namespace BinStash.Core.Ingestion.Abstractions;
 
 public interface IContentProcessor
 {
-    FileHashingResult HashFiles(IngestionResult ingestionResult, int degreeOfParallelism = 0);
-    ChunkMapGenerationResult GenerateChunkMaps(FileHashingResult hashingResult, IngestionResult ingestionResult, IChunker chunker, IReadOnlySet<Hash32> missingFileChecksums, int degreeOfParallelism = 0);
+    StorageHashingResult HashStorageWorkItems(IngestionResult ingestionResult, int degreeOfParallelism = 0);
+    ChunkMapGenerationResult GenerateChunkMaps(StorageHashingResult  hashingResult, IngestionResult ingestionResult, IChunker chunker, IReadOnlySet<Hash32> missingContentHashes, int degreeOfParallelism = 0);
 }

@@ -19,21 +19,21 @@ namespace BinStash.Cli.Services.Releases;
 
 public sealed class ComponentMapLoader
 {
-    public Dictionary<string, Component> Load(ReleasePackage release, string? mapFile, string rootFolder, Action<string>? log = null)
+    public Dictionary<string, Component> Load(string? mapFile, string rootFolder, Action<string>? log = null)
     {
-        var dict = new Dictionary<string, Component>();
+        var dict = new Dictionary<string, Component>(StringComparer.OrdinalIgnoreCase);
 
         if (!string.IsNullOrWhiteSpace(mapFile))
         {
             var lines = File.ReadAllLines(mapFile);
-            foreach (var rawLine  in lines)
+            foreach (var rawLine in lines)
             {
-                var line =  rawLine.Trim();
+                var line = rawLine.Trim();
 
                 if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
                     continue;
-                
-                var parts = line .Split(':', 2);
+
+                var parts = line.Split(':', 2);
                 if (parts.Length == 2)
                 {
                     var folder = parts[0].Trim();
@@ -46,14 +46,13 @@ public sealed class ComponentMapLoader
                     }
 
                     var normalizedFolder = NormalizeFolderKey(folder);
-                    
+
                     var comp = new Component
                     {
                         Name = name,
                         Files = new()
                     };
-                    
-                    release.Components.Add(comp);
+
                     dict[normalizedFolder] = comp;
                 }
                 else
@@ -65,27 +64,26 @@ public sealed class ComponentMapLoader
         else
         {
             log?.Invoke("No component map file provided. Using folder names as components.");
-            
+
             foreach (var dir in Directory.GetDirectories(rootFolder).Where(x => !IsVersionControlPath(x)))
             {
                 var name = Path.GetFileName(dir);
                 var relative = Path.GetRelativePath(rootFolder, dir);
                 var normalizedFolder = NormalizeFolderKey(relative);
-                
+
                 var comp = new Component
                 {
                     Name = name,
                     Files = new()
                 };
-                
-                release.Components.Add(comp);
+
                 dict[normalizedFolder] = comp;
             }
         }
 
         return dict;
     }
-    
+
     private static string NormalizeFolderKey(string value)
     {
         return value

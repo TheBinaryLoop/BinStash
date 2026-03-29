@@ -44,9 +44,12 @@ public static class Program
                 services.AddSingleton<ZipArchiveInspector>();
                 services.AddSingleton<ZipEntryStreamFactory>();
                 services.AddSingleton<ZipMemberSelectionPolicy>();
+                services.AddSingleton<ZipReconstructionPlanner>();
+                services.AddSingleton<ZipRecipeBuilder>();
                 
                 services.AddSingleton<IInputFormatHandler, PlainFileFormatHandler>();
-                //services.AddSingleton<IInputFormatHandler, ZipFormatHandler>();
+                services.AddSingleton<IInputFormatHandler, ZipFormatHandler>();
+                services.AddSingleton<ReleasePackageBuilder>();
                 services.AddSingleton<IReleaseIngestionEngine,  ReleaseIngestionEngine>();
                 
                 // CLI release services

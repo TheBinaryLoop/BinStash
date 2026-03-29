@@ -13,12 +13,16 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Contracts.Release;
+namespace BinStash.Contracts.Release;
 
-namespace BinStash.Core.Ingestion.Models;
+public sealed class ReconstructedContainerBacking : ArtifactBacking
+{
+    public required string FormatId { get; init; }
+    public required ReconstructionKind ReconstructionKind { get; init; }
 
-public sealed record DiscoveredInputFile(
-    string AbsolutePath,
-    string RelativePath,
-    string RelativePathWithinComponent,
-    Component Component);
+    public List<ContainerMemberBinding> Members { get; init; } = new();
+
+    // Format-specific recipe payload.
+    // For ZIP this will later contain entry order, directory info, timestamps, compression policy, etc.
+    public byte[] RecipePayload { get; set; } = [];
+}

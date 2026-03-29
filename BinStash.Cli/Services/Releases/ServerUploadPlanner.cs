@@ -22,25 +22,15 @@ namespace BinStash.Cli.Services.Releases;
 
 public sealed class ServerUploadPlanner
 {
-    public async Task<ServerUploadPlan> CreateAsync(BinStashApiClient client, Guid repositoryId, Guid ingestSessionId, FileHashingResult hashingResult, ChunkMapGenerationResult chunkMapResult, CancellationToken ct = default)
+    public async Task<ServerUploadPlan> CreateAsync(BinStashApiClient client, Guid repositoryId, Guid ingestSessionId, StorageHashingResult hashingResult, ChunkMapGenerationResult chunkMapResult, CancellationToken ct = default)
     {
-        var missingFileChecksums = await client.GetMissingFileChecksumsAsync(
-            repositoryId,
-            ingestSessionId,
-            hashingResult.FileHashes.Keys.ToList());
-
         var uniqueChunkChecksums = chunkMapResult.FileChunkMaps.Values
             .SelectMany(x => x.Select(cme => cme.Checksum))
             .Distinct()
             .OrderBy(x => x)
             .ToList();
 
-        var missingChunkChecksums = uniqueChunkChecksums.Count == 0
-            ? new List<Hash32>()
-            : await client.GetMissingChunkChecksumsAsync(
-                repositoryId,
-                ingestSessionId,
-                uniqueChunkChecksums);
+        var missingChunkChecksums = uniqueChunkChecksums.Count == 0 ? [] : await client.GetMissingChunkChecksumsAsync(repositoryId, ingestSessionId, uniqueChunkChecksums);
 
         var missingChunkSet = new HashSet<Hash32>(missingChunkChecksums);
         var selectedEntries = new Dictionary<Hash32, ChunkMapEntry>();
@@ -60,11 +50,10 @@ public sealed class ServerUploadPlanner
             x => x.Key,
             x => (
                 Chunks: x.Value.Select(v => v.Checksum).ToList(),
-                Length: hashingResult.FileSizes[x.Key]
+                Length: hashingResult.ContentSizes[x.Key]
             ));
 
         return new ServerUploadPlan(
-            MissingFileChecksums: missingFileChecksums,
             MissingChunkChecksums: missingChunkChecksums,
             MissingChunkEntries: selectedEntries.Values.ToList(),
             FileDefinitions: fileDefinitions);
@@ -72,7 +61,6 @@ public sealed class ServerUploadPlanner
 }
 
 public sealed record ServerUploadPlan(
-    IReadOnlyList<Hash32> MissingFileChecksums,
     IReadOnlyList<Hash32> MissingChunkChecksums,
     IReadOnlyList<ChunkMapEntry> MissingChunkEntries,
     IReadOnlyDictionary<Hash32, (List<Hash32> Chunks, long Length)> FileDefinitions);

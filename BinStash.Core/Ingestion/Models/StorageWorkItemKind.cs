@@ -13,9 +13,10 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Core.Ingestion.Reconstruction;
+namespace BinStash.Core.Ingestion.Models;
 
-public class TarContainerRecipe
+public enum StorageWorkItemKind
 {
-    
+    OpaqueFile = 0,
+    ExtractedContainerMember = 1
 }

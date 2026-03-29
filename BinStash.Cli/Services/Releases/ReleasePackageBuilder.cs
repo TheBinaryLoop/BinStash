@@ -13,9 +13,30 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Release;
+using BinStash.Core.Ingestion.Models;
+
 namespace BinStash.Cli.Services.Releases;
 
-public class ReleasePackageBuilder
+public sealed class ReleasePackageBuilder
 {
-    
+    public ReleasePackage Build(ReleaseAddOrchestrationRequest request, IngestionResult ingestionResult, Guid repositoryId)
+    {
+        var package = new ReleasePackage
+        {
+            Version = request.Version,
+            Notes = request.Notes,
+            RepoId = repositoryId.ToString(),
+            CustomProperties = request.CustomProperties,
+            OutputArtifacts = ingestionResult.OutputArtifacts,
+            Chunks = [],
+            Stats = new()
+            {
+                ComponentCount = (uint)ingestionResult.OutputArtifacts.Select(x => x.ComponentName).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                FileCount = (uint)ingestionResult.OutputArtifacts.Count(x => x.Kind == OutputArtifactKind.File)
+            },
+        };
+
+        return package;
+    }
 }

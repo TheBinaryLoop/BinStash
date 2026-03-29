@@ -13,19 +13,16 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Core.Ingestion.Abstractions;
-using BinStash.Core.Ingestion.Execution;
-using BinStash.Core.Ingestion.Models;
+using BinStash.Contracts.Release;
 
-namespace BinStash.Core.Ingestion.Formats.Plain;
+namespace BinStash.Core.Ingestion.Formats.Zip;
 
-public sealed class PlainFileFormatHandler : IInputFormatHandler
+public sealed class ZipReconstructionPlanningResult
 {
-    public IReadOnlyCollection<string> SupportedFormatIds { get; } = ["file"];
+    public required bool StoreOpaque { get; init; }
+    public required bool RequiresBytePerfect { get; init; }
+    public required ReconstructionKind ReconstructionKind { get; init; }
+    public required string Reason { get; init; }
 
-    public Task HandleAsync(InputItem input, DetectedFormat detectedFormat, IngestionPlan plan, IngestionExecutionContext context, CancellationToken ct = default)
-    {
-        context.RegisterOpaqueOutputArtifact(input, detectedFormat.FormatId, true);
-        return Task.CompletedTask;
-    }
+    public List<ZipArchiveEntryInfo> SelectedEntries { get; init; } = new();
 }

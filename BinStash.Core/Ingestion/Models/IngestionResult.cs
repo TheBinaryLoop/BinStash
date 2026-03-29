@@ -14,12 +14,21 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.Hashing;
+using BinStash.Contracts.Release;
 
 namespace BinStash.Core.Ingestion.Models;
 
 public sealed class IngestionResult
 {
-    public List<LogicalArtifact> Artifacts { get; } = new();
-    public Dictionary<Hash32, ContentDescriptor> Contents { get; } = new();
-    public List<ReleaseFileBinding> FileBindings { get; } = new();
+    // What the installed release must contain.
+    public List<OutputArtifact> OutputArtifacts { get; } = [];
+    
+    // Internal content objects actually stored.
+    public Dictionary<Hash32, StoredContent> StoredContents { get; } = new();
+    
+    // Work units that need hashing/chunking/upload.
+    public List<StorageWorkItem> StorageWorkItems { get; } = [];
+    
+    // Optional metadata/debug/logical view.
+    public List<LogicalArtifact> LogicalArtifacts { get; } = [];
 }

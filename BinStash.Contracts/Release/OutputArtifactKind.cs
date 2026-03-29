@@ -13,9 +13,10 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Core.Ingestion.Reconstruction;
+namespace BinStash.Contracts.Release;
 
-public class ZipContainerRecipe
+public enum OutputArtifactKind
 {
-    
+    File = 0,
+    Directory = 1
 }

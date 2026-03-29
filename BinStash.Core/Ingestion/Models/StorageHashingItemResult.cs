@@ -14,12 +14,10 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.Hashing;
-using BinStash.Contracts.Release;
 
 namespace BinStash.Core.Ingestion.Models;
 
-public sealed record ProcessedReleaseFileEntry(
-    ReleaseFile File,
-    Hash32 FileHash,
-    string AbsolutePath,
-    Component Component);
+public sealed record StorageHashingItemResult(
+    string WorkItemIdentity,
+    Hash32 Hash,
+    long Length);

@@ -14,6 +14,7 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.Hashing;
+using BinStash.Contracts.Release;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
@@ -213,11 +214,10 @@ public sealed class ChunkStoreStatsCollector
 
         var packageMap = await _chunkStoreService.RetrieveReleasePackagesAsync(store, packageIds);
 
-        // Count every file occurrence across all releases.
         long totalLogicalBytes = 0;
 
-        // Count each file definition only once.
-        var uniqueFileHashes = new HashSet<Hash32>();
+        // Unique stored content hashes referenced by all output artifacts across all releases
+        var uniqueContentHashes = new HashSet<Hash32>();
 
         foreach (var release in releases)
         {
@@ -228,39 +228,43 @@ public sealed class ChunkStoreStatsCollector
                 continue;
 
             var package = await ReleasePackageSerializer.DeserializeAsync(packageData, cancellationToken);
+            var outputArtifacts = package.OutputArtifacts ?? [];
 
-            var fileHashesInRelease = package.Components
-                .SelectMany(c => c.Files)
-                .Select(f => f.Hash)
-                .ToList();
-
-            if (fileHashesInRelease.Count == 0)
+            if (outputArtifacts.Count == 0)
                 continue;
 
-            var fileLengthsInRelease = await _db.FileDefinitions
-                .AsNoTracking()
-                .Where(x => x.ChunkStoreId == chunkStoreId && fileHashesInRelease.Contains(x.Checksum))
-                .ToDictionaryAsync(x => x.Checksum, x => x.Length, cancellationToken);
+            var artifactContentHashes = CollectReferencedContentHashes(outputArtifacts);
 
-            foreach (var fileHash in fileHashesInRelease)
+            Dictionary<Hash32, long> fileLengthsInRelease = [];
+            if (artifactContentHashes.Count > 0)
             {
-                if (fileLengthsInRelease.TryGetValue(fileHash, out var fileLength))
-                    totalLogicalBytes += fileLength;
+                fileLengthsInRelease = await _db.FileDefinitions
+                    .AsNoTracking()
+                    .Where(x => x.ChunkStoreId == chunkStoreId && artifactContentHashes.Contains(x.Checksum))
+                    .ToDictionaryAsync(x => x.Checksum, x => x.Length, cancellationToken);
+            }
 
-                uniqueFileHashes.Add(fileHash);
+            foreach (var artifact in outputArtifacts)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                totalLogicalBytes += CalculateLogicalArtifactSize(artifact, fileLengthsInRelease);
+
+                foreach (var hash in CollectReferencedContentHashes([artifact]))
+                    uniqueContentHashes.Add(hash);
             }
         }
 
         long uniqueFileBytes = 0;
-        if (uniqueFileHashes.Count > 0)
+        if (uniqueContentHashes.Count > 0)
         {
             uniqueFileBytes = await _db.FileDefinitions
                 .AsNoTracking()
-                .Where(x => x.ChunkStoreId == chunkStoreId && uniqueFileHashes.Contains(x.Checksum))
+                .Where(x => x.ChunkStoreId == chunkStoreId && uniqueContentHashes.Contains(x.Checksum))
                 .SumAsync(x => (long?)x.Length, cancellationToken) ?? 0;
         }
 
-        var fileHashStrings = uniqueFileHashes
+        var fileHashStrings = uniqueContentHashes
             .Select(x => x.ToHexString())
             .ToArray();
 
@@ -295,6 +299,72 @@ public sealed class ChunkStoreStatsCollector
         };
     }
 
+    private static List<Hash32> CollectReferencedContentHashes(IEnumerable<OutputArtifact> outputArtifacts)
+    {
+        var hashes = new List<Hash32>();
+
+        foreach (var artifact in outputArtifacts)
+        {
+            switch (artifact.Backing)
+            {
+                case OpaqueBlobBacking opaque:
+                    if (opaque.ContentHash != null)
+                        hashes.Add(opaque.ContentHash.Value);
+                    break;
+
+                case ReconstructedContainerBacking reconstructed:
+                    foreach (var member in reconstructed.Members)
+                    {
+                        if (member.ContentHash != null)
+                            hashes.Add(member.ContentHash.Value);
+                    }
+                    break;
+            }
+        }
+
+        return hashes;
+    }
+
+    private static long CalculateLogicalArtifactSize(OutputArtifact artifact, IReadOnlyDictionary<Hash32, long> fileLengths)
+    {
+        return artifact.Backing switch
+        {
+            OpaqueBlobBacking opaque => CalculateOpaqueArtifactSize(opaque, fileLengths),
+            ReconstructedContainerBacking reconstructed => CalculateReconstructedArtifactSize(reconstructed, fileLengths),
+            _ => 0L
+        };
+    }
+
+    private static long CalculateOpaqueArtifactSize(OpaqueBlobBacking backing, IReadOnlyDictionary<Hash32, long> fileLengths)
+    {
+        if (backing.Length.HasValue)
+            return backing.Length.Value;
+
+        if (backing.ContentHash != null && fileLengths.TryGetValue(backing.ContentHash.Value, out var len))
+            return len;
+
+        return 0L;
+    }
+
+    private static long CalculateReconstructedArtifactSize(ReconstructedContainerBacking backing, IReadOnlyDictionary<Hash32, long> fileLengths)
+    {
+        long total = 0;
+
+        foreach (var member in backing.Members)
+        {
+            if (member.Length.HasValue)
+            {
+                total += member.Length.Value;
+                continue;
+            }
+
+            if (member.ContentHash != null && fileLengths.TryGetValue(member.ContentHash.Value, out var len))
+                total += len;
+        }
+
+        return total;
+    }
+    
     public sealed class ChunkStoreStatsResult
     {
         public long ChunkCount { get; set; }

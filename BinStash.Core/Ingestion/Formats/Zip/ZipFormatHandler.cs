@@ -22,56 +22,71 @@ namespace BinStash.Core.Ingestion.Formats.Zip;
 public sealed class ZipFormatHandler : IInputFormatHandler
 {
     private readonly ZipArchiveInspector _inspector;
-    private readonly ZipMemberSelectionPolicy _selectionPolicy;
     private readonly ZipEntryStreamFactory _entryStreamFactory;
-    public IReadOnlyCollection<string> SupportedFormatIds { get; } = ["zip", "jar", "apk", "nupkg"];
+    private readonly ZipReconstructionPlanner _reconstructionPlanner;
+    private readonly ZipRecipeBuilder _recipeBuilder;
 
-    public ZipFormatHandler(ZipArchiveInspector inspector, ZipMemberSelectionPolicy selectionPolicy, ZipEntryStreamFactory entryStreamFactory)
+    public ZipFormatHandler(ZipArchiveInspector inspector, ZipEntryStreamFactory entryStreamFactory, ZipReconstructionPlanner reconstructionPlanner, ZipRecipeBuilder recipeBuilder)
     {
         _inspector = inspector;
-        _selectionPolicy = selectionPolicy;
         _entryStreamFactory = entryStreamFactory;
+        _reconstructionPlanner = reconstructionPlanner;
+        _recipeBuilder = recipeBuilder;
     }
-    
+
+    public IReadOnlyCollection<string> SupportedFormatIds { get; } = ["zip", "jar", "apk", "nupkg"];
+
     public Task HandleAsync(InputItem input, DetectedFormat detectedFormat, IngestionPlan plan, IngestionExecutionContext context, CancellationToken ct = default)
     {
-        context.RegisterContainerFile(input, detectedFormat.FormatId);
-        
         var entries = _inspector.Inspect(input.AbsolutePath);
 
         foreach (var entry in entries)
         {
             ct.ThrowIfCancellationRequested();
 
-            context.RegisterContainerEntry(
-                input: input,
+            context.RegisterLogicalContainerEntry(
+                parentInput: input,
                 containerFormatId: detectedFormat.FormatId,
                 entryPath: entry.FullName,
                 isDirectory: entry.IsDirectory,
                 uncompressedLength: entry.UncompressedLength,
                 compressedLength: entry.CompressedLength);
-            
-            if (!_selectionPolicy.ShouldIngest(entry.FullName, entry.UncompressedLength, entry.IsDirectory))
-                continue;
-            
-            var normalizedEntryPath = entry.FullName.Replace('\\', '/').TrimStart('/');
-
-            var entryInput = new InputItem(
-                AbsolutePath: input.AbsolutePath,
-                RelativePath: $"{input.RelativePath}!/{normalizedEntryPath}",
-                RelativePathWithinComponent: $"{input.RelativePathWithinComponent}!/{normalizedEntryPath}",
-                Component: input.Component,
-                Length: entry.UncompressedLength,
-                LastWriteTimeUtc: input.LastWriteTimeUtc,
-                Kind: InputItemKind.ContainerEntry,
-                ParentLogicalPath: input.RelativePath,
-                ContainerFormatId: detectedFormat.FormatId,
-                EntryPath: normalizedEntryPath,
-                OpenRead: _entryStreamFactory.Create(input.AbsolutePath, entry.FullName));
-
-            context.RegisterExtractedContainerEntry(entryInput, detectedFormat.FormatId);
         }
-        
+
+        var reconstructionPlan = _reconstructionPlanner.Plan(input, entries);
+
+        if (reconstructionPlan.StoreOpaque)
+        {
+            context.RegisterOpaqueOutputArtifact(
+                input,
+                detectedFormat.FormatId,
+                reconstructionPlan.RequiresBytePerfect);
+
+            return Task.CompletedTask;
+        }
+
+        var recipePayload = _recipeBuilder.BuildSemanticRecipe(entries);
+
+        context.RegisterReconstructedContainerOutputArtifact(
+            input: input,
+            formatId: detectedFormat.FormatId,
+            reconstructionKind: reconstructionPlan.ReconstructionKind,
+            requiresBytePerfectReconstruction: reconstructionPlan.RequiresBytePerfect,
+            memberEntryPaths: reconstructionPlan.SelectedEntries.Select(x => x.FullName),
+            recipePayload: recipePayload);
+
+        foreach (var entry in reconstructionPlan.SelectedEntries)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            context.RegisterExtractedContainerMemberStorage(
+                parentInput: input,
+                formatId: detectedFormat.FormatId,
+                entryPath: entry.FullName,
+                length: entry.UncompressedLength,
+                openRead: _entryStreamFactory.Create(input.AbsolutePath, entry.FullName));
+        }
+
         return Task.CompletedTask;
     }
 }

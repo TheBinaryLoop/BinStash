@@ -17,11 +17,15 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using BinStash.Cli.Services.Releases;
 using BinStash.Cli.Utils;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repo;
 using BinStash.Core.Chunking;
+using BinStash.Core.Ingestion.Abstractions;
+using BinStash.Core.Ingestion.Execution;
+using BinStash.Core.Ingestion.Models;
 using Blake3;
 using CliFx.Infrastructure;
 using Spectre.Console;
@@ -40,8 +44,12 @@ public sealed class SvnImportEngine
     private readonly SvnComponentMapper _componentMapper;
     private readonly SvnGlobFilter _globFilter;
     private readonly SvnImportProgress _progress;
+    private readonly IReleaseIngestionEngine _releaseIngestionEngine;
+    private readonly IContentProcessor _contentProcessor;
+    private readonly ServerUploadPlanner _serverUploadPlanner;
+    private readonly ReleasePackageBuilder _releasePackageBuilder;
 
-    public SvnImportEngine(SvnCliClient svn, BinStashApiClient api, BinStashGrpcClient ingestClient, ImportStateStore state, RepositorySummaryDto repository, IChunker chunker, IConsole console, int concurrency, SvnComponentMapper componentMapper, IEnumerable<string> includes, IEnumerable<string> excludes)
+    public SvnImportEngine(SvnCliClient svn, BinStashApiClient api, BinStashGrpcClient ingestClient, ImportStateStore state, RepositorySummaryDto repository, IChunker chunker, IConsole console, int concurrency, SvnComponentMapper componentMapper, IEnumerable<string> includes, IEnumerable<string> excludes, IReleaseIngestionEngine releaseIngestionEngine, IContentProcessor contentProcessor, ServerUploadPlanner serverUploadPlanner, ReleasePackageBuilder releasePackageBuilder)
     {
         _svn = svn;
         _api = api;
@@ -53,6 +61,10 @@ public sealed class SvnImportEngine
         _componentMapper = componentMapper;
         _globFilter = new SvnGlobFilter(includes, excludes);
         _progress = new SvnImportProgress(console);
+        _releaseIngestionEngine = releaseIngestionEngine;
+        _contentProcessor = contentProcessor;
+        _serverUploadPlanner = serverUploadPlanner;
+        _releasePackageBuilder = releasePackageBuilder;
     }
 
     public async Task RunAsync(string svnRoot, string tenantSlug, bool dryRun, bool resume, int? limit)
@@ -100,7 +112,7 @@ public sealed class SvnImportEngine
                 _progress.Info($"Tag {tagName} already scanned, loading file list from state ...");
                 return;
             }
-            
+
             var rawFiles = await _svn.ListFilesRecursiveAsync(tagUrl);
             files = rawFiles
                 .Where(x => _globFilter.ShouldInclude(x.RelativePath))
@@ -118,7 +130,7 @@ public sealed class SvnImportEngine
             _progress.Success($"{tagName}: dry-run completed.");
             return;
         }
-        
+
         SvnLogInfo? tagLog = null;
         await _progress.RunStatusAsync($"Reading SVN log for {tagName} ...", async _ =>
         {
@@ -127,39 +139,26 @@ public sealed class SvnImportEngine
         });
 
         var tagFiles = await _state.GetTagFilesAsync(tagId);
-        
-        var releasePackage = new ReleasePackage
+
+        await _progress.RunStatusAsync($"Checking existing releases for {version} ...", async _ =>
         {
-            Version = version,
-            Notes = string.IsNullOrEmpty(tagLog?.Message) ? $"Imported from SVN tag {tagName}" : tagLog.Message,
-            CustomProperties = new Dictionary<string, string>
+            var existingReleases = await _api.GetReleasesForRepoAsync(_repository.Id);
+            if (existingReleases is { Count: > 0 } &&
+                existingReleases.Any(r => r.Version.Equals(version, StringComparison.OrdinalIgnoreCase)))
             {
-                ["svn:tag"] = tagName,
-                ["svn:url"] = tagUrl
-            },
-            Components = new List<Component>(),
-            Chunks = new List<ChunkInfo>(),
-            Stats = new ReleaseStats()
-        };
+                throw new InvalidOperationException($"Release with version {version} already exists.");
+            }
+        });
 
-        if (tagLog is not null)
-        {
-            releasePackage.CustomProperties["svn:revision"] = tagLog!.Revision!.ToString()!;
-            releasePackage.CustomProperties["svn:author"] = tagLog!.Author!;
-        }
-
-        var componentsByName = new Dictionary<string, Component>(StringComparer.OrdinalIgnoreCase);
-        var fileHashToChunkMap = new ConcurrentDictionary<Hash32, List<ChunkMapEntry>>();
-        var fileSizeMap = new ConcurrentDictionary<Hash32, long>();
-        var processedFiles =
-            new ConcurrentBag<(string ComponentName, ReleaseFile File, List<ChunkMapEntry> ChunkMap, long FileSize)>();
+        var componentsByName = new ConcurrentDictionary<string, Component>(StringComparer.OrdinalIgnoreCase);
+        var inputItems = new ConcurrentBag<InputItem>();
 
         var cacheHits = 0;
         var cacheMisses = 0;
 
         using var throttler = new SemaphoreSlim(_concurrency);
 
-        await _progress.RunStatusAsync($"Resolving file hashes and chunk maps for {tagName} ...", async ctx =>
+        await _progress.RunStatusAsync($"Resolving SVN files into local inputs for {tagName} ...", async ctx =>
         {
             var completed = 0;
             var total = tagFiles.Count;
@@ -183,10 +182,14 @@ public sealed class SvnImportEngine
                 {
                     var componentName = _componentMapper.ResolveComponent(file.RelativePath);
                     var releaseFileName = _componentMapper.ResolveReleaseFileName(file.RelativePath, componentName);
+                    var relativePath = NormalizeReleasePath(componentName, releaseFileName);
 
                     var candidateKeyHash = HashStringToHex(file.CandidateKey);
                     var aliasFileName = $"{candidateKeyHash}.bin";
                     var aliasPath = Path.Combine(aliasRoot, aliasFileName);
+
+                    string? backingPath = null;
+                    long fileSize = 0;
 
                     var cached = await _state.TryGetCachedFileAsync(file.CandidateKey);
                     if (cached != null)
@@ -194,7 +197,7 @@ public sealed class SvnImportEngine
                         var fileHash = Hash32.FromHexString(cached.FileHashHex);
                         var canonicalPath = Path.Combine(contentRoot, $"{fileHash.ToHexString()}.bin");
 
-                        var backingPath = File.Exists(aliasPath)
+                        backingPath = File.Exists(aliasPath)
                             ? aliasPath
                             : File.Exists(canonicalPath)
                                 ? canonicalPath
@@ -219,133 +222,121 @@ public sealed class SvnImportEngine
                                 backingPath = aliasPath;
                             }
 
+                            fileSize = cached.FileSize;
                             Interlocked.Increment(ref cacheHits);
-
-                            var cachedMap = JsonSerializer.Deserialize<CachedChunkMap>(cached.ChunkMapJson)
-                                            ?? throw new InvalidOperationException("Invalid cached chunk map JSON.");
-
-                            processedFiles.Add((
-                                componentName,
-                                new ReleaseFile
-                                {
-                                    Name = releaseFileName,
-                                    Hash = fileHash,
-                                    Chunks = new List<DeltaChunkRef>()
-                                },
-                                cachedMap.ToChunkMapEntries(backingPath),
-                                cached.FileSize));
-
-                            var done = Interlocked.Increment(ref completed);
-                            ctx.Status(
-                                $"Resolving files {done}/{total} (cache hits: {cacheHits}, misses: {cacheMisses}) ...");
-                            return;
                         }
-
-                        // Cache metadata exists, but spool data is gone -> rebuild it.
                     }
 
-                    Interlocked.Increment(ref cacheMisses);
-
-                    var fullFileUrl = SvnCliClient.BuildEncodedSvnUrl(tagUrl, file.RelativePath);
-                    var stagingPath = Path.Combine(stagingRoot, $"{Guid.NewGuid():N}.bin");
-
-                    try
+                    if (backingPath == null)
                     {
-                        StreamingFileIngestResult ingestResult;
+                        Interlocked.Increment(ref cacheMisses);
 
-                        await using (var ingest = new StreamingFileIngest(
-                                         stagingPath,
-                                         _chunker.CreateStreamingChunker()))
-                        {
-                            await _svn.PumpFileAsync(
-                                fullFileUrl,
-                                async (buffer, ct) =>
-                                {
-                                    await ingest.AppendAsync(buffer, ct);
-                                });
+                        var fullFileUrl = SvnCliClient.BuildEncodedSvnUrl(tagUrl, file.RelativePath);
+                        var stagingPath = Path.Combine(stagingRoot, $"{Guid.NewGuid():N}.bin");
 
-                            ingestResult = await ingest.CompleteAsync();
-                        }
-
-                        var fileHash = ingestResult.FileHash;
-                        var fileSize = ingestResult.FileSize;
-                        var canonicalPath = Path.Combine(contentRoot, $"{fileHash.ToHexString()}.bin");
-
-                        var canonicalLock = canonicalLocks.GetOrAdd(canonicalPath, _ => new SemaphoreSlim(1, 1));
-                        await canonicalLock.WaitAsync();
                         try
                         {
-                            if (!File.Exists(canonicalPath))
-                            {
-                                Directory.CreateDirectory(Path.GetDirectoryName(canonicalPath)!);
+                            StreamingFileIngestResult ingestResult;
 
-                                try
+                            await using (var ingest = new StreamingFileIngest(
+                                             stagingPath,
+                                             _chunker.CreateStreamingChunker()))
+                            {
+                                await _svn.PumpFileAsync(
+                                    fullFileUrl,
+                                    async (buffer, ct) =>
+                                    {
+                                        await ingest.AppendAsync(buffer, ct);
+                                    });
+
+                                ingestResult = await ingest.CompleteAsync();
+                            }
+
+                            var fileHash = ingestResult.FileHash;
+                            fileSize = ingestResult.FileSize;
+                            var canonicalPath = Path.Combine(contentRoot, $"{fileHash.ToHexString()}.bin");
+
+                            var canonicalLock = canonicalLocks.GetOrAdd(canonicalPath, _ => new SemaphoreSlim(1, 1));
+                            await canonicalLock.WaitAsync();
+                            try
+                            {
+                                if (!File.Exists(canonicalPath))
                                 {
-                                    File.Move(stagingPath, canonicalPath);
-                                }
-                                catch (IOException)
-                                {
-                                    if (!File.Exists(canonicalPath))
-                                        throw;
+                                    Directory.CreateDirectory(Path.GetDirectoryName(canonicalPath)!);
+
+                                    try
+                                    {
+                                        File.Move(stagingPath, canonicalPath);
+                                    }
+                                    catch (IOException)
+                                    {
+                                        if (!File.Exists(canonicalPath))
+                                            throw;
+                                    }
                                 }
                             }
-                        }
-                        finally
-                        {
-                            canonicalLock.Release();
-                        }
-
-                        if (File.Exists(stagingPath))
-                            TryDeleteFile(stagingPath);
-
-                        var aliasLock = aliasLocks.GetOrAdd(aliasPath, _ => new SemaphoreSlim(1, 1));
-                        await aliasLock.WaitAsync();
-                        try
-                        {
-                            if (!File.Exists(aliasPath))
-                                EnsureHardLink(aliasPath, canonicalPath);
-                        }
-                        finally
-                        {
-                            aliasLock.Release();
-                        }
-
-                        var chunkMap = RebindChunkMapEntries(ingestResult.ChunkMap, canonicalPath);
-
-                        var cachedMap = ChunkMapCacheExtensions.ToCached(fileHash.ToHexString(), fileSize, chunkMap);
-                        var cachedJson = JsonSerializer.Serialize(cachedMap);
-
-                        await _state.SaveCachedFileAsync(new CachedFileResult(
-                            file.CandidateKey,
-                            fileHash.ToHexString(),
-                            fileSize,
-                            cachedJson));
-
-                        processedFiles.Add((
-                            componentName,
-                            new ReleaseFile
+                            finally
                             {
-                                Name = releaseFileName,
-                                Hash = fileHash,
-                                Chunks = new List<DeltaChunkRef>()
-                            },
-                            chunkMap,
-                            fileSize));
-                    }
-                    catch (SvnPathNotFoundException ex)
-                    {
-                        _progress.Error($"Skipping missing SVN file: {file.RelativePath}");
-                        _progress.Info(ex.Message);
-                    }
-                    finally
-                    {
-                        if (File.Exists(stagingPath))
-                            TryDeleteFile(stagingPath);
+                                canonicalLock.Release();
+                            }
+
+                            if (File.Exists(stagingPath))
+                                TryDeleteFile(stagingPath);
+
+                            var aliasLock = aliasLocks.GetOrAdd(aliasPath, _ => new SemaphoreSlim(1, 1));
+                            await aliasLock.WaitAsync();
+                            try
+                            {
+                                if (!File.Exists(aliasPath))
+                                    EnsureHardLink(aliasPath, canonicalPath);
+                            }
+                            finally
+                            {
+                                aliasLock.Release();
+                            }
+
+                            var cachedMap = ChunkMapCacheExtensions.ToCached(
+                                fileHash.ToHexString(),
+                                fileSize,
+                                RebindChunkMapEntries(ingestResult.ChunkMap, canonicalPath));
+
+                            var cachedJson = JsonSerializer.Serialize(cachedMap);
+
+                            await _state.SaveCachedFileAsync(new CachedFileResult(
+                                file.CandidateKey,
+                                fileHash.ToHexString(),
+                                fileSize,
+                                cachedJson));
+
+                            backingPath = aliasPath;
+                        }
+                        catch (SvnPathNotFoundException ex)
+                        {
+                            _progress.Error($"Skipping missing SVN file: {file.RelativePath}");
+                            _progress.Info(ex.Message);
+                        }
+                        finally
+                        {
+                            if (File.Exists(stagingPath))
+                                TryDeleteFile(stagingPath);
+                        }
                     }
 
-                    var updated = Interlocked.Increment(ref completed);
-                    ctx.Status(
-                        $"Resolving files {updated}/{total} (cache hits: {cacheHits}, misses: {cacheMisses}) ...");
+                    if (!string.IsNullOrWhiteSpace(backingPath) && File.Exists(backingPath))
+                    {
+                        var component = GetOrAddComponent(componentsByName, componentName);
+
+                        inputItems.Add(new InputItem(
+                            AbsolutePath: backingPath,
+                            RelativePath: relativePath,
+                            RelativePathWithinComponent: releaseFileName.Replace('\\', '/').TrimStart('/'),
+                            Component: component,
+                            Length: fileSize > 0 ? fileSize : new FileInfo(backingPath).Length,
+                            LastWriteTimeUtc: /*file.LastChangedAt ??*/ DateTimeOffset.UtcNow));
+                    }
+
+                    var done = Interlocked.Increment(ref completed);
+                    ctx.Status($"Resolving files {done}/{total} (cache hits: {cacheHits}, misses: {cacheMisses}) ...");
                 }
                 finally
                 {
@@ -354,155 +345,145 @@ public sealed class SvnImportEngine
             }));
         });
 
-        foreach (var group in processedFiles.GroupBy(x => x.ComponentName).OrderBy(x => x.Key, StringComparer.Ordinal))
-        {
-            var component = new Component
-            {
-                Name = group.Key,
-                Files = new List<ReleaseFile>()
-            };
+        _progress.Info($"{tagName}: resolved {inputItems.Count} input files, cache hits={cacheHits}, misses={cacheMisses}");
 
-            foreach (var item in group.OrderBy(x => x.File.Name, StringComparer.Ordinal))
-            {
-                component.Files.Add(item.File);
-                fileHashToChunkMap[item.File.Hash] = item.ChunkMap;
-                fileSizeMap[item.File.Hash] = item.FileSize;
-            }
+        var componentMap = componentsByName.ToDictionary(x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase);
+        var inputList = inputItems.ToList();
 
-            componentsByName[group.Key] = component;
-            releasePackage.Components.Add(component);
-        }
+        var ingestionResult = await _releaseIngestionEngine.IngestAsync(
+            inputList,
+            componentMap,
+            CancellationToken.None);
 
-        _progress.Info(
-            $"{tagName}: resolved {processedFiles.Count} files, cache hits={cacheHits}, misses={cacheMisses}");
-        
-        await _progress.RunStatusAsync($"Checking existing releases for {version} ...", async _ =>
-        {
-            var existingReleases = await _api.GetReleasesForRepoAsync(_repository.Id);
-            if (existingReleases is { Count:>0 } && existingReleases.Any(r => r.Version.Equals(version, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidOperationException($"Release with version {version} already exists.");
-        });
-        
+        _progress.Info($"{tagName}: ingestion produced {ingestionResult.OutputArtifacts.Count} output artifacts");
+        _progress.Info($"{tagName}: ingestion produced {ingestionResult.StorageWorkItems.Count} storage work items");
+        _progress.Info($"{tagName}: ingestion produced {ingestionResult.LogicalArtifacts.Count} logical artifacts");
+
         var ingestSessionId = Guid.Empty;
         await _progress.RunStatusAsync($"Creating ingest session for {version} ...",
             async _ => { ingestSessionId = await _api.CreateIngestSessionAsync(_repository.Id, version); });
 
-        List<Hash32> missingFileChecksums = [];
-        await _progress.RunStatusAsync($"Checking missing file definitions for {version} ...", async _ =>
+        StorageHashingResult hashingResult = null!;
+        await _progress.RunStatusAsync($"Hashing storage work items for {version} ...", _ =>
         {
-            var fileHashes = fileHashToChunkMap.Keys.ToList();
-            missingFileChecksums = await _api.GetMissingFileChecksumsAsync(_repository.Id, ingestSessionId, fileHashes);
+            try
+            {
+                hashingResult = _contentProcessor.HashStorageWorkItems(ingestionResult);
+                return Task.CompletedTask;
+            }
+            catch (Exception exception)
+            {
+                return Task.FromException(exception);
+            }
         });
 
-        var missingFileMap = fileHashToChunkMap
-            .Where(kvp => missingFileChecksums.Contains(kvp.Key))
-            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-        _progress.Info($"{tagName}: missing file definitions = {missingFileChecksums.Count}");
-
-        var uniqueChunkChecksums = missingFileMap.Values
-            .SelectMany(x => x.Select(e => e.Checksum))
-            .Distinct()
-            .OrderBy(x => x)
-            .ToList();
-
-        List<Hash32> missingChunkChecksums = [];
-        if (uniqueChunkChecksums.Count > 0)
+        // ReSharper disable once UseOfPossiblyUnassignedValue
+        var bindContext = new IngestionExecutionContext(ingestionResult);
+        foreach (var item in hashingResult.ItemResults)
         {
-            await _progress.RunStatusAsync($"Checking missing chunks for {version} ...",
-                async _ =>
-                {
-                    missingChunkChecksums =
-                        await _api.GetMissingChunkChecksumsAsync(_repository.Id, ingestSessionId, uniqueChunkChecksums);
-                });
+            var workItem = hashingResult.WorkItems.First(x => string.Equals(x.Identity, item.WorkItemIdentity, StringComparison.OrdinalIgnoreCase));
+            bindContext.BindStoredContent(workItem, item.Hash, item.Length);
         }
 
-        _progress.Info($"{tagName}: missing chunks = {missingChunkChecksums.Count}");
+        _progress.Info($"{tagName}: computed {hashingResult.ContentHashes.Count} unique stored content hashes");
 
-        if (missingChunkChecksums.Count > 0)
+        List<Hash32> missingFileChecksums = [];
+        await _progress.RunStatusAsync($"Checking missing stored contents for {version} ...", async _ =>
         {
-            var missingChunkSet = new HashSet<Hash32>(missingChunkChecksums);
+            missingFileChecksums = await _api.GetMissingFileChecksumsAsync(_repository.Id, ingestSessionId, hashingResult.ContentHashes.Keys.ToList());
+        });
 
-            var selectedEntries = missingFileMap.Values
-                .SelectMany(x => x)
-                .Where(x => missingChunkSet.Contains(x.Checksum))
-                .GroupBy(x => x.Checksum)
-                .Select(g => g.First())
-                .ToList();
+        _progress.Info($"{tagName}: missing stored contents = {missingFileChecksums.Count}");
 
-            await _progress.RunStatusAsync($"Uploading {selectedEntries.Count} chunks for {version} ...", async ctx =>
+        ChunkMapGenerationResult chunkMapResult = null!;
+        await _progress.RunStatusAsync($"Generating chunk maps for missing stored contents for {version} ...", _ =>
+        {
+            try
             {
-                // TODO: Fallback to rest if grpc upload fails (e.g. due to large batch size or network issues)
+                chunkMapResult = _contentProcessor.GenerateChunkMaps(hashingResult, ingestionResult, _chunker, new HashSet<Hash32>(missingFileChecksums));
+                return Task.CompletedTask;
+            }
+            catch (Exception exception)
+            {
+                return Task.FromException(exception);
+            }
+        });
+
+        // ReSharper disable once UseOfPossiblyUnassignedValue
+        foreach (var kvp in chunkMapResult.FileChunkMaps)
+            bindContext.BindChunkMap(kvp.Key, kvp.Value);
+
+        _progress.Info($"{tagName}: generated chunk maps for {chunkMapResult.FileChunkMaps.Count} stored contents");
+
+        var uploadPlan = await _serverUploadPlanner.CreateAsync(
+            _api,
+            _repository.Id,
+            ingestSessionId,
+            hashingResult,
+            chunkMapResult,
+            CancellationToken.None);
+
+        _progress.Info($"{tagName}: missing chunks = {uploadPlan.MissingChunkChecksums.Count}");
+
+        if (uploadPlan.MissingChunkEntries.Count > 0)
+        {
+            await _progress.RunStatusAsync($"Uploading {uploadPlan.MissingChunkEntries.Count} chunks for {version} ...", async ctx =>
+            {
                 await _ingestClient.UploadChunksAsync(
                     _repository.Id,
                     ingestSessionId,
                     _chunker,
-                    selectedEntries,
+                    uploadPlan.MissingChunkEntries,
                     progressCallback: (uploaded, total) =>
                     {
                         ctx.Status($"Uploading chunks {uploaded}/{total} ...");
                         return Task.CompletedTask;
                     });
-                /*await _api.UploadChunksAsync(
-                    _repository.Id,
-                    ingestSessionId,
-                    _chunker,
-                    selectedEntries,
-                    progressCallback: (uploaded, total) =>
-                    {
-                        ctx.Status($"Uploading chunks {uploaded}/{total} ...");
-                        return Task.CompletedTask;
-                    });*/
             });
         }
 
-        if (missingFileChecksums.Count > 0)
+        if (uploadPlan.FileDefinitions.Count > 0)
         {
-            var fileDefs = missingFileChecksums.ToDictionary(
-                fileHash => fileHash,
-                fileHash => (
-                    Chunks: fileHashToChunkMap[fileHash].Select(x => x.Checksum).ToList(),
-                    Length: fileSizeMap[fileHash]
-                ));
-
-            await _progress.RunStatusAsync($"Uploading {fileDefs.Count} file definitions for {version} ...",
-                async ctx =>
-                {
-                    // TODO: Fallback to rest if grpc upload fails (e.g. due to large batch size or network issues)
-                    await _ingestClient.UploadFileDefinitionsAsync(
-                        _repository.Id,
-                        ingestSessionId,
-                        fileDefs,
-                        progressCallback: (uploaded, total) =>
-                        {
-                            ctx.Status($"Uploading file definitions {uploaded}/{total} ...");
-                            return Task.CompletedTask;
-                        });
-                    /*await _api.UploadFileDefinitionsAsync(
-                        _repository.Id,
-                        ingestSessionId,
-                        fileDefs,
-                        progressCallback: (uploaded, total) =>
-                        {
-                            ctx.Status($"Uploading file definitions {uploaded}/{total} ...");
-                            return Task.CompletedTask;
-                        });*/
-                });
+            await _progress.RunStatusAsync($"Uploading {uploadPlan.FileDefinitions.Count} stored content definitions for {version} ...", async ctx =>
+            {
+                await _ingestClient.UploadFileDefinitionsAsync(
+                    _repository.Id,
+                    ingestSessionId,
+                    uploadPlan.FileDefinitions.ToDictionary(x => x.Key, x => x.Value),
+                    progressCallback: (uploaded, total) =>
+                    {
+                        ctx.Status($"Uploading file definitions {uploaded}/{total} ...");
+                        return Task.CompletedTask;
+                    });
+            });
         }
 
-        var allChunkChecksums = fileHashToChunkMap.Values
-            .SelectMany(x => x.Select(e => e.Checksum))
-            .Distinct()
-            .ToList();
-
-        releasePackage.Stats = new ReleaseStats
+        var customProperties = new Dictionary<string, string>
         {
-            ComponentCount = (uint)releasePackage.Components.Count,
-            FileCount = (uint)releasePackage.Components.Sum(x => x.Files.Count),
-            ChunkCount = (uint)allChunkChecksums.Count,
-            RawSize = (ulong)fileSizeMap.Values.Sum(),
-            DedupedSize = (ulong)fileHashToChunkMap.Values.SelectMany(x => x).Sum(x => x.Length)
+            ["svn:tag"] = tagName,
+            ["svn:url"] = tagUrl
         };
+
+        if (tagLog is not null)
+        {
+            if (tagLog.Revision != null)
+                customProperties["svn:revision"] = tagLog.Revision.ToString()!;
+            if (!string.IsNullOrWhiteSpace(tagLog.Author))
+                customProperties["svn:author"] = tagLog.Author;
+        }
+
+        var request = new ReleaseAddOrchestrationRequest(
+            Version: version,
+            Notes: string.IsNullOrEmpty(tagLog?.Message) ? $"Imported from SVN tag {tagName}" : tagLog!.Message,
+            RepositoryName: _repository.Name,
+            RootFolder: string.Empty,
+            ComponentMapFile: null,
+            CustomProperties: customProperties);
+
+        var releasePackage = _releasePackageBuilder.Build(
+            request,
+            ingestionResult,
+            _repository.Id);
 
         await _progress.RunStatusAsync($"Finalizing release {version} ...",
             async _ => { await _api.CreateReleaseAsync(ingestSessionId, _repository.Id.ToString(), releasePackage); });
@@ -520,13 +501,24 @@ public sealed class SvnImportEngine
         return $"1.0.{match.Groups[1].Value}";
     }
 
-    private static string SanitizeFileName(string value)
+    private static Component GetOrAddComponent(ConcurrentDictionary<string, Component> componentsByName, string componentName)
     {
-        var invalid = Path.GetInvalidFileNameChars();
-        var chars = value.Select(c => invalid.Contains(c) ? '_' : c).ToArray();
-        return new string(chars);
+        return componentsByName.GetOrAdd(componentName, name => new Component
+        {
+            Name = name,
+            Files = new List<ReleaseFile>()
+        });
     }
 
+    private static string NormalizeReleasePath(string componentName, string releaseFileName)
+    {
+        var normalized = releaseFileName.Replace('\\', '/').TrimStart('/');
+
+        return componentName.Equals("default", StringComparison.OrdinalIgnoreCase)
+            ? normalized
+            : $"{componentName}/{normalized}";
+    }
+    
     private static string HashStringToHex(string value)
         => new Hash32(Hasher.Hash(Encoding.UTF8.GetBytes(value)).AsSpan()).ToHexString();
 

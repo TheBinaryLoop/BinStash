@@ -70,7 +70,7 @@ public class ReleasePackage
 
     public List<ChunkInfo> Chunks { get; set; } = [];
     public List<string> StringTable { get; set; } = [];
-    public List<Component> Components { get; set; } = [];
+    public List<OutputArtifact> OutputArtifacts { get; set; } = [];
     public ReleaseStats Stats { get; set; } = new();
 }
 

@@ -13,19 +13,13 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Core.Ingestion.Abstractions;
-using BinStash.Core.Ingestion.Execution;
-using BinStash.Core.Ingestion.Models;
+namespace BinStash.Contracts.Release;
 
-namespace BinStash.Core.Ingestion.Formats.Plain;
-
-public sealed class PlainFileFormatHandler : IInputFormatHandler
+public sealed class OutputArtifact
 {
-    public IReadOnlyCollection<string> SupportedFormatIds { get; } = ["file"];
-
-    public Task HandleAsync(InputItem input, DetectedFormat detectedFormat, IngestionPlan plan, IngestionExecutionContext context, CancellationToken ct = default)
-    {
-        context.RegisterOpaqueOutputArtifact(input, detectedFormat.FormatId, true);
-        return Task.CompletedTask;
-    }
+    public required string Path { get; init; }
+    public required string ComponentName { get; init; }
+    public required OutputArtifactKind Kind { get; init; }
+    public required bool RequiresBytePerfectReconstruction { get; init; }
+    public required ArtifactBacking Backing { get; init; }
 }

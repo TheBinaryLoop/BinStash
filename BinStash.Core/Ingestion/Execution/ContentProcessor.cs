@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Buffers;
 using System.Collections.Concurrent;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Chunking;
@@ -24,62 +25,85 @@ namespace BinStash.Core.Ingestion.Execution;
 
 public sealed class ContentProcessor : IContentProcessor
 {
-    public FileHashingResult HashFiles(IngestionResult ingestionResult, int degreeOfParallelism = 0)
+    public StorageHashingResult HashStorageWorkItems(IngestionResult ingestionResult, int degreeOfParallelism = 0)
     {
-        if (ingestionResult.FileBindings.Count == 0)
+        if (ingestionResult.StorageWorkItems.Count == 0)
         {
-            return new FileHashingResult(
-                FileHashes: new Dictionary<Hash32, IReadOnlyList<string>>(),
-                FileSizes: new Dictionary<Hash32, long>(),
-                FileBindings: []);
+            return new StorageHashingResult(
+                ContentHashes: new Dictionary<Hash32, IReadOnlyList<string>>(),
+                ContentSizes: new Dictionary<Hash32, long>(),
+                WorkItemHashes: new Dictionary<string, Hash32>(StringComparer.OrdinalIgnoreCase),
+                ItemResults: [],
+                WorkItems: []);
         }
 
         degreeOfParallelism = degreeOfParallelism <= 0
             ? Environment.ProcessorCount
             : degreeOfParallelism;
 
-        var fileHashes = new ConcurrentDictionary<Hash32, ConcurrentBag<string>>();
-        var fileSizes = new ConcurrentDictionary<Hash32, long>();
-
-        Parallel.ForEach(ingestionResult.FileBindings, new ParallelOptions { MaxDegreeOfParallelism = degreeOfParallelism }, binding =>
+        var contentHashes = new ConcurrentDictionary<Hash32, ConcurrentBag<string>>();
+        var contentSizes = new ConcurrentDictionary<Hash32, long>();
+        var workItemHashes = new ConcurrentDictionary<string, Hash32>(StringComparer.OrdinalIgnoreCase);
+        var itemResults = new ConcurrentBag<StorageHashingItemResult>();
+        
+        Parallel.ForEach(ingestionResult.StorageWorkItems, new ParallelOptions { MaxDegreeOfParallelism = degreeOfParallelism }, workItem =>
+        {
+            byte[]? rented = null;
+            try
             {
-                var input = binding.Input ?? throw new InvalidOperationException("ReleaseFileBinding.Input must be set.");
-                
-                using var stream = OpenInputStream(input);
-                
+                using var stream = workItem.OpenRead();
+
                 var hasher = Hasher.New();
-                Span<byte> buffer = stackalloc byte[65536];
+                rented = ArrayPool<byte>.Shared.Rent(64 * 1024);
                 long totalBytesRead = 0;
 
                 int bytesRead;
-                while ((bytesRead = stream.Read(buffer)) > 0)
+                while ((bytesRead = stream.Read(rented, 0, rented.Length)) > 0)
                 {
-                    hasher.Update(buffer[..bytesRead]);
+                    hasher.Update(rented.AsSpan(0, bytesRead));
                     totalBytesRead += bytesRead;
                 }
 
-                var fileHashBytes = hasher.Finalize();
-                var fileHash = new Hash32(fileHashBytes.AsSpan());
+                var hash = new Hash32(hasher.Finalize().AsSpan());
 
-                binding.File.Hash = fileHash;
+                contentHashes.GetOrAdd(hash, _ => new ConcurrentBag<string>())
+                    .Add(workItem.Identity);
 
-                var key = BuildBindingIdentity(input);
-                fileHashes.GetOrAdd(fileHash, _ => new ConcurrentBag<string>()) .Add(key);
+                contentSizes[hash] = totalBytesRead;
+                workItemHashes[workItem.Identity] = hash;
 
-                fileSizes[fileHash] = totalBytesRead;
-            });
+                itemResults.Add(new StorageHashingItemResult(
+                    WorkItemIdentity: workItem.Identity,
+                    Hash: hash,
+                    Length: totalBytesRead));
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Failed hashing storage work item '{workItem.Identity}' " +
+                    $"(kind={workItem.Kind}, source='{workItem.SourcePath}', entry='{workItem.EntryPath}').",
+                    ex);
+            }
+            finally
+            {
+                if (rented != null)
+                    ArrayPool<byte>.Shared.Return(rented);
+            }
+        });
 
-        var frozenHashes = fileHashes.ToDictionary(x => x.Key, x => (IReadOnlyList<string>)x.Value.ToList());
+        var frozenHashes = contentHashes.ToDictionary(x => x.Key, IReadOnlyList<string> (x) => x.Value.ToList());
 
-        return new FileHashingResult(
-            FileHashes: frozenHashes,
-            FileSizes: new Dictionary<Hash32, long>(fileSizes),
-            FileBindings: ingestionResult.FileBindings);
+        return new StorageHashingResult(
+            ContentHashes: frozenHashes,
+            ContentSizes: new Dictionary<Hash32, long>(contentSizes),
+            WorkItemHashes: new Dictionary<string, Hash32>(workItemHashes, StringComparer.OrdinalIgnoreCase),
+            ItemResults: itemResults.ToList(),
+            WorkItems: ingestionResult.StorageWorkItems);
     }
 
-    public ChunkMapGenerationResult GenerateChunkMaps(FileHashingResult hashingResult, IngestionResult ingestionResult, IChunker chunker, IReadOnlySet<Hash32> missingFileChecksums, int degreeOfParallelism = 0)
+    public ChunkMapGenerationResult GenerateChunkMaps(StorageHashingResult hashingResult, IngestionResult ingestionResult, IChunker chunker, IReadOnlySet<Hash32> missingContentHashes, int degreeOfParallelism = 0)
     {
-        if (hashingResult.FileBindings.Count == 0 || missingFileChecksums.Count == 0)
+        if (hashingResult.WorkItems.Count == 0 || missingContentHashes.Count == 0)
         {
             return new ChunkMapGenerationResult(
                 FileChunkMaps: new Dictionary<Hash32, List<ChunkMapEntry>>());
@@ -90,21 +114,22 @@ public sealed class ContentProcessor : IContentProcessor
             : degreeOfParallelism;
 
         var fileChunkMaps = new ConcurrentDictionary<Hash32, List<ChunkMapEntry>>();
-        var missingEntries = hashingResult.FileBindings
-            .Where(x => missingFileChecksums.Contains(x.File.Hash))
-            .ToList();
-
-        Parallel.ForEach(missingEntries, new ParallelOptions { MaxDegreeOfParallelism = degreeOfParallelism }, binding =>
+        
+        Parallel.ForEach(hashingResult.WorkItems, new ParallelOptions { MaxDegreeOfParallelism = degreeOfParallelism }, workItem =>
         {
-            var input = binding.Input ?? throw new InvalidOperationException("ReleaseFileBinding.Input must be set.");
+            if (!hashingResult.WorkItemHashes.TryGetValue(workItem.Identity, out var hash))
+                return;
 
-            var chunkMap = GenerateChunkMap(input, chunker).ToList();
-            fileChunkMaps.TryAdd(binding.File.Hash, chunkMap);
+            if (!missingContentHashes.Contains(hash))
+                return;
+
+            var chunkMap = GenerateChunkMap(workItem, chunker).ToList();
+            fileChunkMaps.TryAdd(hash, chunkMap);
         });
 
         foreach (var kvp in fileChunkMaps)
         {
-            if (ingestionResult.Contents.TryGetValue(kvp.Key, out var content))
+            if (ingestionResult.StoredContents.TryGetValue(kvp.Key, out var content))
             {
                 content.ChunkMap = kvp.Value;
             }
@@ -134,36 +159,36 @@ public sealed class ContentProcessor : IContentProcessor
             : input.AbsolutePath;
     }
 
-    private static IEnumerable<ChunkMapEntry> GenerateChunkMap(InputItem input, IChunker chunker)
+    private static IEnumerable<ChunkMapEntry> GenerateChunkMap(StorageWorkItem workItem, IChunker chunker)
     {
-        if (input.Kind == InputItemKind.FileSystemFile)
-            return chunker.GenerateChunkMap(input.AbsolutePath);
+        if (workItem.Kind == StorageWorkItemKind.OpaqueFile && !string.IsNullOrWhiteSpace(workItem.SourcePath))
+            return chunker.GenerateChunkMap(workItem.SourcePath);
 
-        if (input.OpenRead == null)
-            throw new InvalidOperationException("Container entry input requires OpenRead.");
+        using var stream = workItem.OpenRead();
+        var chunkMap = chunker.GenerateChunkMap(stream).ToList();
 
-        var locator = BuildChunkSourceLocator(input);
-
-        return chunker.GenerateChunkMap(input.OpenRead())
-            .Select(x => new ChunkMapEntry
+        if (workItem.Kind == StorageWorkItemKind.ExtractedContainerMember)
+        {
+            return chunkMap.Select(x => new ChunkMapEntry
             {
-                FilePath = locator,
+                FilePath = BuildChunkSourceLocator(workItem),
                 Offset = x.Offset,
                 Length = x.Length,
                 Checksum = x.Checksum
-            })
-            .ToList();
+            }).ToList();
+        }
+
+        return chunkMap;
     }
 
-    private static string BuildChunkSourceLocator(InputItem input)
+    private static string BuildChunkSourceLocator(StorageWorkItem workItem)
     {
-        if (input.Kind == InputItemKind.FileSystemFile)
-            return input.AbsolutePath;
+        if (workItem.Kind == StorageWorkItemKind.OpaqueFile)
+            return workItem.SourcePath ?? string.Empty;
 
-        if (string.IsNullOrWhiteSpace(input.EntryPath))
-            throw new InvalidOperationException("Container entry input requires EntryPath.");
+        if (string.IsNullOrWhiteSpace(workItem.SourcePath) || string.IsNullOrWhiteSpace(workItem.EntryPath))
+            throw new InvalidOperationException("Extracted container member work item requires SourcePath and EntryPath.");
 
-        // Format: zip|<outer-zip-path>|<entry-path>
-        return $"zip|{input.AbsolutePath}|{input.EntryPath}";
+        return $"zip|{workItem.SourcePath}|{workItem.EntryPath}";
     }
 }

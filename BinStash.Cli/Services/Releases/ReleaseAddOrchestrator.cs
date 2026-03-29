@@ -20,7 +20,9 @@ using BinStash.Contracts.Repo;
 using BinStash.Core.Chunking;
 using BinStash.Core.Entities;
 using BinStash.Core.Ingestion.Abstractions;
+using BinStash.Core.Ingestion.Execution;
 using BinStash.Core.Ingestion.Models;
+using Blake3;
 using Spectre.Console;
 
 namespace BinStash.Cli.Services.Releases;
@@ -30,32 +32,22 @@ public sealed class ReleaseAddOrchestrator
     private readonly ComponentMapLoader _componentMapLoader;
     private readonly IInputDiscoveryService _inputDiscoveryService;
     private readonly IReleaseIngestionEngine _releaseIngestionEngine;
+    private readonly ReleasePackageBuilder  _releasePackageBuilder;
     private readonly IContentProcessor _contentProcessor;
     private readonly ServerUploadPlanner _serverUploadPlanner;
 
-    public ReleaseAddOrchestrator(ComponentMapLoader componentMapLoader, IReleaseIngestionEngine releaseIngestionEngine,
-        IInputDiscoveryService inputDiscoveryService, IContentProcessor contentProcessor,
-        ServerUploadPlanner serverUploadPlanner)
+    public ReleaseAddOrchestrator(ComponentMapLoader componentMapLoader, IReleaseIngestionEngine releaseIngestionEngine, ReleasePackageBuilder releasePackageBuilder, IInputDiscoveryService inputDiscoveryService, IContentProcessor contentProcessor, ServerUploadPlanner serverUploadPlanner)
     {
         _componentMapLoader = componentMapLoader;
         _releaseIngestionEngine = releaseIngestionEngine;
         _inputDiscoveryService = inputDiscoveryService;
+        _releasePackageBuilder = releasePackageBuilder;
         _contentProcessor = contentProcessor;
         _serverUploadPlanner = serverUploadPlanner;
     }
 
     public async Task RunAsync(IAnsiConsole console, BinStashApiClient restClient, BinStashGrpcClient grpcClient, ReleaseAddOrchestrationRequest request, Action<string>? log = null, CancellationToken ct = default)
     {
-        var releasePackage = new ReleasePackage
-        {
-            Version = request.Version,
-            Notes = request.Notes,
-            CustomProperties = request.CustomProperties,
-            Components = new(),
-            Chunks = new(),
-            Stats = new()
-        };
-
         await console.Status()
             .AutoRefresh(true)
             .Spinner(Spinner.Known.Dots)
@@ -79,11 +71,13 @@ public sealed class ReleaseAddOrchestrator
                 if (releases != null && releases.Any(r =>
                         r.Version.Equals(request.Version, StringComparison.OrdinalIgnoreCase)))
                 {
-                    throw new InvalidOperationException($"Release with version '{request.Version}' already exists in repository '{repository.Name}'.");
+                    throw new InvalidOperationException(
+                        $"Release with version '{request.Version}' already exists in repository '{repository.Name}'.");
                 }
 
                 ctx.Status($"Fetching chunker settings for repository '{repository.Name}'...");
-                repository = await restClient.GetRepositoryAsync(repository.Id) ?? throw new InvalidOperationException("Repository disappeared while fetching details.");
+                repository = await restClient.GetRepositoryAsync(repository.Id)
+                             ?? throw new InvalidOperationException("Repository disappeared while fetching details.");
 
                 if (repository.Chunker == null)
                     throw new InvalidOperationException($"Repository '{repository.Name}' does not have a chunker configured.");
@@ -93,8 +87,10 @@ public sealed class ReleaseAddOrchestrator
                 log?.Invoke($"Using chunker: {chunker.GetType().Name}");
 
                 ctx.Status("Creating component map...");
-                var componentMap =
-                    _componentMapLoader.Load(releasePackage, request.ComponentMapFile, request.RootFolder, log);
+                var componentMap = _componentMapLoader.Load(
+                    request.ComponentMapFile,
+                    request.RootFolder,
+                    log);
 
                 if (componentMap.Count == 0)
                     throw new InvalidOperationException("No components found in the specified folder.");
@@ -107,87 +103,71 @@ public sealed class ReleaseAddOrchestrator
                 log?.Invoke($"Discovered {inputs.Count} files");
 
                 ctx.Status("Building ingestion graph...");
-                var ingestionResult = await _releaseIngestionEngine.IngestAsync(
-                    inputs,
-                    componentMap,
-                    ct);
+                var ingestionResult = await _releaseIngestionEngine.IngestAsync(inputs, componentMap, ct);
 
-                foreach (var binding in ingestionResult.FileBindings)
-                {
-                    binding.Component.Files.Add(binding.File);
-                }
+                log?.Invoke($"Ingestion produced {ingestionResult.OutputArtifacts.Count} output artifacts");
+                log?.Invoke($"Ingestion produced {ingestionResult.StorageWorkItems.Count} storage work items");
+                log?.Invoke($"Ingestion produced {ingestionResult.LogicalArtifacts.Count} logical artifacts");
 
-                log?.Invoke($"Ingestion produced {ingestionResult.Artifacts.Count} logical artifacts");
-                log?.Invoke($"Ingestion produced {ingestionResult.FileBindings.Count} file bindings");
-
-                var artifactBreakdown = ingestionResult.Artifacts
-                    .GroupBy(x => x.Kind)
+                var outputArtifactBreakdown = ingestionResult.OutputArtifacts
+                    .GroupBy(x => x.Backing.GetType().Name)
                     .Select(x => $"{x.Key}={x.Count()}")
                     .ToArray();
 
-                log?.Invoke($"Artifact breakdown: {string.Join(", ", artifactBreakdown)}");
-
-                var containerCount = ingestionResult.Artifacts.Count(x => x.Kind == ArtifactKind.Container);
-                var virtualChildCount = ingestionResult.Artifacts.Count(x => x.IsVirtual);
-                var extractedChildren = ingestionResult.FileBindings.Count(x => x.Input?.Kind == InputItemKind.ContainerEntry);
-
-                log?.Invoke($"Container artifacts: {containerCount}");
-                log?.Invoke($"Virtual child artifacts: {virtualChildCount}");
-                log?.Invoke($"Selected extracted container entries: {extractedChildren}");
+                log?.Invoke($"Output artifact backing breakdown: {string.Join(", ", outputArtifactBreakdown)}");
 
                 ctx.Status("Requesting ingest session...");
-                var ingestSessionId = await restClient.CreateIngestSessionAsync(repository.Id, releasePackage.Version);
+                var ingestSessionId = await restClient.CreateIngestSessionAsync(repository.Id, request.Version);
 
                 log?.Invoke($"Received ingest session ID: {ingestSessionId}");
 
-                ctx.Status("Hashing files...");
-                var hashingResult = _contentProcessor.HashFiles(ingestionResult);
-
-                foreach (var binding in hashingResult.FileBindings)
+                ctx.Status($"Hashing {ingestionResult.StorageWorkItems.Count} storage work items...");
+                StorageHashingResult hashingResult;
+                try
                 {
-                    var input = binding.Input ?? throw new InvalidOperationException("ReleaseFileBinding.Input must be set.");
-
-                    var hash = binding.File.Hash;
-
-                    if (hashingResult.FileSizes.TryGetValue(hash, out var size))
-                    {
-                        ingestionResult.Contents[hash] = new ContentDescriptor
-                        {
-                            FileHash = hash,
-                            Length = size,
-                            SourcePath = input.AbsolutePath,
-                            FormatId = input.ContainerFormatId,
-                            IsContainerEntry = input.Kind == InputItemKind.ContainerEntry,
-                            ParentLogicalPath = input.ParentLogicalPath,
-                            EntryPath = input.EntryPath
-                        };
-                    }
-
-                    foreach (var artifact in ingestionResult.Artifacts.Where(x =>
-                                 string.Equals(x.RelativePathWithinComponent, input.RelativePathWithinComponent, StringComparison.OrdinalIgnoreCase)
-                                 && string.Equals(x.ParentLogicalPath, input.ParentLogicalPath, StringComparison.OrdinalIgnoreCase)
-                                 && !x.IsVirtual))
-                    {
-                        artifact.FileHash = hash;
-                        artifact.Length = size;
-                    }
+                    hashingResult = _contentProcessor.HashStorageWorkItems(ingestionResult);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException("Hashing storage work items failed.", ex);
                 }
 
-                log?.Invoke($"Computed {hashingResult.FileHashes.Count} unique file hashes");
+                var bindContext = new IngestionExecutionContext(ingestionResult);
+                foreach (var item in hashingResult.ItemResults)
+                {
+                    var workItem = hashingResult.WorkItems.First(x =>
+                        string.Equals(x.Identity, item.WorkItemIdentity, StringComparison.OrdinalIgnoreCase));
+
+                    bindContext.BindStoredContent(workItem, item.Hash, item.Length);
+                }
+
+                log?.Invoke($"Computed {hashingResult.ContentHashes.Count} unique stored content hashes");
 
                 ctx.Status("Requesting missing file definitions...");
-                var missingFileChecksums = await restClient.GetMissingFileChecksumsAsync(repository.Id, ingestSessionId,
-                    hashingResult.FileHashes.Keys.ToList());
+                var missingFileChecksums = await restClient.GetMissingFileChecksumsAsync(
+                    repository.Id,
+                    ingestSessionId,
+                    hashingResult.ContentHashes.Keys.ToList());
 
-                log?.Invoke($"Found {missingFileChecksums.Count} missing files");
+                log?.Invoke($"Found {missingFileChecksums.Count} missing stored contents");
 
-                ctx.Status("Generating chunk maps for missing files...");
-                var chunkMapResult = _contentProcessor.GenerateChunkMaps(hashingResult, ingestionResult, chunker, new HashSet<Hash32>(missingFileChecksums));
+                ctx.Status("Generating chunk maps for missing stored contents...");
+                var chunkMapResult = _contentProcessor.GenerateChunkMaps(
+                    hashingResult,
+                    ingestionResult,
+                    chunker,
+                    new HashSet<Hash32>(missingFileChecksums));
 
-                log?.Invoke($"Generated chunk maps for {chunkMapResult.FileChunkMaps.Count} files");
+                log?.Invoke($"Generated chunk maps for {chunkMapResult.FileChunkMaps.Count} stored contents");
 
                 ctx.Status("Planning upload...");
-                var uploadPlan = await _serverUploadPlanner.CreateAsync(restClient, repository.Id, ingestSessionId, hashingResult, chunkMapResult, ct);
+                var uploadPlan = await _serverUploadPlanner.CreateAsync(
+                    restClient,
+                    repository.Id,
+                    ingestSessionId,
+                    hashingResult,
+                    chunkMapResult,
+                    ct);
 
                 log?.Invoke($"Found {uploadPlan.MissingChunkChecksums.Count} missing chunks");
                 log?.Invoke($"Selected {uploadPlan.MissingChunkEntries.Count} chunk entries for upload");
@@ -195,50 +175,38 @@ public sealed class ReleaseAddOrchestrator
                 if (uploadPlan.MissingChunkEntries.Count > 0)
                 {
                     ctx.Status("Uploading missing chunks...");
-                    // TODO: Fallback to rest if grpc is not available
-                    await grpcClient.UploadChunksAsync(repository.Id, ingestSessionId, chunker,
+                    await grpcClient.UploadChunksAsync(
+                        repository.Id,
+                        ingestSessionId,
+                        chunker,
                         uploadPlan.MissingChunkEntries.ToList(),
                         progressCallback: (uploaded, total) =>
                         {
                             ctx.Status($"Uploading missing chunks ({uploaded}/{total}, {(double)uploaded / total:P2})...");
                             return Task.CompletedTask;
-                        }, cancellationToken: ct);
-                    /*await restClient.UploadChunksAsync(repository.Id, ingestSessionId, chunker,
-                        uploadPlan.MissingChunkEntries.ToList(),
-                        progressCallback: (uploaded, total) =>
-                        {
-                            ctx.Status(
-                                $"Uploading missing chunks ({uploaded}/{total}, {(double)uploaded / total:P2})...");
-                            return Task.CompletedTask;
-                        }, cancellationToken: ct);*/
+                        },
+                        cancellationToken: ct);
                 }
 
                 if (uploadPlan.FileDefinitions.Count > 0)
                 {
                     ctx.Status("Uploading file definitions...");
-                    // TODO: Fallback to rest if grpc is not available
-                    await grpcClient.UploadFileDefinitionsAsync(repository.Id, ingestSessionId,
+                    await grpcClient.UploadFileDefinitionsAsync(
+                        repository.Id,
+                        ingestSessionId,
                         uploadPlan.FileDefinitions.ToDictionary(x => x.Key, x => x.Value),
                         progressCallback: (uploaded, total) =>
                         {
                             ctx.Status($"Uploading file definitions ({uploaded}/{total}, {(double)uploaded / total:P2})...");
                             return Task.CompletedTask;
-                        }, cancellationToken: ct);
-                    /*await restClient.UploadFileDefinitionsAsync(repository.Id, ingestSessionId,
-                        uploadPlan.FileDefinitions.ToDictionary(x => x.Key, x => x.Value),
-                        progressCallback: (uploaded, total) =>
-                        {
-                            ctx.Status(
-                                $"Uploading file definitions ({uploaded}/{total}, {(double)uploaded / total:P2})...");
-                            return Task.CompletedTask;
-                        }, cancellationToken: ct);*/
+                        },
+                        cancellationToken: ct);
                 }
 
-                releasePackage.Stats.ComponentCount = (uint)releasePackage.Components.Count;
-                releasePackage.Stats.FileCount = (uint)releasePackage.Components.Sum(x => x.Files.Count);
-                releasePackage.Stats.ChunkCount = (uint)chunkMapResult.FileChunkMaps.Values.Sum(x => x.Count);
-                releasePackage.Stats.RawSize = (ulong)hashingResult.FileSizes.Values.Sum(x => x);
-                releasePackage.Stats.DedupedSize = (ulong)uploadPlan.MissingChunkEntries.Sum(x => (long)x.Length);
+                var releasePackage = _releasePackageBuilder.Build(
+                    request,
+                    ingestionResult,
+                    repository.Id);
 
                 ctx.Status("Creating release...");
                 await restClient.CreateReleaseAsync(ingestSessionId, repository.Id.ToString(), releasePackage);

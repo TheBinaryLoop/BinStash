@@ -13,13 +13,6 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Contracts.Hashing;
-using BinStash.Core.Chunking;
+namespace BinStash.Contracts.Release;
 
-namespace BinStash.Core.Ingestion.Models;
-
-public sealed record ContentProcessingResult(
-    IReadOnlyDictionary<Hash32, IReadOnlyList<string>> FileHashes,
-    IReadOnlyDictionary<Hash32, long> FileSizes,
-    IReadOnlyList<ProcessedReleaseFileEntry> FileEntries,
-    IReadOnlyDictionary<Hash32, List<ChunkMapEntry>> FileChunkMaps);
+public abstract class ArtifactBacking;

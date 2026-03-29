@@ -13,9 +13,22 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Core.Ingestion.Policies;
+using BinStash.Contracts.Hashing;
+using BinStash.Core.Chunking;
 
-public class ContainerInspectionHeuristics
+namespace BinStash.Core.Ingestion.Models;
+
+public sealed class StoredContent
 {
-    
+    public required Hash32 Hash { get; init; }
+    public required long Length { get; init; }
+
+    public string? SourcePath { get; init; }
+    public string? EntryPath { get; init; }
+    public string? OutputArtifactPath { get; init; }
+    public string? FormatId { get; init; }
+
+    public StorageWorkItemKind Kind { get; init; }
+
+    public List<ChunkMapEntry>? ChunkMap { get; set; }
 }

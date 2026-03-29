@@ -17,6 +17,7 @@ using System.Collections.Concurrent;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Ingest;
+using BinStash.Contracts.Release;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
@@ -371,7 +372,7 @@ public static class IngestSessionEndpoints
             {
                 Hex = g.Key,
                 Hash = Hash32.FromHexString(g.Key),
-                Data = g.First().Data
+                g.First().Data
             })
             .ToList();
 
@@ -460,7 +461,12 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
     
-    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, HttpRequest request)
+    private static async Task<IResult> FinalizeIngestSessionAsync(
+    Guid repoId,
+    Guid sessionId,
+    BinStashDbContext db,
+    IChunkStoreService chunkStoreService,
+    HttpRequest request)
     {
         var ingestSession = await db.IngestSessions.FindAsync(sessionId);
         var repo = await db.Repositories.FindAsync(repoId);
@@ -540,28 +546,31 @@ public static class IngestSessionEndpoints
         ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;
         ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
 
-        // Compute total logical bytes from file definitions, counting every file in the release.
-        var releaseFiles = releasePackage.Components.SelectMany(c => c.Files).ToList();
-        var distinctFileHashes = releaseFiles.Select(f => f.Hash).Distinct().ToList();
+        var outputArtifacts = releasePackage.OutputArtifacts;
 
-        var fileLengths = await db.FileDefinitions
-            .AsNoTracking()
-            .Where(x => x.ChunkStoreId == repo.ChunkStoreId && distinctFileHashes.Contains(x.Checksum))
-            .ToDictionaryAsync(x => x.Checksum, x => x.Length);
+        var allReferencedContentHashes = CollectReferencedContentHashes(outputArtifacts);
+        var distinctContentHashes = allReferencedContentHashes.Distinct().ToList();
+
+        var fileLengths = distinctContentHashes.Count == 0
+            ? new Dictionary<Hash32, long>()
+            : await db.FileDefinitions
+                .AsNoTracking()
+                .Where(x => x.ChunkStoreId == repo.ChunkStoreId && distinctContentHashes.Contains(x.Checksum))
+                .ToDictionaryAsync(x => x.Checksum, x => x.Length);
 
         ulong totalLogicalBytes = 0;
-        foreach (var fileEntry in releaseFiles)
+        foreach (var artifact in outputArtifacts)
         {
-            if (fileLengths.TryGetValue(fileEntry.Hash, out var len))
-                totalLogicalBytes += (ulong)len;
+            totalLogicalBytes += CalculateLogicalArtifactSize(artifact, fileLengths);
         }
 
         ingestSession.TotalLogicalBytes = (long)totalLogicalBytes;
 
-        // Derive unique chunk count in release from the file definitions.
-        var fileDefinitionBytes = await chunkStoreService.RetrieveFileDefinitionsAsync(
-            store,
-            distinctFileHashes.Select(x => x.ToHexString()).ToArray());
+        var fileDefinitionBytes = distinctContentHashes.Count == 0
+            ? new Dictionary<string, byte[]>()
+            : await chunkStoreService.RetrieveFileDefinitionsAsync(
+                store,
+                distinctContentHashes.Select(x => x.ToHexString()).ToArray());
 
         var releaseUniqueChunks = new HashSet<Hash32>();
         foreach (var fd in fileDefinitionBytes.Values)
@@ -569,6 +578,12 @@ public static class IngestSessionEndpoints
             foreach (var chunkHash in ChecksumCompressor.TransposeDecompressHashes(fd))
                 releaseUniqueChunks.Add(chunkHash);
         }
+
+        var fileArtifactsInRelease = outputArtifacts.Count(x => x.Kind == OutputArtifactKind.File);
+        var componentCountInRelease = outputArtifacts
+            .Select(x => x.ComponentName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
 
         var releaseMetrics = new ReleaseMetrics
         {
@@ -586,8 +601,8 @@ public static class IngestSessionEndpoints
             MetaBytesFull = ingestSession.MetadataSize,
             MetaBytesFullDiff = 0,
 
-            ComponentsInRelease = releasePackage.Components.Count,
-            FilesInRelease = releasePackage.Components.Sum(c => c.Files.Count),
+            ComponentsInRelease = componentCountInRelease,
+            FilesInRelease = fileArtifactsInRelease,
 
             IncrementalCompressionRatio =
                 ingestSession.NewCompressedBytes > 0
@@ -612,7 +627,7 @@ public static class IngestSessionEndpoints
 
             NewDataPercent =
                 totalLogicalBytes > 0
-                    ? (double)ingestSession.NewUniqueLogicalBytes / (double)totalLogicalBytes * 100.0
+                    ? (double)ingestSession.NewUniqueLogicalBytes / totalLogicalBytes * 100.0
                     : 0.0
         };
 
@@ -620,5 +635,71 @@ public static class IngestSessionEndpoints
         await db.SaveChangesAsync();
 
         return Results.Created($"/api/releases/{releaseId}", null);
+    }
+    
+    private static List<Hash32> CollectReferencedContentHashes(IEnumerable<OutputArtifact> outputArtifacts)
+    {
+        var hashes = new List<Hash32>();
+
+        foreach (var artifact in outputArtifacts)
+        {
+            switch (artifact.Backing)
+            {
+                case OpaqueBlobBacking opaque:
+                    if (opaque.ContentHash != null)
+                        hashes.Add(opaque.ContentHash.Value);
+                    break;
+
+                case ReconstructedContainerBacking reconstructed:
+                    foreach (var member in reconstructed.Members)
+                    {
+                        if (member.ContentHash != null)
+                            hashes.Add(member.ContentHash.Value);
+                    }
+                    break;
+            }
+        }
+
+        return hashes;
+    }
+
+    private static ulong CalculateLogicalArtifactSize(OutputArtifact artifact, IReadOnlyDictionary<Hash32, long> fileLengths)
+    {
+        return artifact.Backing switch
+        {
+            OpaqueBlobBacking opaque => CalculateOpaqueArtifactSize(opaque, fileLengths),
+            ReconstructedContainerBacking reconstructed => CalculateReconstructedArtifactSize(reconstructed, fileLengths),
+            _ => 0UL
+        };
+    }
+
+    private static ulong CalculateOpaqueArtifactSize(OpaqueBlobBacking backing, IReadOnlyDictionary<Hash32, long> fileLengths)
+    {
+        if (backing.Length.HasValue)
+            return (ulong)backing.Length.Value;
+
+        if (backing.ContentHash != null && fileLengths.TryGetValue(backing.ContentHash.Value, out var len))
+            return (ulong)len;
+
+        return 0UL;
+    }
+
+    private static ulong CalculateReconstructedArtifactSize(ReconstructedContainerBacking backing, IReadOnlyDictionary<Hash32, long> fileLengths)
+    {
+        ulong total = 0;
+
+        foreach (var member in backing.Members)
+        {
+            if (member.Length.HasValue)
+            {
+                total += (ulong)member.Length.Value;
+                continue;
+            }
+
+            if (member.ContentHash != null && fileLengths.TryGetValue(member.ContentHash.Value, out var len))
+                total += (ulong)len;
+        }
+
+        return total;
     }
 }
