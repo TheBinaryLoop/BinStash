@@ -42,10 +42,27 @@ CLI-side orchestration: `ReleaseAddOrchestrator` → `ServerUploadPlanner` + `Co
 ## Release format (.rdef)
 
 - Custom binary format produced by `ReleasePackageSerializer`.
-- Sections: transpose-compressed chunk-hash table, tokenized component/file name strings.
-- All sections are Zstd-compressed.
-- Varint encoding for sizes.
-- Snapshot/regression tests in `BinStash.Serializers.Tests` guard format stability.
+- **Current version: V4** (write path as of 2026-04-13). V1/V2/V3 deserialization retained for backward compatibility.
+- Fixed 6-byte header: magic `BPKG` (4 bytes) + version byte + flags byte.
+- Sections (each prefixed by id byte + flags byte + varint length): all individually Zstd-compressed when `EnableCompression = true`.
+- **V4 section layout:**
+  - `0x01` metadata: version string, releaseId, repoId, notes, createdAt (varint Unix seconds)
+  - `0x02` content hashes: BLAKE3 hashes via `ChecksumCompressor.TransposeCompress` (column-transposition + per-column Zstd)
+  - `0x03` token table: deduplicated, byte-sorted path *segments* (not full paths). Each entry: varint length + UTF-8 bytes. All lengths first, then all bytes.
+  - `0x04` custom properties: varint count + (key_token_idx, value_token_idx) pairs
+  - `0x05` output artifacts: varint count + per-artifact record: `[seg_count] [seg0_idx] ... [segN_idx] [kind byte] [bytePerfect byte] [backingType byte]` — no `ComponentNameIndex`, no `BackingIndex`; backing index is implicit (k-th artifact of BackingType=OpaqueBlob maps to k-th entry in §0x06; k-th ReconstructedContainer maps to k-th entry in §0x07)
+  - `0x06` opaque backings: varint count + (contentHashIndex varint, length varint) pairs
+  - `0x07` reconstructed backings: varint count + (formatIdTokenIdx, reconstructionKind byte, memberStart varint, memberCount varint, recipePayloadIndex varint)
+  - `0x08` container members: varint count + per-member: `[seg_count] [seg0_idx] ... [segN_idx] [contentHashIndex varint] [length varint]`
+  - `0x09` recipe payloads: varint count + (varint length + bytes) per payload
+  - `0x0A` stats: componentCount, fileCount, chunkCount, rawSize, dedupedSize (all varints)
+- **V4 size analysis (real 11,049-artifact dataset):**
+  - V4 compressed: 178,795 B vs V2: 231,289 B (−22.7%), vs V3: significantly smaller
+  - §0x05 (output-artifacts): 29,924 B after BackingIndex elimination (was 57,641 B before, was 135,607 B in V3)
+  - §0x02 (content-hashes): 107,656 B — dominant section, unavoidable (pure data + internal transpose+Zstd)
+- **`ComponentName` in V4:** Not stored on wire. On deserialization, derived as `tokenTable[pathTokenIndices[0]]` (first path segment). The `OutputArtifact.ComponentName` property on the domain model is still populated.
+- Varint encoding for sizes via `VarIntUtils` (LEB128).
+- Round-trip tests in `BinStash.Serializers.Tests` guard correctness (47 tests total).
 
 ## Authentication and authorization
 

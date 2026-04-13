@@ -119,7 +119,7 @@ public class BoundedStreamSpecs
         var data = new byte[] { 1, 2 };
         var s = Wrap(data, 2);
         var buf1 = new byte[2];
-        s.Read(buf1, 0, 2); // consume all
+        s.ReadExactly(buf1, 0, 2); // consume all
         var buf2 = new byte[2];
         s.Read(buf2, 0, 2).Should().Be(0);
     }
@@ -130,7 +130,7 @@ public class BoundedStreamSpecs
         var data = new byte[] { 10, 20, 30 };
         var s = Wrap(data, 3);
         var buf = new byte[2];
-        s.Read(buf, 0, 2);
+        s.ReadExactly(buf, 0, 2);
         s.Position.Should().Be(2);
     }
 
@@ -163,7 +163,7 @@ public class BoundedStreamSpecs
         var data = new byte[] { 1, 2 };
         var s = Wrap(data, 2);
         Span<byte> buf = new byte[2];
-        s.Read(buf);
+        s.ReadExactly(buf);
         s.Read(buf).Should().Be(0);
     }
 
@@ -175,8 +175,8 @@ public class BoundedStreamSpecs
         var data = Enumerable.Range(0, 10).Select(i => (byte)i).ToArray();
         var s = Wrap(data, 10);
         var buf = new byte[3];
-        s.Read(buf, 0, 3); // pos = 3
-        s.Read(buf, 0, 3); // pos = 6
+        s.ReadExactly(buf, 0, 3); // pos = 3
+        s.ReadExactly(buf, 0, 3); // pos = 6
         s.Position.Should().Be(6);
         s.BitsRemaining().Should().Be(4); // 10 - 6 = 4 bytes remain
     }

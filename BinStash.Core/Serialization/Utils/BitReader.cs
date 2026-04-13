@@ -22,7 +22,6 @@ internal sealed class BitReader
     // - The ReadOnlySpan<byte> ctor keeps compatibility and copies once.
     private readonly byte[] _data;
     private readonly int _start;
-    private readonly int _length; // bytes available from _start
     private int _byteIndex;       // relative to _start
     private int _bitIndex;        // 0..7 within current byte
 
@@ -37,7 +36,7 @@ internal sealed class BitReader
         if (length < 0 || offset + length > data.Length) throw new ArgumentOutOfRangeException(nameof(length));
         _data = data;
         _start = offset;
-        _length = length;
+        BitsRemaining = length;
     }
 
     /// <summary>Compatibility: accepts a span but copies once.</summary>
@@ -45,11 +44,11 @@ internal sealed class BitReader
     {
         _data = data.ToArray(); // keep original semantics
         _start = 0;
-        _length = _data.Length;
+        BitsRemaining = _data.Length;
     }
 
     /// <summary>Bits remaining in the packed buffer.</summary>
-    public int BitsRemaining => (_length - _byteIndex) * 8 - _bitIndex;
+    public int BitsRemaining => (field - _byteIndex) * 8 - _bitIndex;
 
     /// <summary>Total bytes consumed so far.</summary>
     public int BytesConsumed => _byteIndex + (_bitIndex > 0 ? 1 : 0);

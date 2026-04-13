@@ -28,13 +28,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\BinStash.Contracts\BinStash.Contracts.csproj" />
-    <ProjectReference Include="..\BinStash.Core\BinStash.Core.csproj" />
+    <EmbeddedResource Include="TestData\*.rdef" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Remove="TestData\30af241bade9f2d1ca1ceb7d1311dc18de39bab337dcc54372f032586d120ae9.rdef" />
-    <EmbeddedResource Include="TestData\30af241bade9f2d1ca1ceb7d1311dc18de39bab337dcc54372f032586d120ae9.rdef" />
+    <ProjectReference Include="..\BinStash.Contracts\BinStash.Contracts.csproj" />
+    <ProjectReference Include="..\BinStash.Core\BinStash.Core.csproj" />
   </ItemGroup>
 
 </Project>

@@ -2,7 +2,7 @@
 
 ## Current work focus
 
-As of 2026-04-13, Memory Bank fully initialized from code inspection. No active feature branch has been identified. The project is in alpha status.
+As of 2026-04-13, implemented the V4 `.rdef` release package format, completing the efficiency improvement evaluation that was in progress.
 
 ## Recent changes (observed from code)
 
@@ -10,6 +10,7 @@ As of 2026-04-13, Memory Bank fully initialized from code inspection. No active 
 - `BinStash.Core` has a file excluded from compilation: `Ingestion/Models/StorageStrategy.cs` (removed via `<Compile Remove=...>`).
 - `SingleTenantBootstrapper` hosted service is registered but commented out in `Program.cs`.
 - Scalar API reference UI is wired for Development mode (`/scalar`).
+- **V4 release format implemented (2026-04-13):** `ReleasePackageSerializer` bumped to `Version = 4`. Token-based path encoding replaces full-path string table entries. See systemPatterns.md for details.
 
 ## Known discrepancies / items to verify
 
@@ -28,6 +29,10 @@ As of 2026-04-13, Memory Bank fully initialized from code inspection. No active 
 - Tier 2 unit tests implemented (2026-04-13): `ChecksumCompressorSpecs` (22 tests) and `ZipReconstructionPlannerSpecs` (34 tests). Total after tier 2: 283 tests passing. `CanonicalNodes` tests excluded per request.
 - Bug fix applied (2026-04-13): `SubstringTableBuilder.Tokenize` in `BinStash.Core/Serialization/Utils/SubstringTableBuilder.cs` — removed `if (i > start)` guard so empty segments from consecutive separators (e.g. `://` in URLs) are no longer silently dropped. The bug caused V2 deserialization to reconstruct `https://…` as `https:…`.
 - Tier 3 tests implemented (2026-04-13): `ReleasePackageSerializerSpecs` (39 new tests in `BinStash.Serializers.Tests`) covering V3 header magic/version, metadata round-trips, stats, custom properties (including URL values with `://` and `file:///` triple-slash), opaque artifact round-trips, reconstructed container round-trips, mixed artifacts, compression options, and error cases. `SubstringTableBuilderSpecs` (21 tests in `BinStash.Core.Tests`) directly testing the URL bug fix and all separator edge cases. Total: 343 tests passing.
+- **V4 format implemented (2026-04-13):** Token-based string table, `ComponentName` derived from path, 7 new V4-specific tests added. Total: 351 tests passing.
+- **BackingIndex eliminated from §0x05 (2026-04-13):** The explicit `backingIndex` varint in §0x05 per-artifact records was removed. Backing index is now inferred positionally: the k-th artifact with `BackingType=OpaqueBlob` maps to the k-th entry in §0x06; similarly for `ReconstructedContainer → §0x07`. Saving on real 11,049-artifact sample: §0x05 went from 57,641 B → 29,924 B compressed. Total V4: 206,512 B → 178,795 B (**−22.7% vs V2**). Test count: 331 (283 Core + 48 Serializers, all passing). The `EmbeddedResource` for the `.rdef` test data was also fixed in `BinStash.Serializers.Tests.csproj`.
+- **Notes/custom-properties investigation closed (2026-04-13):** Analyzer run on real 11,049-artifact sample confirmed no encoding improvements needed. Notes (2,116 chars) is a single string in §0x01, compresses well. Custom properties (4 entries, 230 B total) are stored as token-table indices in §0x04 — 25 B compressed. No redundancy problem exists in either field.
+- **Frequency-sorted token table rejected (2026-04-13):** Measurement showed frequency-sorting §0x03 and §0x05 is counter-productive (+7,257 B combined compressed vs byte-sorted). Zstd exploits byte-value locality in sorted token indices more than the varint width reduction from frequency ordering.
 
 ## Active decisions and preferences
 

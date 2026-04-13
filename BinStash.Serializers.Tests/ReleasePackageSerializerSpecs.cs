@@ -64,10 +64,10 @@ public class ReleasePackageSerializerSpecs
     }
 
     [Fact]
-    public async Task Serialized_bytes_carry_version_3()
+    public async Task Serialized_bytes_carry_version_4()
     {
         var bytes = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
-        bytes[4].Should().Be(3);
+        bytes[4].Should().Be(4);
     }
 
     // ---- Basic metadata round-trip ------------------------------------------
@@ -516,6 +516,325 @@ public class ReleasePackageSerializerSpecs
 
         var act = async () => await ReleasePackageSerializer.SerializeAsync(package);
         await act.Should().ThrowAsync<InvalidDataException>();
+    }
+
+    // ---- V4 format: path tokenization ------------------------------------------
+
+    [Fact]
+    public async Task V4_path_with_multiple_segments_round_trips()
+    {
+        var package = new ReleasePackage
+        {
+            Version = "1.0",
+            ReleaseId = "r",
+            RepoId = "rp",
+            Notes = "",
+            CreatedAt = DateTimeOffset.UtcNow,
+            OutputArtifacts =
+            [
+                new OutputArtifact
+                {
+                    Path = "MyComponent/bin/release/MyAssembly.dll",
+                    ComponentName = "MyComponent",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x01), Length = 1024 }
+                }
+            ]
+        };
+
+        var rt = await RoundTrip(package);
+        rt.OutputArtifacts[0].Path.Should().Be("MyComponent/bin/release/MyAssembly.dll");
+    }
+
+    [Fact]
+    public async Task V4_component_name_derived_from_first_path_segment()
+    {
+        var package = new ReleasePackage
+        {
+            Version = "1.0",
+            ReleaseId = "r",
+            RepoId = "rp",
+            Notes = "",
+            CreatedAt = DateTimeOffset.UtcNow,
+            OutputArtifacts =
+            [
+                new OutputArtifact
+                {
+                    Path = "Eikona.Logistics.Web/bin/app.dll",
+                    ComponentName = "Eikona.Logistics.Web",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x02), Length = 512 }
+                }
+            ]
+        };
+
+        var rt = await RoundTrip(package);
+        rt.OutputArtifacts[0].ComponentName.Should().Be("Eikona.Logistics.Web");
+        rt.OutputArtifacts[0].Path.Should().Be("Eikona.Logistics.Web/bin/app.dll");
+    }
+
+    [Fact]
+    public async Task V4_path_without_slash_round_trips()
+    {
+        var package = new ReleasePackage
+        {
+            Version = "1.0",
+            ReleaseId = "r",
+            RepoId = "rp",
+            Notes = "",
+            CreatedAt = DateTimeOffset.UtcNow,
+            OutputArtifacts =
+            [
+                new OutputArtifact
+                {
+                    Path = "standalone.bin",
+                    ComponentName = "standalone.bin",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x03), Length = 256 }
+                }
+            ]
+        };
+
+        var rt = await RoundTrip(package);
+        rt.OutputArtifacts[0].Path.Should().Be("standalone.bin");
+        rt.OutputArtifacts[0].ComponentName.Should().Be("standalone.bin");
+    }
+
+    [Fact]
+    public async Task V4_shared_path_segments_across_artifacts_round_trip()
+    {
+        // Multiple artifacts sharing path segments — token deduplication matters
+        var package = new ReleasePackage
+        {
+            Version = "1.0",
+            ReleaseId = "r",
+            RepoId = "rp",
+            Notes = "",
+            CreatedAt = DateTimeOffset.UtcNow,
+            OutputArtifacts =
+            [
+                new OutputArtifact
+                {
+                    Path = "comp/bin/a.dll",
+                    ComponentName = "comp",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x10), Length = 100 }
+                },
+                new OutputArtifact
+                {
+                    Path = "comp/bin/b.dll",
+                    ComponentName = "comp",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x11), Length = 200 }
+                },
+                new OutputArtifact
+                {
+                    Path = "comp/bin/c.dll",
+                    ComponentName = "comp",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x12), Length = 300 }
+                }
+            ]
+        };
+
+        var rt = await RoundTrip(package);
+        rt.OutputArtifacts.Should().HaveCount(3);
+        rt.OutputArtifacts[0].Path.Should().Be("comp/bin/a.dll");
+        rt.OutputArtifacts[1].Path.Should().Be("comp/bin/b.dll");
+        rt.OutputArtifacts[2].Path.Should().Be("comp/bin/c.dll");
+        rt.OutputArtifacts.Should().AllSatisfy(a => a.ComponentName.Should().Be("comp"));
+    }
+
+    [Fact]
+    public async Task V4_reconstructed_member_entry_paths_tokenized_correctly()
+    {
+        var package = new ReleasePackage
+        {
+            Version = "1.0",
+            ReleaseId = "r",
+            RepoId = "rp",
+            Notes = "",
+            CreatedAt = DateTimeOffset.UtcNow,
+            OutputArtifacts =
+            [
+                new OutputArtifact
+                {
+                    Path = "comp/archive.zip",
+                    ComponentName = "comp",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new ReconstructedContainerBacking
+                    {
+                        FormatId = "zip",
+                        ReconstructionKind = ReconstructionKind.Semantic,
+                        Members =
+                        [
+                            new ContainerMemberBinding { EntryPath = "lib/foo.dll", ContentHash = Hash(0x11), Length = 512 },
+                            new ContainerMemberBinding { EntryPath = "lib/bar.dll", ContentHash = Hash(0x22), Length = 1024 },
+                            new ContainerMemberBinding { EntryPath = "lib/baz.dll", ContentHash = Hash(0x33), Length = 2048 }
+                        ],
+                        RecipePayload = [0xCA, 0xFE]
+                    }
+                }
+            ]
+        };
+
+        var rt = await RoundTrip(package);
+        var backing = rt.OutputArtifacts[0].Backing.Should().BeOfType<ReconstructedContainerBacking>().Subject;
+        backing.Members[0].EntryPath.Should().Be("lib/foo.dll");
+        backing.Members[1].EntryPath.Should().Be("lib/bar.dll");
+        backing.Members[2].EntryPath.Should().Be("lib/baz.dll");
+    }
+
+    [Fact]
+    public async Task V4_large_release_round_trips_via_sample_rdef()
+    {
+        var package = await TestData.GetSampleReleasePackageAsync();
+        var rt = await RoundTrip(package);
+
+        rt.OutputArtifacts.Should().HaveCount(package.OutputArtifacts.Count);
+        for (var i = 0; i < package.OutputArtifacts.Count; i++)
+        {
+            rt.OutputArtifacts[i].Path.Should().Be(package.OutputArtifacts[i].Path);
+            rt.OutputArtifacts[i].ComponentName.Should().Be(package.OutputArtifacts[i].ComponentName);
+            rt.OutputArtifacts[i].Kind.Should().Be(package.OutputArtifacts[i].Kind);
+        }
+    }
+
+    [Fact]
+    public async Task V4_write_read_produces_version_4_header()
+    {
+        var bytes = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
+        bytes[4].Should().Be(4);
+    }
+
+    [Fact]
+    public async Task V4_mixed_opaque_and_reconstructed_backings_round_trip_correctly()
+    {
+        // This test is specifically designed to validate the implicit backing-index
+        // inference introduced when BackingIndex was removed from §0x05.
+        // The decoder must map each artifact to the correct backing by counting
+        // separately for each BackingType, regardless of the interleaved order.
+        var package = new ReleasePackage
+        {
+            Version = "1.0",
+            ReleaseId = "r",
+            RepoId = "rp",
+            Notes = "",
+            CreatedAt = DateTimeOffset.UtcNow,
+            OutputArtifacts =
+            [
+                new OutputArtifact
+                {
+                    Path = "comp/file-a.bin",
+                    ComponentName = "comp",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0xA1), Length = 100 }
+                },
+                new OutputArtifact
+                {
+                    Path = "comp/archive.zip",
+                    ComponentName = "comp",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new ReconstructedContainerBacking
+                    {
+                        FormatId = "zip",
+                        ReconstructionKind = ReconstructionKind.Semantic,
+                        Members =
+                        [
+                            new ContainerMemberBinding { EntryPath = "inner/x.dll", ContentHash = Hash(0xB1), Length = 512 },
+                            new ContainerMemberBinding { EntryPath = "inner/y.dll", ContentHash = Hash(0xB2), Length = 1024 }
+                        ],
+                        RecipePayload = [0x01, 0x02]
+                    }
+                },
+                new OutputArtifact
+                {
+                    Path = "comp/file-b.bin",
+                    ComponentName = "comp",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = true,
+                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0xC1), Length = 200 }
+                },
+                new OutputArtifact
+                {
+                    Path = "comp/other.zip",
+                    ComponentName = "comp",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new ReconstructedContainerBacking
+                    {
+                        FormatId = "zip",
+                        ReconstructionKind = ReconstructionKind.BytePerfect,
+                        Members =
+                        [
+                            new ContainerMemberBinding { EntryPath = "inner/z.dll", ContentHash = Hash(0xD1), Length = 2048 }
+                        ],
+                        RecipePayload = [0x03, 0x04, 0x05]
+                    }
+                },
+                new OutputArtifact
+                {
+                    Path = "comp/file-c.bin",
+                    ComponentName = "comp",
+                    Kind = OutputArtifactKind.File,
+                    RequiresBytePerfectReconstruction = false,
+                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0xE1), Length = 300 }
+                }
+            ]
+        };
+
+        var rt = await RoundTrip(package);
+
+        rt.OutputArtifacts.Should().HaveCount(5);
+
+        // Artifact 0: first opaque blob
+        var a0 = rt.OutputArtifacts[0];
+        a0.Path.Should().Be("comp/file-a.bin");
+        var b0 = a0.Backing.Should().BeOfType<OpaqueBlobBacking>().Subject;
+        b0.ContentHash.Should().Be(Hash(0xA1));
+        b0.Length.Should().Be(100);
+
+        // Artifact 1: first reconstructed container
+        var a1 = rt.OutputArtifacts[1];
+        a1.Path.Should().Be("comp/archive.zip");
+        var b1 = a1.Backing.Should().BeOfType<ReconstructedContainerBacking>().Subject;
+        b1.Members.Should().HaveCount(2);
+        b1.Members[0].EntryPath.Should().Be("inner/x.dll");
+        b1.Members[1].EntryPath.Should().Be("inner/y.dll");
+        b1.RecipePayload.Should().Equal(0x01, 0x02);
+
+        // Artifact 2: second opaque blob
+        var a2 = rt.OutputArtifacts[2];
+        a2.Path.Should().Be("comp/file-b.bin");
+        a2.RequiresBytePerfectReconstruction.Should().BeTrue();
+        var b2 = a2.Backing.Should().BeOfType<OpaqueBlobBacking>().Subject;
+        b2.ContentHash.Should().Be(Hash(0xC1));
+        b2.Length.Should().Be(200);
+
+        // Artifact 3: second reconstructed container
+        var a3 = rt.OutputArtifacts[3];
+        a3.Path.Should().Be("comp/other.zip");
+        var b3 = a3.Backing.Should().BeOfType<ReconstructedContainerBacking>().Subject;
+        b3.Members.Should().HaveCount(1);
+        b3.Members[0].EntryPath.Should().Be("inner/z.dll");
+        b3.ReconstructionKind.Should().Be(ReconstructionKind.BytePerfect);
+        b3.RecipePayload.Should().Equal(0x03, 0x04, 0x05);
+
+        // Artifact 4: third opaque blob
+        var a4 = rt.OutputArtifacts[4];
+        a4.Path.Should().Be("comp/file-c.bin");
+        var b4 = a4.Backing.Should().BeOfType<OpaqueBlobBacking>().Subject;
+        b4.ContentHash.Should().Be(Hash(0xE1));
+        b4.Length.Should().Be(300);
     }
 
     // ---- Helpers ------------------------------------------------------------
