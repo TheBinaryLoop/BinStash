@@ -10,7 +10,7 @@ pipeline {
   }
 
   environment {
-    SOLUTION = 'BinStash.sln'
+    SOLUTION = 'BinStash.slnx'
     BUILD_CONFIG = 'Release'
     MSBUILDDISABLENODEREUSE = 1
   }
