@@ -521,6 +521,26 @@ public static class IdentityEndpoints
             return TypedResults.Ok(await CreateInfoResponseAsync(user, userManager));
         });
 
+        accountGroup.MapPost("PasskeyCreateOptions", async Task<Results<ContentHttpResult, NotFound>> (HttpContext context, UserManager<BinStashUser> userManager, SignInManager<BinStashUser> signInManager) =>
+        {
+            var user = await userManager.GetUserAsync(context.User);
+            
+            if (user is null)
+                return TypedResults.NotFound();
+            
+            var userId = await userManager.GetUserIdAsync(user);
+            var userName = await userManager.GetUserNameAsync(user) ?? "User";
+
+            var optionsJson = await signInManager.MakePasskeyCreationOptionsAsync(new()
+            {
+                Id = userId,
+                Name = userName,
+                DisplayName = userName
+            });
+            
+            return TypedResults.Content(optionsJson, contentType: "application/json");
+        });
+
         async Task SendConfirmationEmailAsync(BinStashUser user, UserManager<BinStashUser> userManager, HttpContext context, string email, bool isChange = false)
         {
             if (confirmEmailEndpointName is null)
@@ -548,7 +568,7 @@ public static class IdentityEndpoints
 
             var confirmEmailUrl = $"http://localhost:5173/verify-email?userId={Uri.EscapeDataString(userId)}&code={Uri.EscapeDataString(code)}";
             /*var confirmEmailUrl = linkGenerator.GetUriByName(context, confirmEmailEndpointName, routeValues)
-                ?? throw new NotSupportedException($"Could not find endpoint named '{confirmEmailEndpointName}'.");*/
+                ?? throw new NotSupportedException($"Could not find the endpoint named '{confirmEmailEndpointName}'.");*/
 
             await emailSender.SendConfirmationLinkAsync(user, email, HtmlEncoder.Default.Encode(confirmEmailUrl));
         }

@@ -107,8 +107,11 @@ public static class ReleaseEndpoints
         return Results.Text(customProperties ?? "{}", "application/json");
     }
     
-    private static async Task<IResult> GetReleaseDownloadAsync(Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService)
+    private static async Task<IResult> GetReleaseDownloadAsync(Guid id, string downloadPassword, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService)
     {
+        if (string.IsNullOrEmpty(downloadPassword) || downloadPassword != "D9BvHVpGlpaa9C8w230kQ8w8PIKUoc3k")
+            return Results.Unauthorized();
+
         if (!string.IsNullOrEmpty(file) && string.IsNullOrEmpty(component))
             return Results.BadRequest("Component must be specified when requesting a specific file.");
 

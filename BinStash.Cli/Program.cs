@@ -69,5 +69,72 @@ public static class Program
 #endif
             .Build()
             .RunAsync();
+
+    /*public static async Task<int> Main()
+    {
+        var builds = new[]
+        {
+            new MetadataComparisonAnalyzer.BuildInput
+            {
+                Version = "1.0.885",
+                RootFolder = @"C:\Users\l.essmann\RiderProjects\BinStash\DownloadTest\1.0.885"
+            },
+            new MetadataComparisonAnalyzer.BuildInput
+            {
+                Version = "1.0.886",
+                RootFolder = @"C:\Users\l.essmann\RiderProjects\BinStash\DownloadTest\1.0.886"
+            },
+            new MetadataComparisonAnalyzer.BuildInput
+            {
+                Version = "1.0.888",
+                RootFolder = @"C:\Users\l.essmann\RiderProjects\BinStash\DownloadTest\1.0.888"
+            },
+            new MetadataComparisonAnalyzer.BuildInput
+            {
+                Version = "1.0.889",
+                RootFolder = @"C:\Users\l.essmann\RiderProjects\BinStash\DownloadTest\1.0.889"
+            },
+            new MetadataComparisonAnalyzer.BuildInput
+            {
+                Version = "1.0.890",
+                RootFolder = @"C:\Users\l.essmann\RiderProjects\BinStash\DownloadTest\1.0.890"
+            },
+            new MetadataComparisonAnalyzer.BuildInput
+            {
+                Version = "1.0.891",
+                RootFolder = @"C:\Users\l.essmann\RiderProjects\BinStash\DownloadTest\1.0.891"
+            },
+            new MetadataComparisonAnalyzer.BuildInput
+            {
+                Version = "1.0.892",
+                RootFolder = @"C:\Users\l.essmann\RiderProjects\BinStash\DownloadTest\1.0.892"
+            }
+        };
+        
+        var strategies = new MetadataComparisonAnalyzer.IMetadataStrategy[]
+        {
+            new MetadataComparisonAnalyzer.HybridMerkleStrategy(
+                new MetadataComparisonAnalyzer.HybridMerkleStrategy.Options
+                {
+                    IncludePackedChunkDictionary = true,
+                    IncludePackedComponentPayloads = true,
+                    ComponentNodePayloadFormat = MetadataComparisonAnalyzer.HybridMerkleStrategy.ComponentNodePayloadFormat.Tokenized
+                }),
+            new MetadataComparisonAnalyzer.LegacySerializerStrategy(
+                pkg => ReleasePackageSerializer.SerializeAsync(pkg))
+        };
+
+
+        var chunker = new FastCdcChunker(2048,65536, 524288);
+
+        var result = await MetadataComparisonAnalyzer.AnalyzeAsync(
+            builds,
+            chunker,
+            strategies);
+
+        MetadataComparisonAnalyzer.PrintSummary(result, BytesConverter.BytesToHuman);
+
+        return 0;
+    }*/
         
 }

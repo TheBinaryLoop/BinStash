@@ -22,11 +22,11 @@ namespace BinStash.Server.Services.ChunkStores;
 
 public interface IChunkStoreService
 {
-    Task<(bool Success, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, byte[] chunkData);
+    Task<(bool Success, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData);
     Task<byte[]?> RetrieveChunkAsync(ChunkStore store, string chunkId);
-    Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, Hash32 fileHash, byte[] data);
+    Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, Hash32 fileHash, ReadOnlyMemory<byte> data);
     Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string fileHash);
-    Task<bool> StoreReleasePackageAsync(ChunkStore store, byte[] packageData);
+    Task<bool> StoreReleasePackageAsync(ChunkStore store, ReadOnlyMemory<byte> packageData);
     Task<byte[]?> RetrieveReleasePackageAsync(ChunkStore store, string packageId);
     Task<bool> DeleteReleasePackageAsync(ChunkStore store, string packageId);
     Task<bool> RebuildStorageAsync(ChunkStore store);

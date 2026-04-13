@@ -24,100 +24,117 @@ namespace BinStash.Infrastructure.Storage;
 /// <summary>
 /// High-level API for chunk, file-definition, and release-package storage.
 /// </summary>
-public class ObjectStore
+public class ObjectStore : IDisposable, IAsyncDisposable
 {
     private const long MaxPackSize = 4L * 1024 * 1024 * 1024; // 4 GiB max pack file size
     
     private readonly string _basePath;
-    private readonly Dictionary<string, IndexedPackFileHandler> _chunkFileHandlers = new();
-    private readonly Dictionary<string, IndexedPackFileHandler> _fileDefinitionFileHandlers = new();
+    private readonly AsyncLruHandlerCache<HandlerCacheKey> _handlerCache;
 
-    public ObjectStore(string basePath)
+    public ObjectStore(string basePath, int maxOpenHandlers = 256)
     {
         if (string.IsNullOrEmpty(basePath))
             throw new ArgumentException("Storage directory cannot be null or empty.", nameof(basePath));
         
         Directory.CreateDirectory(basePath);
-
         _basePath = basePath;
-        InitializeFileHandlers();
+
+        _handlerCache = new AsyncLruHandlerCache<HandlerCacheKey>(maxOpenHandlers, CreateHandler);
     }
 
-    private void InitializeFileHandlers()
+    private IndexedPackFileHandler CreateHandler(HandlerCacheKey key)
     {
-        for (var i = 0; i < 4096; i++)
+        return key.Category switch
         {
-            var prefix = i.ToString("x3");
-            // The folder structure will look like:
-            // basePath/
-            //   (Chunks|FileDefs)/
-            //     00/
-            //       index00x.idx
-            //       chunks00x-n.pack
-            _chunkFileHandlers[prefix] = new IndexedPackFileHandler(Path.Combine(_basePath, "Chunks", prefix[..2]), "chunks", prefix, MaxPackSize, ComputeHash);
-            _fileDefinitionFileHandlers[prefix] = new IndexedPackFileHandler(Path.Combine(_basePath, "FileDefs", prefix[..2]), "fileDefs", prefix, MaxPackSize, ComputeHash);
-        }
+            "chunks" => new IndexedPackFileHandler(
+                Path.Combine(_basePath, "Chunks", key.Prefix[..2]),
+                "chunks",
+                key.Prefix,
+                MaxPackSize,
+                ComputeHash),
+
+            "fileDefs" => new IndexedPackFileHandler(
+                Path.Combine(_basePath, "FileDefs", key.Prefix[..2]),
+                "fileDefs",
+                key.Prefix,
+                MaxPackSize,
+                ComputeHash),
+
+            _ => throw new NotSupportedException($"Unknown handler category '{key.Category}'.")
+        };
     }
+    
+    private ValueTask<HandlerLease> AcquireChunkHandlerAsync(string prefix, CancellationToken ct = default)
+        => _handlerCache.AcquireAsync(new HandlerCacheKey("chunks", prefix), ct);
+
+    private ValueTask<HandlerLease> AcquireFileDefHandlerAsync(string prefix, CancellationToken ct = default)
+        => _handlerCache.AcquireAsync(new HandlerCacheKey("fileDefs", prefix), ct);
     
     public async Task<bool> RebuildStorageAsync()
     {
-        var tasks = new List<Task<bool>>();
-        /*foreach (var handler in _chunkFileHandlers.Values)
+        using var throttler = new SemaphoreSlim(Environment.ProcessorCount);
+        var tasks = new List<Task<bool>>(8192);
+
+        for (var i = 0; i < 4096; i++)
         {
-            tasks.Add(handler.RebuildPackFilesAsync());
+            var prefix = i.ToString("x3");
+            tasks.Add(RunRebuildAsync("chunks", prefix, throttler));
+            tasks.Add(RunRebuildAsync("fileDefs", prefix, throttler));
         }
-        foreach (var handler in _fileDefinitionFileHandlers.Values)
-        {
-            tasks.Add(handler.RebuildPackFilesAsync());
-        }
-        var results = await Task.WhenAll(tasks);
-        if (!results.All(r => r))
-            return false;
-        tasks.Clear();*/
-        var results = Array.Empty<bool>();
-        foreach (var handler in _chunkFileHandlers.Values)
-        {
-            tasks.Add(handler.RebuildIndexFile());
-        }
-        foreach (var handler in _fileDefinitionFileHandlers.Values)
-        {
-            tasks.Add(handler.RebuildIndexFile());
-        }
-        results = await Task.WhenAll(tasks);
-        
-        return results.All(r => r);
+
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+        return results.All(static x => x);
     }
 
-    public async Task<int> WriteChunkAsync(byte[] chunkData)
+    private async Task<bool> RunRebuildAsync(string category, string prefix, SemaphoreSlim throttler)
     {
-        var hash = ComputeHash(chunkData);
+        await throttler.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            using var lease = await _handlerCache.AcquireAsync(new HandlerCacheKey(category, prefix)).ConfigureAwait(false);
+            return await lease.Handler.RebuildIndexFile().ConfigureAwait(false);
+        }
+        finally
+        {
+            throttler.Release();
+        }
+    }
+
+    public async Task<int> WriteChunkAsync(ReadOnlyMemory<byte> chunkData)
+    {
+        var hash = ComputeHash(chunkData.Span);
         var stringHash = hash.ToHexString();
         var prefix = stringHash[..3];
-        return await _chunkFileHandlers[prefix].WriteIndexedDataAsync(hash, chunkData);
+        
+        using var lease = await AcquireChunkHandlerAsync(prefix).ConfigureAwait(false);
+        return await lease.Handler.WriteIndexedDataAsync(hash, chunkData).ConfigureAwait(false);
     }
 
     public async Task<byte[]> ReadChunkAsync(string hash)
     {
         var prefix = hash[..3];
-        return await _chunkFileHandlers[prefix].ReadIndexedDataAsync(Hash32.FromHexString(hash));
+        using var lease = await AcquireChunkHandlerAsync(prefix).ConfigureAwait(false);
+        return await lease.Handler.ReadIndexedDataAsync(Hash32.FromHexString(hash)).ConfigureAwait(false);
     }
     
-    public async Task<int> WriteFileDefinitionAsync(Hash32 fileHash, byte[] fileDefinitionData)
+    public async Task<int> WriteFileDefinitionAsync(Hash32 fileHash, ReadOnlyMemory<byte> fileDefinitionData)
     {
         var stringHash = fileHash.ToHexString();
         var prefix = stringHash[..3];
-        return await _fileDefinitionFileHandlers[prefix].WriteIndexedDataAsync(fileHash, fileDefinitionData);
+        using var lease = await AcquireFileDefHandlerAsync(prefix).ConfigureAwait(false);
+        return await lease.Handler.WriteIndexedDataAsync(fileHash, fileDefinitionData).ConfigureAwait(false);
     }
     
-    public Task<byte[]> ReadFileDefinitionAsync(string hash)
+    public async Task<byte[]> ReadFileDefinitionAsync(string hash)
     {
         var prefix = hash[..3];
-        return _fileDefinitionFileHandlers[prefix].ReadIndexedDataAsync(Hash32.FromHexString(hash));
+        using var lease = await AcquireFileDefHandlerAsync(prefix).ConfigureAwait(false);
+        return await lease.Handler.ReadIndexedDataAsync(Hash32.FromHexString(hash)).ConfigureAwait(false);
     }
 
-    public async Task WriteReleasePackageAsync(byte[] releasePackageData)
+    public async Task WriteReleasePackageAsync(ReadOnlyMemory<byte> releasePackageData)
     {
-        var hash = ComputeHash(releasePackageData).ToHexString();
+        var hash = ComputeHash(releasePackageData.Span).ToHexString();
         var folder = Path.Join(_basePath, "Releases", hash[..3]);
         Directory.CreateDirectory(folder);
         var filePath = Path.Join(folder, $"{hash}.rdef");
@@ -147,7 +164,7 @@ public class ObjectStore
         return Task.FromResult(true);
     }
     
-    private static Hash32 ComputeHash(byte[] data)
+    private static Hash32 ComputeHash(ReadOnlySpan<byte> data)
     {
         var hash = Hasher.Hash(data);
         return new Hash32(hash.AsSpan());
@@ -237,15 +254,17 @@ public class ObjectStore
         return Task.FromResult(result);
     }
     
-    public StorageStatistics GetStatistics()
+    public async Task<StorageStatistics> GetStatisticsAsync()
     {
         var stats = new StorageStatistics();
         var prefixCounts = new Dictionary<string, int>();
-    
-        foreach (var kvp in _chunkFileHandlers)
+
+        for (var i = 0; i < 4096; i++)
         {
-            var handler = kvp.Value;
-            var prefix = kvp.Key;
+            var prefix = i.ToString("x3");
+
+            using var lease = await AcquireChunkHandlerAsync(prefix).ConfigureAwait(false);
+            var handler = lease.Handler;
             var index = handler.GetIndexSnapshot();
 
             stats.TotalChunks += index.Count;
@@ -263,4 +282,7 @@ public class ObjectStore
         stats.PrefixChunkCounts = prefixCounts;
         return stats;
     }
+    
+    public void Dispose() => _handlerCache.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    public ValueTask DisposeAsync() => _handlerCache.DisposeAsync();
 }

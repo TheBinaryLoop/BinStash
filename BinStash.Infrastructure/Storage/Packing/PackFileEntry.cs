@@ -30,7 +30,7 @@ internal static class PackFileEntry
     private static readonly ThreadLocal<Compressor> CompressorPool = new(() => new Compressor());
     private static readonly ThreadLocal<Decompressor> DecompressorPool = new(() => new Decompressor());
 
-    public static async Task<(long, int)> WriteAsync(Stream output, byte[] data, CancellationToken ct = default)
+    public static async Task<(long, int)> WriteAsync(Stream output, ReadOnlyMemory<byte> data, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -201,9 +201,9 @@ internal static class PackFileEntry
         }
     }
 
-    private static byte[] CompressData(byte[] data)
+    private static byte[] CompressData(ReadOnlyMemory<byte> data)
     {
-        return CompressorPool.Value!.Wrap(data);
+        return CompressorPool.Value!.Wrap(data.Span);
     }
 
     private static byte[] DecompressData(byte[] compressedData, int expectedUncompressedLength)

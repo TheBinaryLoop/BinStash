@@ -19,21 +19,28 @@ using BinStash.Core.Storage;
 
 namespace BinStash.Infrastructure.Storage;
 
-public sealed class ChunkStoreStorageFactory : IChunkStoreStorageFactory
+public sealed class ChunkStoreStorageFactory : IChunkStoreStorageFactory, IDisposable
 {
     private readonly ConcurrentDictionary<string, IChunkStoreStorage> _cache = new();
 
     public IChunkStoreStorage Create(ChunkStore store)
     {
         var key = $"{store.Type}:{store.LocalPath}";
-
-        return _cache.GetOrAdd(key, _ =>
+        return _cache.GetOrAdd(key, _ => store.Type switch
         {
-            return store.Type switch
-            {
-                ChunkStoreType.Local => new LocalFolderChunkStoreStorage(store.LocalPath),
-                _ => throw new NotSupportedException($"Chunk store type '{store.Type}' is not supported.")
-            };
+            ChunkStoreType.Local => new LocalFolderChunkStoreStorage(store.LocalPath),
+            _ => throw new NotSupportedException($"Chunk store type '{store.Type}' is not supported.")
         });
+    }
+
+    public void Dispose()
+    {
+        foreach (var entry in _cache.Values)
+        {
+            if (entry is IDisposable d)
+                d.Dispose();
+        }
+
+        _cache.Clear();
     }
 }

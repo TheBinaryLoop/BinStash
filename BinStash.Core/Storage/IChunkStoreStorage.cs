@@ -20,13 +20,13 @@ namespace BinStash.Core.Storage;
 
 public interface IChunkStoreStorage
 {
-    Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data);
+    Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, ReadOnlyMemory<byte> data);
     Task<byte[]?> RetrieveChunkAsync(string key);
     
-    Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, byte[] data);
+    Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, ReadOnlyMemory<byte> data);
     Task<byte[]?> RetrieveFileDefinitionAsync(string key);
     
-    Task<bool> StoreReleasePackageAsync(byte[] packageData);
+    Task<bool> StoreReleasePackageAsync(ReadOnlyMemory<byte> packageData);
     Task<byte[]?> RetrieveReleasePackageAsync(string key);
     Task<bool> DeleteReleasePackageAsync(string packageId);
     Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> fileHashes);

@@ -20,7 +20,7 @@ using BinStash.Core.Storage.Stats;
 
 namespace BinStash.Infrastructure.Storage;
 
-public class LocalFolderChunkStoreStorage : IChunkStoreStorage
+public class LocalFolderChunkStoreStorage : IChunkStoreStorage, IDisposable, IAsyncDisposable
 {
     private readonly ObjectStore _objectStore;
     
@@ -40,7 +40,7 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage
         return _objectStore.RebuildStorageAsync();
     }
     
-    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, byte[] data)
+    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, ReadOnlyMemory<byte> data)
     {
         var bytesWritten = await _objectStore.WriteChunkAsync(data);
         return (true, bytesWritten);
@@ -51,7 +51,7 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage
         return _objectStore.ReadChunkAsync(key)!;
     }
 
-    public async Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, byte[] data)
+    public async Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, ReadOnlyMemory<byte> data)
     {
         var bytesWritten = await _objectStore.WriteFileDefinitionAsync(fileHash, data);
         return (true, bytesWritten);
@@ -62,7 +62,7 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage
         return _objectStore.ReadFileDefinitionAsync(key)!;
     }
 
-    public async Task<bool> StoreReleasePackageAsync(byte[] packageData)
+    public async Task<bool> StoreReleasePackageAsync(ReadOnlyMemory<byte> packageData)
     {
         await _objectStore.WriteReleasePackageAsync(packageData);
         return true;
@@ -124,8 +124,11 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage
         return new Dictionary<string, byte[]>(result, StringComparer.OrdinalIgnoreCase);
     }
 
-    public Task<Dictionary<string, object>> GetStorageStatsAsync()
+    public async Task<Dictionary<string, object>> GetStorageStatsAsync()
     {
-        return Task.FromResult(_objectStore.GetStatistics().ToDictionary());
+        return (await _objectStore.GetStatisticsAsync()).ToDictionary();
     }
+    
+    public void Dispose() => _objectStore.Dispose();
+    public ValueTask DisposeAsync() => _objectStore.DisposeAsync();
 }

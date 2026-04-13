@@ -30,7 +30,7 @@ public sealed class ChunkStoreService : IChunkStoreService
         _storageFactory = storageFactory;
     }
 
-    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, byte[] chunkData)
+    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData)
     {
         ArgumentNullException.ThrowIfNull(store);
 
@@ -40,7 +40,7 @@ public sealed class ChunkStoreService : IChunkStoreService
         if (string.IsNullOrWhiteSpace(chunkId))
             throw new ArgumentException("Chunk ID cannot be null or empty.", nameof(chunkId));
 
-        if (chunkData == null || chunkData.Length == 0)
+        if (chunkData.IsEmpty)
             throw new ArgumentException("Chunk data cannot be null or empty.", nameof(chunkData));
 
         var storage = _storageFactory.Create(store);
@@ -58,9 +58,9 @@ public sealed class ChunkStoreService : IChunkStoreService
         return await storage.RetrieveChunkAsync(chunkId);
     }
 
-    public Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, Hash32 fileHash, byte[] data)
+    public Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, Hash32 fileHash, ReadOnlyMemory<byte> data)
     {
-        if (data == null || data.Length == 0)
+        if (data.IsEmpty)
             throw new ArgumentException("Data cannot be null or empty.", nameof(data));
 
         var storage = _storageFactory.Create(store);
@@ -76,9 +76,9 @@ public sealed class ChunkStoreService : IChunkStoreService
         return storage.RetrieveFileDefinitionAsync(fileHash);
     }
 
-    public Task<bool> StoreReleasePackageAsync(ChunkStore store, byte[] packageData)
+    public Task<bool> StoreReleasePackageAsync(ChunkStore store, ReadOnlyMemory<byte> packageData)
     {
-        if (packageData == null || packageData.Length == 0)
+        if (packageData.IsEmpty)
             throw new ArgumentException("Package data cannot be null or empty.", nameof(packageData));
 
         var storage = _storageFactory.Create(store);

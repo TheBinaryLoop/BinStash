@@ -26,7 +26,7 @@ internal sealed class IndexedPackFileHandler : IDisposable
     private readonly long _maxPackFileSize;
     private readonly string _indexFilePath;
     private readonly string _dataFilePrefix;
-    private readonly Func<byte[], Hash32> _computeHash;
+    private readonly Func<ReadOnlySpan<byte>, Hash32> _computeHash;
 
     // One-time initialization
     private readonly SemaphoreSlim _initLock = new(1, 1);
@@ -50,11 +50,15 @@ internal sealed class IndexedPackFileHandler : IDisposable
     private FileStream? _indexAppendStream;
     private BinaryWriter? _indexWriter;
 
+    // LRU
+    private int _activeLeaseCount;
+    private int _disposeRequested;
+    
     private bool _disposed;
 
     private readonly record struct IndexEntry(int FileNo, long Offset, int Length);
 
-    public IndexedPackFileHandler(string directoryPath, string dataFileName, string prefix, long maxPackFileSize, Func<byte[], Hash32> computeHash)
+    public IndexedPackFileHandler(string directoryPath, string dataFileName, string prefix, long maxPackFileSize, Func<ReadOnlySpan<byte>, Hash32> computeHash)
     {
         _maxPackFileSize = maxPackFileSize;
         _computeHash = computeHash ?? throw new ArgumentNullException(nameof(computeHash));
@@ -162,6 +166,34 @@ internal sealed class IndexedPackFileHandler : IDisposable
 
         // Stronger durability than FlushAsync alone.
         _indexAppendStream!.Flush(flushToDisk: true);
+    }
+    
+    internal bool TryAcquireLease()
+    {
+        while (true)
+        {
+            if (Volatile.Read(ref _disposeRequested) != 0)
+                return false;
+
+            Interlocked.Increment(ref _activeLeaseCount);
+
+            if (Volatile.Read(ref _disposeRequested) == 0)
+                return true;
+
+            Interlocked.Decrement(ref _activeLeaseCount);
+        }
+    }
+
+    internal void ReleaseLease()
+    {
+        Interlocked.Decrement(ref _activeLeaseCount);
+    }
+
+    internal bool IsIdle => Volatile.Read(ref _activeLeaseCount) == 0;
+
+    internal bool TryMarkForDispose()
+    {
+        return Interlocked.CompareExchange(ref _disposeRequested, 1, 0) == 0;
     }
 
     public async Task<bool> RebuildIndexFile()
@@ -326,7 +358,7 @@ internal sealed class IndexedPackFileHandler : IDisposable
         }
     }
 
-    public async Task<int> WriteIndexedDataAsync(Hash32 hash, byte[] data)
+    public async Task<int> WriteIndexedDataAsync(Hash32 hash, ReadOnlyMemory<byte> data)
     {
         ThrowIfDisposed();
         await EnsureIndexLoadedAsync().ConfigureAwait(false);

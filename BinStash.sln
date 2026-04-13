@@ -18,6 +18,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinStash.Core.Tests", "BinS
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinStash.Serializers.Tests", "BinStash.Serializers.Tests\BinStash.Serializers.Tests.csproj", "{235DFD00-BF84-4EDA-A004-D9CC11B2FCB1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Svn2BinStash", "..\..\Downloads\Svn2BinStash\Svn2BinStash.csproj", "{24B7F829-52CD-4569-895D-50FEC8D2DEBF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -67,9 +69,16 @@ Global
 		{235DFD00-BF84-4EDA-A004-D9CC11B2FCB1}.Debug|x64.Build.0 = Debug|Any CPU
 		{235DFD00-BF84-4EDA-A004-D9CC11B2FCB1}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{235DFD00-BF84-4EDA-A004-D9CC11B2FCB1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{24B7F829-52CD-4569-895D-50FEC8D2DEBF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{24B7F829-52CD-4569-895D-50FEC8D2DEBF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{24B7F829-52CD-4569-895D-50FEC8D2DEBF}.Debug|x64.ActiveCfg = Debug|x64
+		{24B7F829-52CD-4569-895D-50FEC8D2DEBF}.Debug|x64.Build.0 = Debug|x64
+		{24B7F829-52CD-4569-895D-50FEC8D2DEBF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{24B7F829-52CD-4569-895D-50FEC8D2DEBF}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{687800ED-B08A-4F64-AA3F-D323D24B1D35} = {F0EFF90A-D105-4B29-9FE6-F71A0906DCCB}
 		{235DFD00-BF84-4EDA-A004-D9CC11B2FCB1} = {F0EFF90A-D105-4B29-9FE6-F71A0906DCCB}
+		{24B7F829-52CD-4569-895D-50FEC8D2DEBF} = {BD11F539-8230-4633-930A-FAE3217020C6}
 	EndGlobalSection
 EndGlobal
