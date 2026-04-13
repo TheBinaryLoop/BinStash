@@ -15,14 +15,7 @@
       <Build Solution="Release|x64" Project="false" />
     </Project>
   </Folder>
-  <Folder Name="/Tooling/">
-    <Project Path="../../Downloads/Svn2BinStash/Svn2BinStash.csproj">
-      <BuildType Solution="Release|x64" Project="?" />
-      <Platform Solution="Debug|x64" Project="x64" />
-      <Platform Solution="Release|x64" Project="?" />
-      <Build Solution="Release|x64" Project="false" />
-    </Project>
-  </Folder>
+  <Folder Name="/Tooling/" />
   <Project Path="BinStash.Cli/BinStash.Cli.csproj">
     <BuildType Solution="Release|x64" Project="?" />
     <Platform Solution="Debug|x64" Project="x64" />
