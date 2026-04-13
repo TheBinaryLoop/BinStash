@@ -17,7 +17,7 @@ namespace BinStash.Core.Serialization.Utils;
 
 internal class SubstringTableBuilder
 {
-    private readonly Dictionary<string, int> _Index = new();
+    private readonly Dictionary<string, int> _index = new();
     public readonly List<string> Table = new();
 
     public List<(int id, Separator sep)> Tokenize(string input)
@@ -30,12 +30,11 @@ internal class SubstringTableBuilder
             var c = input[i];
             if (ToSep(c) != Separator.None)
             {
-                if (i > start)
-                {
-                    var part = input.Substring(start, i - start);
-                    var id = GetOrAdd(part);
-                    tokens.Add((id, ToSep(c)));
-                }
+                // Always emit a token for the segment before the separator,
+                // even if the segment is empty (e.g. consecutive separators like "://").
+                var part = input.Substring(start, i - start);
+                var id = GetOrAdd(part);
+                tokens.Add((id, ToSep(c)));
                 start = i + 1;
             }
         }
@@ -52,10 +51,10 @@ internal class SubstringTableBuilder
 
     private int GetOrAdd(string str)
     {
-        if (_Index.TryGetValue(str, out var id)) return id;
+        if (_index.TryGetValue(str, out var id)) return id;
         id = Table.Count;
         Table.Add(str);
-        _Index[str] = id;
+        _index[str] = id;
         return id;
     }
 

@@ -25,8 +25,9 @@ As of 2026-04-13, Memory Bank fully initialized from code inspection. No active 
 - Complete CLI command coverage (SVN import command exists as `SvnImportTagsCommand.cs`).
 - Tier 1 unit tests implemented (2026-04-13): `Hash32Specs`, `Hash8Specs`, `BytesConverterSpecs`, `ZipMemberSelectionPolicySpecs`, `DictionaryExtensionsSpecs`, `BoundedStreamSpecs`, `BitReaderSpecs`, `ByteArrayComparerSpecs`, `StreamExtensionsSpecs`. All 227 tests passed.
 - `BinStash.Core/Properties/AssemblyInfo.cs` added with `[assembly: InternalsVisibleTo("BinStash.Core.Tests")]` to enable testing of `BoundedStream`, `BitReader`, `ByteArrayComparer`.
-- Tier 2 unit tests implemented (2026-04-13): `ChecksumCompressorSpecs` (22 tests covering empty list, wrong hash size, all three decompression overloads sync/async, order preservation, large list round-trip) and `ZipReconstructionPlannerSpecs` (34 tests covering `.apk`/`.jar`/`.nupkg` byte-perfect detection, case-insensitivity, empty/directory-only/policy-filtered entries producing opaque storage, semantic reconstruction with entry filtering, reason string non-nullness). Total: 283 tests passing. `CanonicalNodes` tests excluded per request.
-- Next test tier: serializer V3 round-trip restore.
+- Tier 2 unit tests implemented (2026-04-13): `ChecksumCompressorSpecs` (22 tests) and `ZipReconstructionPlannerSpecs` (34 tests). Total after tier 2: 283 tests passing. `CanonicalNodes` tests excluded per request.
+- Bug fix applied (2026-04-13): `SubstringTableBuilder.Tokenize` in `BinStash.Core/Serialization/Utils/SubstringTableBuilder.cs` — removed `if (i > start)` guard so empty segments from consecutive separators (e.g. `://` in URLs) are no longer silently dropped. The bug caused V2 deserialization to reconstruct `https://…` as `https:…`.
+- Tier 3 tests implemented (2026-04-13): `ReleasePackageSerializerSpecs` (39 new tests in `BinStash.Serializers.Tests`) covering V3 header magic/version, metadata round-trips, stats, custom properties (including URL values with `://` and `file:///` triple-slash), opaque artifact round-trips, reconstructed container round-trips, mixed artifacts, compression options, and error cases. `SubstringTableBuilderSpecs` (21 tests in `BinStash.Core.Tests`) directly testing the URL bug fix and all separator edge cases. Total: 343 tests passing.
 
 ## Active decisions and preferences
 
