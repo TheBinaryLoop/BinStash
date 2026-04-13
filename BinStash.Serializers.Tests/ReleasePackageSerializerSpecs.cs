@@ -699,11 +699,13 @@ public class ReleasePackageSerializerSpecs
         var rt = await RoundTrip(package);
 
         rt.OutputArtifacts.Should().HaveCount(package.OutputArtifacts.Count);
-        for (var i = 0; i < package.OutputArtifacts.Count; i++)
+        var rtByPath = rt.OutputArtifacts.ToDictionary(a => a.Path, StringComparer.Ordinal);
+        foreach (var original in package.OutputArtifacts)
         {
-            rt.OutputArtifacts[i].Path.Should().Be(package.OutputArtifacts[i].Path);
-            rt.OutputArtifacts[i].ComponentName.Should().Be(package.OutputArtifacts[i].ComponentName);
-            rt.OutputArtifacts[i].Kind.Should().Be(package.OutputArtifacts[i].Kind);
+            rtByPath.Should().ContainKey(original.Path);
+            var deserialized = rtByPath[original.Path];
+            deserialized.ComponentName.Should().Be(original.ComponentName);
+            deserialized.Kind.Should().Be(original.Kind);
         }
     }
 
@@ -796,42 +798,41 @@ public class ReleasePackageSerializerSpecs
 
         rt.OutputArtifacts.Should().HaveCount(5);
 
-        // Artifact 0: first opaque blob
-        var a0 = rt.OutputArtifacts[0];
-        a0.Path.Should().Be("comp/file-a.bin");
+        // V4 serialisation sorts artifacts by path for better compression.
+        // Look up each artifact by path rather than by position.
+        var byPath = rt.OutputArtifacts.ToDictionary(a => a.Path, StringComparer.Ordinal);
+
+        // comp/file-a.bin — first opaque blob
+        var a0 = byPath["comp/file-a.bin"];
         var b0 = a0.Backing.Should().BeOfType<OpaqueBlobBacking>().Subject;
         b0.ContentHash.Should().Be(Hash(0xA1));
         b0.Length.Should().Be(100);
 
-        // Artifact 1: first reconstructed container
-        var a1 = rt.OutputArtifacts[1];
-        a1.Path.Should().Be("comp/archive.zip");
+        // comp/archive.zip — first reconstructed container
+        var a1 = byPath["comp/archive.zip"];
         var b1 = a1.Backing.Should().BeOfType<ReconstructedContainerBacking>().Subject;
         b1.Members.Should().HaveCount(2);
         b1.Members[0].EntryPath.Should().Be("inner/x.dll");
         b1.Members[1].EntryPath.Should().Be("inner/y.dll");
         b1.RecipePayload.Should().Equal(0x01, 0x02);
 
-        // Artifact 2: second opaque blob
-        var a2 = rt.OutputArtifacts[2];
-        a2.Path.Should().Be("comp/file-b.bin");
+        // comp/file-b.bin — second opaque blob
+        var a2 = byPath["comp/file-b.bin"];
         a2.RequiresBytePerfectReconstruction.Should().BeTrue();
         var b2 = a2.Backing.Should().BeOfType<OpaqueBlobBacking>().Subject;
         b2.ContentHash.Should().Be(Hash(0xC1));
         b2.Length.Should().Be(200);
 
-        // Artifact 3: second reconstructed container
-        var a3 = rt.OutputArtifacts[3];
-        a3.Path.Should().Be("comp/other.zip");
+        // comp/other.zip — second reconstructed container
+        var a3 = byPath["comp/other.zip"];
         var b3 = a3.Backing.Should().BeOfType<ReconstructedContainerBacking>().Subject;
         b3.Members.Should().HaveCount(1);
         b3.Members[0].EntryPath.Should().Be("inner/z.dll");
         b3.ReconstructionKind.Should().Be(ReconstructionKind.BytePerfect);
         b3.RecipePayload.Should().Equal(0x03, 0x04, 0x05);
 
-        // Artifact 4: third opaque blob
-        var a4 = rt.OutputArtifacts[4];
-        a4.Path.Should().Be("comp/file-c.bin");
+        // comp/file-c.bin — third opaque blob
+        var a4 = byPath["comp/file-c.bin"];
         var b4 = a4.Backing.Should().BeOfType<OpaqueBlobBacking>().Subject;
         b4.ContentHash.Should().Be(Hash(0xE1));
         b4.Length.Should().Be(300);
@@ -898,10 +899,10 @@ public class ReleasePackageSerializerSpecs
 
     private static ReleasePackage PackageWithManyOpaqueArtifacts(int count)
     {
+        Span<byte> hashBytes = stackalloc byte[32];
         var artifacts = new List<OutputArtifact>(count);
         for (var i = 0; i < count; i++)
         {
-            Span<byte> hashBytes = stackalloc byte[32];
             hashBytes.Fill((byte)(i % 256));
             hashBytes[0] = (byte)(i >> 8);
             hashBytes[1] = (byte)(i & 0xFF);
