@@ -23,7 +23,10 @@ As of 2026-04-13, Memory Bank fully initialized from code inspection. No active 
 - Fix Dockerfile to use .NET 10 base images.
 - Implement S3 chunk store storage backend.
 - Complete CLI command coverage (SVN import command exists as `SvnImportTagsCommand.cs`).
-- Expand test coverage beyond chunker and serializer specs.
+- Tier 1 unit tests implemented (2026-04-13): `Hash32Specs`, `Hash8Specs`, `BytesConverterSpecs`, `ZipMemberSelectionPolicySpecs`, `DictionaryExtensionsSpecs`, `BoundedStreamSpecs`, `BitReaderSpecs`, `ByteArrayComparerSpecs`, `StreamExtensionsSpecs`. All 227 tests passed.
+- `BinStash.Core/Properties/AssemblyInfo.cs` added with `[assembly: InternalsVisibleTo("BinStash.Core.Tests")]` to enable testing of `BoundedStream`, `BitReader`, `ByteArrayComparer`.
+- Tier 2 unit tests implemented (2026-04-13): `ChecksumCompressorSpecs` (22 tests covering empty list, wrong hash size, all three decompression overloads sync/async, order preservation, large list round-trip) and `ZipReconstructionPlannerSpecs` (34 tests covering `.apk`/`.jar`/`.nupkg` byte-perfect detection, case-insensitivity, empty/directory-only/policy-filtered entries producing opaque storage, semantic reconstruction with entry filtering, reason string non-nullness). Total: 283 tests passing. `CanonicalNodes` tests excluded per request.
+- Next test tier: serializer V3 round-trip restore.
 
 ## Active decisions and preferences
 

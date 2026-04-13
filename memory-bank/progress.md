@@ -29,14 +29,14 @@ Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC 
 | **S3 chunk store not implemented** | Server README and CLI docs reference S3 as a chunk store type, but no S3 `IChunkStoreStorage` implementation exists. Only `LocalFolderChunkStoreStorage` is available. |
 | **`StorageStrategy.cs` excluded from compilation** | `BinStash.Core/Ingestion/Models/StorageStrategy.cs` is excluded via `<Compile Remove=...>`. Its role is unclear; do not reference it. |
 | **`SingleTenantBootstrapper` commented out** | Registered but commented out in `Program.cs`. Single-tenant init relies solely on `SetupBootstrapper`. |
-| **Test coverage limited** | Only chunker, varint, and serializer snapshot tests exist. No integration or end-to-end tests. |
+| **Test coverage expanded** | Tier 1 unit tests added for `Hash32`, `Hash8`, `BytesConverter`, `ZipMemberSelectionPolicy`, `DictionaryExtensions`, `BoundedStream` (internal), `BitReader` (internal), `ByteArrayComparer` (internal), and `StreamExtensions`. Tier 2 unit tests added for `ChecksumCompressor` (all compression/decompression paths, empty/invalid input, round-trips via sync/async/bytes overloads) and `ZipReconstructionPlanner` (byte-perfect format detection, opaque fallback cases, semantic reconstruction with policy filtering). Total: 283 tests passing. No integration or end-to-end tests yet. |
 | **No automated deployment** | Deployment is manual; no pipeline for container publishing or environment promotion exists in this repository. |
 
 ## What's left to build (known backlog from code inspection)
 
 - S3 chunk store storage backend implementation.
 - Fix Dockerfile to use .NET 10 base images.
-- Expand test coverage (integration tests, more unit tests).
+- Expand test coverage (Tier 3: serializer V3 round-trip restore, integration tests).
 - Complete or remove `StorageStrategy.cs`.
 - Finalize `SvnImportTagsCommand` (exists but may be incomplete).
 - Frontend / management UI (currently none; management is via GraphQL + REST only).
