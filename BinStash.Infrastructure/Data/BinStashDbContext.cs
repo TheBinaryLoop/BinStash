@@ -49,6 +49,7 @@ public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     public DbSet<InstanceSetting> InstanceSettings { get; set; }
     public DbSet<SetupState> SetupStates { get; set; }
     public DbSet<SetupCode> SetupCodes { get; set; }
+    public DbSet<BackgroundJob> BackgroundJobs { get; set; }
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

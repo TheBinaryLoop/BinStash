@@ -2,16 +2,35 @@
 
 ## Current work focus
 
-As of 2026-04-14, completed BINST-91 (polymorphic ChunkStore backend settings) and BINST-92 (ChunkerOptions improvements). Both tickets moved to Done.
+As of 2026-04-14, the main effort is **rewriting the release upgrade pipeline** (BINST-93 epic) to be async, safe, and observable. This involves:
+- Replacing the old synchronous `UpgradeReleasesToLatestVersionAsync` endpoint with an async background job pipeline.
+- Fixing three critical bugs: BUG-04 (data loss), ERR-03 (inconsistency), PERF-05 (performance).
+- Adding real-time progress via HotChocolate GraphQL subscriptions (no SignalR).
+- Using a polymorphic `BackgroundJob` entity to support future job types.
+
+Previously completed: BINST-91 (polymorphic ChunkStore backend settings) and BINST-92 (ChunkerOptions improvements).
 
 ## Recent changes (observed from code)
 
+### Release upgrade pipeline rewrite (BINST-93, in progress)
+
+- **`BackgroundJob` entity created:** Polymorphic job entity at `BinStash.Core/Entities/BackgroundJob.cs` with `JobType` string discriminator, `Status` enum (`Pending`, `Running`, `Completed`, `Failed`, `Cancelled`), and JSON payload columns (`JobData`, `ProgressData`, `ErrorDetails` as `jsonb`). Job-type-specific data classes: `ReleaseUpgradeJobData`, `ReleaseUpgradeProgressData`.
+- **Old `ReleaseUpgradeJob` entity deleted:** Replaced by `BackgroundJob`. Old entity file, EF config, and migration removed.
+- **EF Core migration generated:** `ReplaceReleaseUpgradeJobsWithBackgroundJobs` — drops `ReleaseUpgradeJobs` table, creates `BackgroundJobs` table with `JobType` and `Status` indexes.
+- **`ReleaseUpgradeService` rewritten:** Now uses `ITopicEventSender` (HotChocolate) instead of SignalR `IHubContext`. Broadcasts `BackgroundJobProgressDto` to topic `BackgroundJobProgress_{jobId}`. Core upgrade algorithm preserves BUG-04/ERR-03/PERF-05 fixes (write-new-then-delete-old, batch SaveChanges).
+- **`ReleaseUpgradeBackgroundService` rewritten:** Uses `Channel<Guid>` job queue. Startup recovery queries `db.BackgroundJobs` filtering by `BackgroundJobTypes.ReleaseUpgrade`.
+- **`ChunkStoreEndpoints.cs` updated:** `StartUpgradeReleasesAsync` now creates `BackgroundJob` with serialized `ReleaseUpgradeJobData`. Duplicate detection queries `BackgroundJobs` with `JobType` filter. Description updated from SignalR to GraphQL subscriptions.
+- **`UpgradeJobEndpoints.cs` updated:** All three endpoints (`Get`, `Cancel`, `List`) rewritten to query `db.BackgroundJobs` with `JobType == BackgroundJobTypes.ReleaseUpgrade` filter. `MapToDto` deserializes JSON payload columns. Made `internal` for cross-file reuse.
+- **GraphQL subscriptions wired up:**
+  - `Subscription.cs` root class with `BackgroundJobProgress(jobId)` subscription resolver using `[Subscribe]` + `ITopicEventReceiver`.
+  - `SubscriptionType.cs` fluent descriptor following existing `QueryType`/`MutationType` pattern.
+  - `Program.cs` updated: `.AddSubscriptionType<SubscriptionType>()`, `.AddInMemorySubscriptions()`, `app.UseWebSockets()` before `app.MapGraphQL()`.
+- **Build status:** Server builds with 0 errors, all 331 tests pass (283 Core + 48 Serializers).
+
+### Previous changes
+
 - **ChunkStore entity refactored (BINST-91):** `LocalPath` property replaced with polymorphic `BackendSettings` (`ChunkStoreBackendSettings` base class, `LocalFolderBackendSettings` concrete type). Uses `System.Text.Json` `[JsonPolymorphic]` with `$type` discriminator, stored as `jsonb` column in PostgreSQL.
 - **ChunkerOptions improved (BINST-92):** Added comprehensive XML docs separating generic vs FastCDC-specific properties, `Validate()` method for per-ChunkerType validation.
-- **EF Core migration generated:** `PolymorphicChunkStoreBackendSettings` migration with data migration SQL to convert existing `LocalPath` values into `BackendSettings` JSON.
-- **GraphQL updated:** `ChunkStoreGql` now includes `BackendSettings` field via `ChunkStoreBackendSettingsGql` DTO. `ChunkStoreQueryService` loads entities in-memory and maps backend settings.
-- **REST endpoints updated:** `ChunkStoreEndpoints` and `SetupEndpoints` use `BackendSettings` instead of `LocalPath`.
-- **Storage factory and probe service updated:** `ChunkStoreStorageFactory` uses `GetBackendSettings<T>()`. `ChunkStoreProbeService` pattern-matches on `LocalFolderBackendSettings`.
 - Target framework is `net10.0` across all projects; Dockerfile uses `aspnet:10.0` / `sdk:10.0`.
 - Solution uses `.slnx` (XML-based format), not classic `.sln`.
 - CliFx upgraded to 3.0.0 (major version) — API migration partially complete (LSP errors remain in CLI project from namespace/class renames).
@@ -24,10 +43,11 @@ As of 2026-04-14, completed BINST-91 (polymorphic ChunkStore backend settings) a
 - **`StorageStrategy.cs` excluded from compilation:** `BinStash.Core/Ingestion/Models/StorageStrategy.cs` excluded via `<Compile Remove=...>`. Do not reference it.
 - **S3 chunk store not implemented:** Referenced in docs and CLI help text but no `IChunkStoreStorage` implementation exists. Only `LocalFolderChunkStoreStorage` is available. The polymorphic `BackendSettings` pattern is now ready to support future S3/Azure backends.
 - **`SingleTenantBootstrapper` commented out:** Registered but commented out in `Program.cs`. Single-tenant init relies solely on `SetupBootstrapper`.
-- **Stale documentation:** `docs/faq.md` references ".NET 9"; `docs/file-format.md` documents only V2/V3 (V4 has 10 sections vs the 5 documented); `docs/architecture.md` is a 3-line placeholder; `docs/cli-reference.md` is missing auth/analyze/svn/test commands.
+- **Stale documentation:** `docs/faq.md` references ".NET 9"; `docs/file-format.md` documents only V2/V3 (V4 has 10 sections); `docs/architecture.md` is a 3-line placeholder; `docs/cli-reference.md` is missing auth/analyze/svn/test commands.
 - **`chunk-store delete` and `release delete` commands:** Present but throw `NotImplementedException`.
 - **`appsettings.Development.json`** uses `Email2` section (not `Email`), effectively disabling email in dev.
 - **CLI `chunk-store show` command:** Should be updated to display `BackendSettings` instead of `LocalPath`, but CLI has pre-existing CliFx compile errors.
+
 ## Active decisions and preferences
 
 - Deduplication scope is intentionally per-chunk-store, not global.
@@ -36,6 +56,8 @@ As of 2026-04-14, completed BINST-91 (polymorphic ChunkStore backend settings) a
 - V4 `.rdef` format is the current write format; V1/V2/V3 deserialization retained for backward compatibility.
 - Artifacts sorted by path before V4 serialization — consumers must not assume positional stability after deserialization.
 - **ChunkStore backend settings use JSON polymorphism** (`[JsonPolymorphic]` with `$type` discriminator in `jsonb` column) — extensible for future storage backend types.
+- **Background jobs use polymorphic `BackgroundJob` entity** with JSON payload columns — designed to support multiple job types without per-type tables.
+- **No SignalR** — real-time updates use HotChocolate GraphQL subscriptions over WebSockets.
 
 ## Important patterns observed
 

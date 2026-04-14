@@ -14,6 +14,7 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Text;
+using System.Threading.Channels;
 using BinStash.Core.Auth.Instance;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
@@ -44,6 +45,7 @@ using BinStash.Server.Helpers;
 using BinStash.Server.HostedServices;
 using BinStash.Server.Middlewares;
 using BinStash.Server.Services.ChunkStores;
+using BinStash.Server.Services.ReleaseUpgrade;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -234,6 +236,15 @@ public static class Program
         //builder.Services.AddHostedService<SingleTenantBootstrapper>();
         builder.Services.AddHostedService<ChunkStoreProbeService>();
         builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
+        
+        // Release upgrade pipeline: Channel queue → BackgroundService → ReleaseUpgradeService
+        builder.Services.AddSingleton(Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        }));
+        builder.Services.AddScoped<IReleaseUpgradeService, ReleaseUpgradeService>();
+        builder.Services.AddHostedService<ReleaseUpgradeBackgroundService>();
 
         builder.Services.AddGraphQLServer()
             .ModifyCostOptions(options =>
@@ -243,6 +254,8 @@ public static class Program
             .AddAuthorization()
             .AddQueryType<QueryType>()
             .AddMutationType<MutationType>()
+            .AddSubscriptionType<SubscriptionType>()
+            .AddInMemorySubscriptions()
             .BindRuntimeType<ulong, UnsignedLongType>()
             .BindRuntimeType<ulong?, UnsignedLongType>()
             .AddFiltering()
@@ -307,6 +320,7 @@ public static class Program
         })
         .RequireInstancePermission(InstancePermission.Admin);
         app.MapGrpcService<IngestGrpcService>();
+        app.UseWebSockets();
         app.MapGraphQL();
         app.MapAllEndpoints();
         

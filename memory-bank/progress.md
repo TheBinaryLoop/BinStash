@@ -6,6 +6,14 @@ Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC 
 
 **Completed 2026-04-14:** BINST-91 (polymorphic ChunkStore backend settings) and BINST-92 (ChunkerOptions improvements). Both tickets moved to Done. Build succeeds (0 errors), all 341 tests pass. Runtime deserialization bug fixed — `PropertyNameCaseInsensitive = true` added to `JsonSerializerOptions` in `ChunkStoreEntityTypeConfiguration` to handle existing PascalCase JSON data in the database.
 
+**In progress 2026-04-14:** BINST-93 epic (release upgrade pipeline rewrite). Implementation status:
+- **BINST-94 (entity + migration):** Complete. `BackgroundJob` polymorphic entity created, old `ReleaseUpgradeJob` entity deleted, migration `ReplaceReleaseUpgradeJobsWithBackgroundJobs` generated.
+- **BINST-95 (upgrade service):** Complete. `ReleaseUpgradeService` rewritten to use `ITopicEventSender` and `BackgroundJob` entity. BUG-04/ERR-03/PERF-05 fixes preserved.
+- **BINST-96 (background service):** Complete. `ReleaseUpgradeBackgroundService` rewritten to use `BackgroundJob` entity.
+- **BINST-97 (GraphQL subscriptions):** Complete. `Subscription.cs` + `SubscriptionType.cs` created. `Program.cs` wired with `.AddSubscriptionType<SubscriptionType>()`, `.AddInMemorySubscriptions()`, `app.UseWebSockets()`.
+- **BINST-98 (REST endpoints):** Complete. `ChunkStoreEndpoints.cs` and `UpgradeJobEndpoints.cs` updated to use `BackgroundJob` entity with JSON deserialization.
+- **Build:** Server builds with 0 errors. All 331 tests pass (283 Core + 48 Serializers).
+
 ## What works (verified from code)
 
 - **Ingestion pipeline** — `FastCdcChunker` (FastCDC, BLAKE3), plain-file and ZIP input formats, gRPC `UploadChunks` and `UploadFileDefinitions` streams, REST release registration.

@@ -13,6 +13,8 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Text.Json;
+using System.Threading.Channels;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
@@ -69,10 +71,11 @@ public static class ChunkStoreEndpoints
                 "Rebuilds the chunk store by scanning the underlying storage and rewriting the pack and index files.")
             .WithSummary("Rebuild Chunk Store")
             .Produces(StatusCodes.Status200OK);
-        group.MapPost("/{id:guid}/upgrade", UpgradeReleasesToLatestVersionAsync)!
-            .WithDescription("Upgrades all releases in the chunk store to the latest version.")
-            .WithSummary("Upgrade Releases")
-            .Produces(StatusCodes.Status200OK);
+        group.MapPost("/{id:guid}/upgrade", StartUpgradeReleasesAsync)!
+            .WithDescription("Starts an asynchronous background job to upgrade all releases in the chunk store to the latest serializer version. Returns 202 Accepted with the job ID. Subscribe via GraphQL subscription 'backgroundJobProgress(jobId)' for real-time progress, or poll GET /api/upgrade-jobs/{jobId}.")
+            .WithSummary("Start Release Upgrade Job")
+            .Produces<UpgradeJobDto>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status409Conflict);
         /*group.MapDelete("/{id:guid}", DeleteChunkStoreAsync)
             .WithDescription("Deletes a chunk store by its ID.")
             .WithSummary("Delete Chunk Store")
@@ -217,90 +220,49 @@ public static class ChunkStoreEndpoints
         
     }
     
-    private static async Task<IResult> UpgradeReleasesToLatestVersionAsync(Guid id, BinStashDbContext db, IChunkStoreService chunkStoreService)
+    private static async Task<IResult> StartUpgradeReleasesAsync(
+        Guid id,
+        BinStashDbContext db,
+        Channel<Guid> jobChannel)
     {
         var store = await db.ChunkStores.FindAsync(id);
         if (store == null)
             return Results.NotFound();
 
-        // For local stores, we need the filesystem path to scan for release files
         if (store.Type != ChunkStoreType.Local)
             return Results.BadRequest("Release upgrade is currently only supported for local chunk stores.");
 
-        var localSettings = store.GetBackendSettings<LocalFolderBackendSettings>();
-        
-        var repos = await db.Repositories.Where(x => x.ChunkStoreId == id).ToListAsync();
-        if (!repos.Any())
-            return Results.Ok();
-        
-        var repoIds = repos.Select(x => x.Id).ToList();
-        
-        var releasesToUpgrade = await db.Releases.Where(r => repoIds.Contains(r.RepoId) && r.SerializerVersion < ReleasePackageSerializer.Version).ToListAsync();
-        if (!releasesToUpgrade.Any())
-            return Results.Ok();
-        
-        foreach (var releaseFile in Directory.EnumerateFiles(Path.Combine(localSettings.Path, "Releases"), "*.rdef",
-                     SearchOption.AllDirectories))
+        // Prevent duplicate running/pending jobs for the same chunk store
+        var hasActiveJob = await db.BackgroundJobs.AnyAsync(j =>
+            j.JobType == BackgroundJobTypes.ReleaseUpgrade
+            && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running)
+            && j.JobData != null && j.JobData.Contains(id.ToString()));
+
+        if (hasActiveJob)
+            return Results.Conflict("An upgrade job is already running or pending for this chunk store.");
+
+        var jobData = new ReleaseUpgradeJobData
         {
-            var tmpHash = Hash32.FromHexString(Path.GetFileNameWithoutExtension(releaseFile));
-            var tmpData = await File.ReadAllBytesAsync(releaseFile);
-            var tmpReleasePack = await ReleasePackageSerializer.DeserializeAsync(tmpData);
-            var tmpReleaseId = Guid.Parse(tmpReleasePack.ReleaseId);
-            var dbRelease = releasesToUpgrade.FirstOrDefault(r => r.Id == tmpReleaseId);
-            if (dbRelease == null)
-            {
-                File.Delete(releaseFile);
-                continue;
-            }
-            if (dbRelease.ReleaseDefinitionChecksum == tmpHash) continue;
-            dbRelease.ReleaseDefinitionChecksum = tmpHash;
-        }
+            ChunkStoreId = id,
+            TargetSerializerVersion = ReleasePackageSerializer.Version
+        };
 
-        var failedReleases = new Dictionary<Release, string>();
-        var grownReleases = new Dictionary<Release, int>(); // Release, grown size in bytes
-        
-        foreach (var release in releasesToUpgrade)
+        var job = new BackgroundJob
         {
-            var releaseData = await chunkStoreService.RetrieveReleasePackageAsync(store, release.ReleaseDefinitionChecksum.ToHexString());
-            if (releaseData == null)
-            {
-                failedReleases[release] = "Failed to retrieve release package.";
-                continue;
-            }
+            Id = Guid.NewGuid(),
+            JobType = BackgroundJobTypes.ReleaseUpgrade,
+            Status = BackgroundJobStatus.Pending,
+            JobData = JsonSerializer.Serialize(jobData),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
 
-            ReleasePackage releasePackage;
-            try
-            {
-                releasePackage = await ReleasePackageSerializer.DeserializeAsync(releaseData);
-            }
-            catch (Exception e)
-            {
-                failedReleases[release] = $"Failed to deserialize release package: {e.Message}";
-                continue;
-            }
-            
-            var oldReleaseDefinitionChecksum = release.ReleaseDefinitionChecksum;
+        db.BackgroundJobs.Add(job);
+        await db.SaveChangesAsync();
 
-            var serializedReleasePackage = await ReleasePackageSerializer.SerializeAsync(releasePackage);
-            
-            if (serializedReleasePackage.Length > releaseData.Length)
-                grownReleases[release] = serializedReleasePackage.Length - releaseData.Length;
-            
-            var hash = new Hash32(Blake3.Hasher.Hash(serializedReleasePackage).AsSpan());
-            await chunkStoreService.StoreReleasePackageAsync(store, serializedReleasePackage);
-            release.SerializerVersion = ReleasePackageSerializer.Version;
-            release.ReleaseDefinitionChecksum = hash;
-            await db.SaveChangesAsync();
-            try
-            {
-               await chunkStoreService.DeleteReleasePackageAsync(store, oldReleaseDefinitionChecksum.ToHexString());
-            }
-            catch (Exception e)
-            {
-                failedReleases[release] = $"Failed to delete old release package: {e.Message}";
-            }
-        }
-        return Results.Json(new { failedReleases = failedReleases.Select(x => new {x.Key.Id, x.Value}).ToList(), grownReleases = grownReleases.Select(x => new {x.Key.Id, x.Value}).ToList(), totalSizeGrowth = grownReleases.Sum(x => x.Value), totalReleases = releasesToUpgrade.Count, successfulUpgrades = releasesToUpgrade.Count - failedReleases.Count });
+        // Enqueue the job for the background service
+        await jobChannel.Writer.WriteAsync(job.Id);
+
+        return Results.Accepted($"/api/upgrade-jobs/{job.Id}", UpgradeJobEndpoints.MapToDto(job));
     }
 
     private static async Task<IResult> DeleteChunkStoreAsync(Guid id, BinStashDbContext db)

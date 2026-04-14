@@ -126,6 +126,6 @@ Host=localhost;Port=5432;Database=binstash;Username=binstash;Password=Buggy-Emph
 
 ## Database migrations
 
-- 31 migrations in `BinStash.Infrastructure/Data/Migrations/`
-- Most recent: `2026-04-14 PolymorphicChunkStoreBackendSettings`
+- 32 migrations in `BinStash.Infrastructure/Data/Migrations/`
+- Most recent: `2026-04-14 ReplaceReleaseUpgradeJobsWithBackgroundJobs` (drops `ReleaseUpgradeJobs`, creates `BackgroundJobs` with `JobType` and `Status` indexes, `jsonb` payload columns)
 - Applied automatically at startup via `db.Database.Migrate()`

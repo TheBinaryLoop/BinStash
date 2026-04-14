@@ -105,7 +105,9 @@ CLI-side orchestration: `ReleaseAddOrchestrator` → `ServerUploadPlanner` + `Co
 ## GraphQL API
 
 - HotChocolate 15 with filtering, sorting, and projections enabled.
-- Query type: `QueryType`; Mutation type: `MutationType`.
+- Query type: `QueryType`; Mutation type: `MutationType`; Subscription type: `SubscriptionType`.
+- **GraphQL subscriptions** enabled via `.AddInMemorySubscriptions()` and `app.UseWebSockets()`. Clients connect over WebSocket to subscribe to real-time events.
+- `Subscription.cs` root class exposes `BackgroundJobProgress(jobId)` — subscribes to topic `BackgroundJobProgress_{jobId}` and receives `BackgroundJobProgressDto` events.
 - GraphQL services live in `BinStash.Server/GraphQL/Services/`.
 - Cost limit enforcement is disabled (`EnforceCostLimits = false`).
 
@@ -116,6 +118,16 @@ CLI-side orchestration: `ReleaseAddOrchestrator` → `ServerUploadPlanner` + `Co
 | `SetupBootstrapper` | First-run initialization |
 | `ChunkStoreProbeService` | Liveness checks for chunk stores; results cached in `ChunkStoreProbeCache` |
 | `ChunkStoreStatsHostedService` | Periodic stats snapshot collection via `ChunkStoreStatsCollector` |
+| `ReleaseUpgradeBackgroundService` | Drains `Channel<Guid>` job queue, executes release upgrade jobs via `IReleaseUpgradeService`. Resumes `Pending`/`Running` jobs on startup (crash recovery). |
+
+### Background job pattern
+
+- **Entity:** `BackgroundJob` — polymorphic, uses `JobType` string discriminator and `jsonb` payload columns (`JobData`, `ProgressData`, `ErrorDetails`).
+- **Lifecycle:** `Pending` → `Running` → `Completed`/`Failed`/`Cancelled`.
+- **Queue:** `Channel<Guid>` (unbounded, single-reader, multi-writer) registered as singleton in DI.
+- **Execution:** Background service dequeues job IDs, creates a DI scope, resolves the appropriate service, and calls `ExecuteAsync(jobId, ct)`.
+- **Progress broadcasting:** Service writes `ProgressData` to DB and broadcasts via `ITopicEventSender` to GraphQL subscription topic.
+- **Job types:** `BackgroundJobTypes.ReleaseUpgrade` is the first; pattern supports adding more types by adding new constants and services.
 
 ## Configuration layering
 
@@ -128,7 +140,7 @@ Priority (highest to lowest):
 
 ## Key data entities (BinStashDbContext)
 
-`ApiKey`, `BinStashUser`, `Chunk`, `ChunkStore`, `ChunkStoreStatsSnapshot`, `FileDefinition`, `IngestSession`, `Release`, `ReleaseMetrics`, `Repository`, `RepositoryRoleAssignment`, `ServiceAccount`, `StorageClass`, `StorageClassMapping`, `StorageClassDefaultMapping`, `Subscription`, `Tenant`, `TenantMember`, `TenantMemberInvitation`, `TenantRoleAssignment`, `UserGroup`, `UserGroupMember`, `UserRefreshToken`, `InstanceSetting`, `SetupState`, `SetupCode`
+`ApiKey`, `BackgroundJob`, `BinStashUser`, `Chunk`, `ChunkStore`, `ChunkStoreStatsSnapshot`, `FileDefinition`, `IngestSession`, `Release`, `ReleaseMetrics`, `Repository`, `RepositoryRoleAssignment`, `ServiceAccount`, `StorageClass`, `StorageClassMapping`, `StorageClassDefaultMapping`, `Subscription`, `Tenant`, `TenantMember`, `TenantMemberInvitation`, `TenantRoleAssignment`, `UserGroup`, `UserGroupMember`, `UserRefreshToken`, `InstanceSetting`, `SetupState`, `SetupCode`
 
 ## gRPC contract
 

@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -13,26 +13,13 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Core.Entities;
-using BinStash.Server.Endpoints;
+namespace BinStash.Server.GraphQL.ObjectTypes;
 
-namespace BinStash.Server.Extensions;
-
-public static class EndpointRouteBuilderExtensions
+public sealed class SubscriptionType : ObjectType<Subscription>
 {
-    public static void MapAllEndpoints(this IEndpointRouteBuilder app)
+    protected override void Configure(IObjectTypeDescriptor<Subscription> descriptor)
     {
-        //app.MapIdentityApi<BinStashUser>();
-        app.MapChunkStoreEndpoints();
-        app.MapIdentityEndpoints();
-        app.MapIngestSessionEndpoints();
-        app.MapInstanceEndpoints();
-        app.MapReleaseEndpoints();
-        app.MapRepositoryEndpoints();
-        app.MapServiceAccountEndpoints();
-        app.MapSetupEndpoints();
-        app.MapStorageClassEndpoints();
-        app.MapTenantEndpoints();
-        app.MapUpgradeJobEndpoints();
+        descriptor
+            .Field(x => x.BackgroundJobProgress(Guid.Empty, null!));
     }
 }
