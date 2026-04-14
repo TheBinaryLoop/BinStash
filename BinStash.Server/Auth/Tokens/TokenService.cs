@@ -21,18 +21,17 @@ using BinStash.Core.Auth;
 using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Configuration.Auth;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace BinStash.Server.Auth.Tokens;
 
-public class TokenService(
-    IConfiguration configuration,
-    BinStashDbContext db,
-    IPasswordHasher<BinStashUser> userPasswordHasher,
-    IPasswordHasher<ApiKey> apiKeyPasswordHasher)
-    : ITokenService
+public class TokenService(IOptions<JwtSettings> jwtOptions, BinStashDbContext db, IPasswordHasher<BinStashUser> userPasswordHasher, IPasswordHasher<ApiKey> apiKeyPasswordHasher) : ITokenService
 {
+    private readonly JwtSettings _jwt = jwtOptions.Value;
+
     public async Task<(string accessToken, string refreshToken)> CreateTokensAsync(IdentityUser<Guid> user)
     {
         var now = DateTime.UtcNow;
@@ -44,12 +43,12 @@ public class TokenService(
             new(JwtRegisteredClaimNames.UniqueName, user.UserName ?? string.Empty),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
-
-        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["Auth:Jwt:Key"]!));
+        
+        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
         var creds = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
 
         var jwt = new JwtSecurityToken(
-            issuer: configuration["Auth:Jwt:Issuer"]!,
+            issuer: _jwt.Issuer,
             audience: null, // not validating audience
             claims: claims,
             notBefore: now,

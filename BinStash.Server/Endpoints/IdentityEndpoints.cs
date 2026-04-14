@@ -22,12 +22,14 @@ using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Auth.Tenant;
+using BinStash.Server.Configuration.Auth;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore;
 using InfoResponse = BinStash.Contracts.Auth.InfoResponse;
 using RegisterRequest = BinStash.Contracts.Auth.RegisterRequest;
@@ -55,9 +57,9 @@ public static class IdentityEndpoints
         group.MapPost("/register", async Task<Results<Ok, ValidationProblem>>
             ([FromBody] RegisterRequest registration, HttpContext context, [FromServices] IServiceProvider sp) =>
         {
-            var config = sp.GetRequiredService<IConfiguration>();
+            var authSettings = sp.GetRequiredService<IOptions<AuthSettings>>().Value;
             
-            if (!config.GetValue<bool>("Auth:Settings:AllowRegistration"))
+            if (!authSettings.Settings.AllowRegistration)
                 return CreateValidationProblem("RegistrationDisabled", "Registration is disabled.");
             
             var userManager = sp.GetRequiredService<UserManager<BinStashUser>>();

@@ -29,7 +29,9 @@ using BinStash.Server.Auth.Repository;
 using BinStash.Server.Auth.Tenant;
 using BinStash.Server.Auth.Tokens;
 using BinStash.Server.Configuration;
+using BinStash.Server.Configuration.Auth;
 using BinStash.Server.Configuration.Tenancy;
+using Microsoft.Extensions.Options;
 using BinStash.Server.Context;
 using BinStash.Server.Email;
 using BinStash.Server.Email.Providers;
@@ -83,6 +85,10 @@ public static class Program
         builder.Services.Configure<DomainSettings>(builder.Configuration.GetSection("Domain"));
         builder.Services.Configure<TenancySettings>(builder.Configuration.GetSection("Tenancy"));
         builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));
+        builder.Services.Configure<AuthSettings>(builder.Configuration.GetSection("Auth"));
+        builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Auth:Jwt"));
+        builder.Services.AddSingleton<IValidateOptions<JwtSettings>, JwtSettingsValidator>();
+        builder.Services.AddOptions<JwtSettings>().ValidateOnStart();
         
         // Add services to the container.
         builder.Services.AddSingleton<IChunkStoreStorageFactory, ChunkStoreStorageFactory>();
@@ -162,13 +168,14 @@ public static class Program
             })
             .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
             {
+                var jwt = builder.Configuration.GetSection("Auth:Jwt").Get<JwtSettings>() ?? new JwtSettings();
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,
-                    ValidIssuer = builder.Configuration["Auth:Jwt:Issuer"],
+                    ValidIssuer = jwt.Issuer,
                     ValidateAudience = false,
                     ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Auth:Jwt:Key"] ?? "dev-only-change-me")),
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.FromMinutes(1)
                 };
