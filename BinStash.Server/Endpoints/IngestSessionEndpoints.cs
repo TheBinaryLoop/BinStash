@@ -317,13 +317,13 @@ public static class IngestSessionEndpoints
         await chunkStream.CopyToAsync(ms);
         ms.Position = 0;
 
-        if (db.Chunks.Any(c => c.ChunkStoreId == repoId && c.Checksum == checksum)) return Results.Ok();
+        if (await db.Chunks.AnyAsync(c => c.ChunkStoreId == store.Id && c.Checksum == checksum)) return Results.Ok();
         var (success, bytesWritten) = await chunkStoreService.StoreChunkAsync(store, chunkChecksum, ms.ToArray());
         if (!success) return Results.Problem();
         db.Chunks.Add(new Chunk
         {
             Checksum = checksum,
-            ChunkStoreId = repoId,
+            ChunkStoreId = store.Id,
             Length = Convert.ToInt32(ms.Length),
             CompressedLength = bytesWritten
         });
@@ -461,12 +461,7 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
     
-    private static async Task<IResult> FinalizeIngestSessionAsync(
-    Guid repoId,
-    Guid sessionId,
-    BinStashDbContext db,
-    IChunkStoreService chunkStoreService,
-    HttpRequest request)
+    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, HttpRequest request)
     {
         var ingestSession = await db.IngestSessions.FindAsync(sessionId);
         var repo = await db.Repositories.FindAsync(repoId);
