@@ -17,14 +17,13 @@ using BinStash.Cli.Infrastructure;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Core.Entities;
 using CliFx;
-using CliFx.Attributes;
-using CliFx.Exceptions;
+using CliFx.Binding;
 using CliFx.Infrastructure;
 
 namespace BinStash.Cli.Commands;
 
 [Command("chunk-store", Description = "Manage chunk stores")]
-public class ChunkStoreRootCommand : ICommand
+public partial class ChunkStoreRootCommand : ICommand
 {
     public ValueTask ExecuteAsync(IConsole console)
     {
@@ -33,7 +32,7 @@ public class ChunkStoreRootCommand : ICommand
 }
 
 [Command("chunk-store list", Description = "List all chunk store you have access to")]
-public class ChunkStoreListCommand : AuthenticatedCommandBase
+public partial class ChunkStoreListCommand : AuthenticatedCommandBase
 {
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -53,27 +52,27 @@ public class ChunkStoreListCommand : AuthenticatedCommandBase
 }
 
 [Command("chunk-store add", Description = "Add a new chunk store")]
-public class ChunkStoreAddCommand : AuthenticatedCommandBase
+public partial class ChunkStoreAddCommand : AuthenticatedCommandBase
 {
-    [CommandOption("name", 'n', Description = "Name of the chunk store", IsRequired = true)]
-    public string Name { get; init; } = string.Empty;
+    [CommandOption("name", 'n', Description = "Name of the chunk store")]
+    public required string Name { get; set; } = string.Empty;
     
-    [CommandOption("type", 't', Description = "Type of the chunk store (Local, S3)", IsRequired = true)]
-    public ChunkStoreType ChunkStoreType { get; init; }
+    [CommandOption("type", 't', Description = "Type of the chunk store (Local, S3)")]
+    public required ChunkStoreType ChunkStoreType { get; set; }
 
-    [CommandOption("local-path", 'p', Description = "Local path for the chunk store (required for Local type)", IsRequired = false)]
-    public string ChunkStoreLocalPath { get; init; } = string.Empty;
+    [CommandOption("local-path", 'p', Description = "Local path for the chunk store (required for Local type)")]
+    public string ChunkStoreLocalPath { get; set; } = string.Empty;
     
-    [CommandOption("chunker-type", 'c', Description = "Type of the chunker (FastCdc)", IsRequired = false)]
+    [CommandOption("chunker-type", 'c', Description = "Type of the chunker (FastCdc)")]
     public ChunkerType? ChunkerType { get; set; }
     
-    [CommandOption("min-chunk-size", 'm', Description = "Minimum chunk size in bytes", IsRequired = false)]
+    [CommandOption("min-chunk-size", 'm', Description = "Minimum chunk size in bytes")]
     public int ChunkerMinChunkSize { get; set; }
     
-    [CommandOption("avg-chunk-size", 'a', Description = "Average chunk size in bytes", IsRequired = false)]
+    [CommandOption("avg-chunk-size", 'a', Description = "Average chunk size in bytes")]
     public int ChunkerAvgChunkSize { get; set; }
     
-    [CommandOption("max-chunk-size", 'x', Description = "Maximum chunk size in bytes", IsRequired = false)]
+    [CommandOption("max-chunk-size", 'x', Description = "Maximum chunk size in bytes")]
     public int ChunkerMaxChunkSize { get; set; }
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
@@ -123,10 +122,10 @@ public class ChunkStoreAddCommand : AuthenticatedCommandBase
 }
 
 [Command("chunk-store delete", Description = "Delete a chunk store")]
-public class ChunkStoreDeleteCommand : AuthenticatedCommandBase
+public partial class ChunkStoreDeleteCommand : AuthenticatedCommandBase
 {
-    [CommandOption("name", 'n', Description = "Name of the chunk store", IsRequired = true)]
-    public string Name { get; init; } = string.Empty;
+    [CommandOption("name", 'n', Description = "Name of the chunk store")]
+    public required string Name { get; set; } = string.Empty;
 
     protected override ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -135,10 +134,10 @@ public class ChunkStoreDeleteCommand : AuthenticatedCommandBase
 }
 
 [Command("chunk-store show", Description = "Display infos about a chunk store")]
-public class ChunkStoreShowCommand : AuthenticatedCommandBase
+public partial class ChunkStoreShowCommand : AuthenticatedCommandBase
 {
-    [CommandOption("id", 'i', Description = "Id of the chunk store", IsRequired = true)]
-    public Guid Id { get; init; }
+    [CommandOption("id", 'i', Description = "Id of the chunk store")]
+    public required Guid Id { get; set; }
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -170,10 +169,10 @@ public class ChunkStoreShowCommand : AuthenticatedCommandBase
 public class ChunkStoreTestCommand : ICommand
 {
     [CommandOption("path", 'p', Description = "The path to be uploaded", IsRequired = true)]
-    public string UploadPath { get; init; } = string.Empty;
+    public string UploadPath { get; set; } = string.Empty;
     
     [CommandOption("component-map", 'c', Description = "The path to the component map file.", IsRequired = false)]
-    public string ComponentMapFile { get; init; } = string.Empty;
+    public string ComponentMapFile { get; set; } = string.Empty;
     
     public async ValueTask ExecuteAsync(IConsole console)
     {

@@ -16,14 +16,13 @@
 using BinStash.Cli.Infrastructure;
 using BinStash.Contracts.Repo;
 using CliFx;
-using CliFx.Attributes;
-using CliFx.Exceptions;
+using CliFx.Binding;
 using CliFx.Infrastructure;
 
 namespace BinStash.Cli.Commands;
 
 [Command("repo", Description = "Manage repositories")]
-public class RepoRootCommand : ICommand
+public partial class RepoRootCommand : ICommand
 {
     public ValueTask ExecuteAsync(IConsole console)
     {
@@ -32,7 +31,7 @@ public class RepoRootCommand : ICommand
 }
 
 [Command("repo list", Description = "List all repositories you have access to")]
-public class RepoListCommand : TenantCommandBase
+public partial class RepoListCommand : TenantCommandBase
 {
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -52,13 +51,13 @@ public class RepoListCommand : TenantCommandBase
 }
 
 [Command("repo add", Description = "Add a new repository")]
-public class RepoAddCommand : TenantCommandBase
+public partial class RepoAddCommand : TenantCommandBase
 {
-    [CommandOption("name", 'n', Description = "Name of the repository", IsRequired = true)]
-    public string Name { get; init; } = string.Empty;
+    [CommandOption("name", 'n', Description = "Name of the repository")]
+    public required string Name { get; set; } = string.Empty;
 
     [CommandOption("description", 'd', Description = "Description of the repository")]
-    public string? Description { get; init; }
+    public string? Description { get; set; }
     
     [CommandOption("storage-class", 'c', Description = "Storage class for the repository")]
     public string? StorageClass { get; set; } = string.Empty;

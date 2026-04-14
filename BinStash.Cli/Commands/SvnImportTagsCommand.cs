@@ -19,14 +19,14 @@ using BinStash.Cli.Services.Releases;
 using BinStash.Core.Chunking;
 using BinStash.Core.Entities;
 using BinStash.Core.Ingestion.Abstractions;
-using CliFx.Attributes;
-using CliFx.Exceptions;
+using CliFx;
+using CliFx.Binding;
 using CliFx.Infrastructure;
 
 namespace BinStash.Cli.Commands;
 
 [Command("svn import-tags", Description = "Import SVN tags as BinStash releases")]
-public sealed class SvnImportTagsCommand : TenantCommandBase
+public sealed partial class SvnImportTagsCommand : TenantCommandBase
 {
     private readonly IReleaseIngestionEngine _releaseIngestionEngine;
     private readonly IContentProcessor _contentProcessor;
@@ -41,41 +41,41 @@ public sealed class SvnImportTagsCommand : TenantCommandBase
         _releasePackageBuilder = releasePackageBuilder;
     }
     
-    [CommandOption("repo", 'r', Description = "BinStash repository name", IsRequired = true)]
-    public string RepositoryName { get; init; } = string.Empty;
+    [CommandOption("repo", 'r', Description = "BinStash repository name")]
+    public required string RepositoryName { get; set; } = string.Empty;
 
-    [CommandOption("svn-root", 's', Description = "SVN tags root URL", IsRequired = true)]
-    public string SvnRoot { get; init; } = string.Empty;
+    [CommandOption("svn-root", 's', Description = "SVN tags root URL")]
+    public required string SvnRoot { get; set; } = string.Empty;
 
-    [CommandOption("state-file", Description = "SQLite file for resumable state", IsRequired = true)]
-    public string StateFile { get; init; } = string.Empty;
+    [CommandOption("state-file", Description = "SQLite file for resumable state")]
+    public required string StateFile { get; set; } = string.Empty;
 
     [CommandOption("svn-user", Description = "SVN username")]
-    public string? SvnUser { get; init; }
+    public string? SvnUser { get; set; }
 
     [CommandOption("svn-password", Description = "SVN password")]
-    public string? SvnPassword { get; init; }
+    public string? SvnPassword { get; set; }
 
     [CommandOption("resume", Description = "Resume unfinished import")]
-    public bool Resume { get; init; }
+    public bool Resume { get; set; }
 
     [CommandOption("limit", Description = "Maximum number of tags to import")]
-    public int? Limit { get; init; }
+    public int? Limit { get; set; }
 
     [CommandOption("dry-run", Description = "Scan and plan without uploading")]
-    public bool DryRun { get; init; }
+    public bool DryRun { get; set; }
 
     [CommandOption("concurrency", Description = "Max concurrent SVN file reads")]
-    public int Concurrency { get; init; } = 4;
+    public int Concurrency { get; set; } = 4;
 
     [CommandOption("component-map", Description = "Optional component map file in format <svnSubPath>:<componentName>")]
-    public string? ComponentMapFile { get; init; }
+    public string? ComponentMapFile { get; set; }
 
     [CommandOption("exclude", Description = "Exclude glob pattern. Can be repeated.")]
-    public string[] Excludes { get; init; } = [];
+    public string[] Excludes { get; set; } = [];
 
     [CommandOption("include", Description = "Include glob pattern. Can be repeated.")]
-    public string[] Includes { get; init; } = [];
+    public string[] Includes { get; set; } = [];
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {

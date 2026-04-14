@@ -15,7 +15,7 @@
 
 using BinStash.Cli.Infrastructure;
 using CliFx;
-using CliFx.Attributes;
+using CliFx.Binding;
 using CliFx.Infrastructure;
 
 namespace BinStash.Cli.Commands;
@@ -41,8 +41,8 @@ public abstract class CommandBase : ICommand
 
 public abstract class UrlCommandBase : CommandBase
 {
-    [CommandOption("url", 'u', Description = "The URL to the BinStash server.", IsRequired = true)]
-    public string? Url { get; set; }
+    [CommandOption("url", 'u', Description = "The URL to the BinStash server.")]
+    public required string? Url { get; set; }
 
     protected string GetUrl()
     {
@@ -69,10 +69,10 @@ public abstract class UrlCommandBase : CommandBase
 
 public abstract class AuthenticatedCommandBase : UrlCommandBase
 {
-    [CommandOption("token", 't', Description = "Authentication token for the BinStash server.")]
+    [CommandOption("token", Description = "Authentication token for the BinStash server.")]
     public string? Token { get; set; }
 
-    [CommandOption("no-auth", 'n', Description = "Disable authentication.")]
+    [CommandOption("no-auth", Description = "Disable authentication.")]
     public bool NoAuth { get; set; }
 
     protected Func<Task<string>> AuthTokenFactory { get; private set; } = () => Task.FromResult(string.Empty);
@@ -94,7 +94,7 @@ public abstract class AuthenticatedCommandBase : UrlCommandBase
             {
                 await console.Output.WriteLineAsync("Using stored authentication token.");
                 Token = accessToken;
-                AuthTokenFactory = () => auth.GetValidAccessTokenAsync();
+                AuthTokenFactory = auth.GetValidAccessTokenAsync;
             }
         }
         catch (Exception ex)
@@ -115,10 +115,10 @@ public abstract class AuthenticatedCommandBase : UrlCommandBase
 
 public abstract class TenantCommandBase : AuthenticatedCommandBase
 {
-    [CommandOption("tenant", 't', Description = "The tenant slug to operate on.", IsRequired = true)]
-    public string? TenantSlug { get; set; }
-    
-    protected Guid TenantId { get; private set; }
+    [CommandOption("tenant", 't', Description = "The tenant slug to operate on.")]
+    public required string? TenantSlug { get; set; }
+
+    private Guid TenantId { get; set; }
     
     protected new string GetUrl()
     {

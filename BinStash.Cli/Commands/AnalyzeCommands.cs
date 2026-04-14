@@ -15,14 +15,13 @@
 
 using BinStash.Core.Chunking;
 using CliFx;
-using CliFx.Attributes;
-using CliFx.Exceptions;
+using CliFx.Binding;
 using CliFx.Infrastructure;
 
 namespace BinStash.Cli.Commands;
 
 [Command("analyze", Description = "Provides tools to tune chunkers and deduplication settings for repositories and chunk stores.")]
-public class AnalyzeBaseCommand : ICommand
+public partial class AnalyzeBaseCommand : ICommand
 {
     public ValueTask ExecuteAsync(IConsole console)
     {
@@ -32,10 +31,10 @@ public class AnalyzeBaseCommand : ICommand
 }
 
 [Command("analyze chunker", Description = "Recommends chunker settings based on the target folder's content.")]
-public class AnalyzeChunkerCommand : ICommand
+public partial class AnalyzeChunkerCommand : ICommand
 {
-    [CommandOption("target", 't', Description = "The target folder to analyze for chunker settings.", IsRequired = true)]
-    public string TargetFolder { get; set; } = string.Empty;
+    [CommandOption("target", 't', Description = "The target folder to analyze for chunker settings.")]
+    public required string TargetFolder { get; set; } = string.Empty;
     
     public async ValueTask ExecuteAsync(IConsole console)
     {
@@ -43,7 +42,7 @@ public class AnalyzeChunkerCommand : ICommand
             throw new DirectoryNotFoundException($"The specified target folder '{TargetFolder}' does not exist.");
 
         var chunker = new FastCdcChunker(0, 0, 0);
-        var recommendation = await chunker.RecommendChunkerSettingsForTargetAsync(TargetFolder, ChunkAnalysisTarget.Dedupe, (logMessage) => console.WriteLine(logMessage), console.RegisterCancellationHandler());
+        var recommendation = await chunker.RecommendChunkerSettingsForTargetAsync(TargetFolder, ChunkAnalysisTarget.Dedupe, console.WriteLine, console.RegisterCancellationHandler());
         
         await console.Output.WriteLineAsync("Recommended Chunker Settings:");
         await console.Output.WriteLineAsync(recommendation.Summary);

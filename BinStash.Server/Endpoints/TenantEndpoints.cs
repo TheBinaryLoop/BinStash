@@ -457,7 +457,7 @@ public static class TenantEndpoints
         
             await db.TenantRoleAssignments.AddRangeAsync(roleAssignments);
         
-            // Remove invitation
+            // Invalidate invitation
             invitation.AcceptedAt = DateTimeOffset.UtcNow;
 
             await db.SaveChangesAsync();

@@ -14,21 +14,21 @@
         <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
         <PackageReference Include="Blake3" Version="2.2.1" />
         <PackageReference Include="Grpc.AspNetCore" Version="2.76.0" />
-        <PackageReference Include="HotChocolate.AspNetCore" Version="15.1.12" />
-        <PackageReference Include="HotChocolate.AspNetCore.Authorization" Version="15.1.12" />
-        <PackageReference Include="HotChocolate.Data" Version="15.1.12" />
-        <PackageReference Include="HotChocolate.Data.EntityFramework" Version="15.1.12" />
-        <PackageReference Include="HotChocolate.Types.Scalars" Version="15.1.12" />
-        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
-        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4" />
+        <PackageReference Include="HotChocolate.AspNetCore" Version="15.1.14" />
+        <PackageReference Include="HotChocolate.AspNetCore.Authorization" Version="15.1.14" />
+        <PackageReference Include="HotChocolate.Data" Version="15.1.14" />
+        <PackageReference Include="HotChocolate.Data.EntityFramework" Version="15.1.14" />
+        <PackageReference Include="HotChocolate.Types.Scalars" Version="15.1.14" />
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.5" />
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.5" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.5">
           <PrivateAssets>all</PrivateAssets>
           <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
-        <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.4" />
-        <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.4" />
-        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
-        <PackageReference Include="Scalar.AspNetCore" Version="2.13.5" />
+        <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.5" />
+        <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.5" />
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
+        <PackageReference Include="Scalar.AspNetCore" Version="2.13.22" />
         <PackageReference Include="SharpZipLib" Version="1.4.2" />
         <PackageReference Include="ZstdNetNGX" Version="1.0.0" />
     </ItemGroup>

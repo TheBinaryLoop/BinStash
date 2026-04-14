@@ -14,16 +14,15 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using CliFx;
-using CliFx.Attributes;
 using CliFx.Infrastructure;
 using BinStash.Cli.Auth;
-using CliFx.Exceptions;
+using CliFx.Binding;
 using Spectre.Console;
 
 namespace BinStash.Cli.Commands;
     
 [Command("auth", Description = "Manage authentication to BinStash servers")]
-public class AuthRootCommand : ICommand
+public partial class AuthRootCommand : ICommand
 {
     public ValueTask ExecuteAsync(IConsole console)
     {
@@ -32,14 +31,14 @@ public class AuthRootCommand : ICommand
 }
 
 [Command("auth login", Description = "Authenticate to a BinStash server")]
-public class AuthLoginCommand : UrlCommandBase
+public partial class AuthLoginCommand : UrlCommandBase
 {
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
         var email = AnsiConsole.Prompt(
             new TextPrompt<string>("Email:")
                 .PromptStyle("green")
-                .Validate(email => email.Contains("@") ? ValidationResult.Success() : ValidationResult.Error("[red]Invalid email address[/]"))
+                .Validate(email => email.Contains('@') ? ValidationResult.Success() : ValidationResult.Error("[red]Invalid email address[/]"))
         );
 
         var password = AnsiConsole.Prompt(
@@ -64,10 +63,10 @@ public class AuthLoginCommand : UrlCommandBase
 }
 
 [Command("auth logout", Description = "Logout from a BinStash server")]
-public class AuthLogoutCommand : ICommand
+public partial class AuthLogoutCommand : ICommand
 {
     [CommandParameter(0, Description = "Server URL (e.g. https://api.example.com)")]
-    public string Host { get; set; } = default!;
+    public string Host { get; set; } = null!;
 
     public async ValueTask ExecuteAsync(IConsole console)
     {
@@ -77,7 +76,7 @@ public class AuthLogoutCommand : ICommand
 }
 
 [Command("auth logout-all", Description = "Logout from all servers")]
-public class AuthLogoutAllCommand : ICommand
+public partial class AuthLogoutAllCommand : ICommand
 {
     public async ValueTask ExecuteAsync(IConsole console)
     {
@@ -87,7 +86,7 @@ public class AuthLogoutAllCommand : ICommand
 }
 
 [Command("auth list", Description = "List authenticated servers")]
-public class AuthListCommand : ICommand
+public partial class AuthListCommand : ICommand
 {
     public async ValueTask ExecuteAsync(IConsole console)
     {

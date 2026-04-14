@@ -17,15 +17,14 @@ using System.Formats.Tar;
 using BinStash.Cli.Infrastructure;
 using BinStash.Contracts.Release;
 using CliFx;
-using CliFx.Attributes;
-using CliFx.Exceptions;
+using CliFx.Binding;
 using CliFx.Infrastructure;
 using ZstdNet;
 
 namespace BinStash.Cli.Commands;
 
 [Command("release", Description = "Manage releases")]
-public class ReleasesRootCommand : ICommand
+public partial class ReleasesRootCommand : ICommand
 {
     public ValueTask ExecuteAsync(IConsole console)
     {
@@ -34,10 +33,10 @@ public class ReleasesRootCommand : ICommand
 }
 
 [Command("release list", Description = "List all releases you have access to")]
-public class ReleasesListCommand : TenantCommandBase
+public partial class ReleasesListCommand : TenantCommandBase
 {
-    [CommandOption("repository", 'r', Description = "Repository to query", IsRequired = true)]
-    public string RepositoryName { get; set; } = string.Empty;
+    [CommandOption("repository", 'r', Description = "Repository to query")]
+    public required string RepositoryName { get; set; } = string.Empty;
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -77,10 +76,10 @@ public class ReleasesListCommand : TenantCommandBase
 }
 
 [Command("release delete", Description = "Delete a release")]
-public class ReleaseDeleteCommand : TenantCommandBase
+public partial class ReleaseDeleteCommand : TenantCommandBase
 {
-    [CommandOption("id", 'i', Description = "Id of the release", IsRequired = true)]
-    public Guid ReleaseId { get; init; }
+    [CommandOption("id", 'i', Description = "Id of the release")]
+    public required Guid ReleaseId { get; set; }
 
     protected override ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -89,19 +88,19 @@ public class ReleaseDeleteCommand : TenantCommandBase
 }
 
 [Command("release download", Description = "Download a release")]
-public class ReleaseDownloadCommand : TenantCommandBase
+public partial class ReleaseDownloadCommand : TenantCommandBase
 {
-    [CommandOption("repository", 'r', Description = "Repository for the release", IsRequired = true)]
-    public string RepositoryName { get; init; } = string.Empty;
+    [CommandOption("repository", 'r', Description = "Repository for the release")]
+    public required string RepositoryName { get; set; } = string.Empty;
     
-    [CommandOption("version", 'v', Description = "The version/name of the release", IsRequired = true)]
-    public string Version { get; init; } = string.Empty;
+    [CommandOption("version", 'v', Description = "The version/name of the release")]
+    public required string Version { get; set; } = string.Empty;
     
-    [CommandOption("component", 'c', Description = "The component to install", IsRequired = false)]
-    public string Component { get; init; } = string.Empty;
+    [CommandOption("component", 'c', Description = "The component to install")]
+    public string Component { get; set; } = string.Empty;
     
-    [CommandOption("target-folder", 'f', Description = "The target folder to download the release to", IsRequired = true)]
-    public string TargetFolder { get; init; } = string.Empty;
+    [CommandOption("target-folder", 'f', Description = "The target folder to download the release to")]
+    public required string TargetFolder { get; set; } = string.Empty;
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -112,8 +111,6 @@ public class ReleaseDownloadCommand : TenantCommandBase
         
         var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
 
-        ReleaseSummaryDto? release = null;
-        
         var repositories = await client.GetRepositoriesAsync();
         if (repositories == null || repositories.Count == 0)
         {
@@ -139,7 +136,7 @@ public class ReleaseDownloadCommand : TenantCommandBase
             return;
         }
         
-        release = releases.FirstOrDefault(r => r.Version.Equals(Version, StringComparison.OrdinalIgnoreCase));
+        var release = releases.FirstOrDefault(r => r.Version.Equals(Version, StringComparison.OrdinalIgnoreCase));
         if (release == null)
         {
             console.WriteLine($"Release with version '{Version}' not found in repository '{RepositoryName}'.");
@@ -150,7 +147,7 @@ public class ReleaseDownloadCommand : TenantCommandBase
         if (!Directory.Exists(TargetFolder)) Directory.CreateDirectory(TargetFolder);
         
         // Download the release package
-        await console.Output.WriteLineAsync($"Downloading release '{release!.Version}' (ID: {release.Id}) to '{TargetFolder}'...");
+        await console.Output.WriteLineAsync($"Downloading release '{release.Version}' (ID: {release.Id}) to '{TargetFolder}'...");
         
         var downloadPath = Path.Combine(TargetFolder, $"{release.Version}.tar.zst");
 
@@ -167,7 +164,7 @@ public class ReleaseDownloadCommand : TenantCommandBase
 public class ChunkStoreShowCommand : ICommand
 {
     [CommandOption("id", 'i', Description = "Id of the chunk store", IsRequired = true)]
-    public Guid Id { get; init; }
+    public Guid Id { get; set; }
     
     public async ValueTask ExecuteAsync(IConsole console)
     {
@@ -191,20 +188,20 @@ public class ChunkStoreShowCommand : ICommand
 }*/
 
 [Command("release install", Description = "Install a release")]
-public class ReleaseInstallCommand : TenantCommandBase
+public partial class ReleaseInstallCommand : TenantCommandBase
 {
-    [CommandOption("repository", 'r', Description = "Repository for the release", IsRequired = true)]
-    public string RepositoryName { get; init; } = string.Empty;
+    [CommandOption("repository", 'r', Description = "Repository for the release")]
+    public required string RepositoryName { get; set; } = string.Empty;
     
-    [CommandOption("version", 'v', Description = "The version/name of the release", IsRequired = true)]
-    public string Version { get; init; } = string.Empty;
+    [CommandOption("version", 'v', Description = "The version/name of the release")]
+    public required string Version { get; set; } = string.Empty;
     
-    [CommandOption("component", 'c', Description = "The component to install", IsRequired = false)]
-    public string Component { get; init; } = string.Empty;
+    [CommandOption("component", 'c', Description = "The component to install")]
+    public string Component { get; set; } = string.Empty;
 
     
-    [CommandOption("target-folder", 'f', Description = "The target folder to install the release to", IsRequired = true)]
-    public string TargetFolder { get; init; } = string.Empty;
+    [CommandOption("target-folder", 'f', Description = "The target folder to install the release to")]
+    public required string TargetFolder { get; set; } = string.Empty;
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
@@ -215,8 +212,6 @@ public class ReleaseInstallCommand : TenantCommandBase
         
         var client = new BinStashApiClient(GetUrl(), AuthTokenFactory, console: console);
 
-        ReleaseSummaryDto? release = null;
-        
         var repositories = await client.GetRepositoriesAsync();
         if (repositories == null || repositories.Count == 0)
         {
@@ -242,7 +237,7 @@ public class ReleaseInstallCommand : TenantCommandBase
             return;
         }
         
-        release = releases.FirstOrDefault(r => r.Version.Equals(Version, StringComparison.OrdinalIgnoreCase));
+        var release = releases.FirstOrDefault(r => r.Version.Equals(Version, StringComparison.OrdinalIgnoreCase));
         if (release == null)
         {
             console.WriteLine($"Release with version '{Version}' not found in repository '{RepositoryName}'.");
@@ -253,7 +248,7 @@ public class ReleaseInstallCommand : TenantCommandBase
         if (!Directory.Exists(TargetFolder)) Directory.CreateDirectory(TargetFolder);
         
         // Download the release package
-        await console.Output.WriteLineAsync($"Downloading release '{release!.Version}' (ID: {release.Id}) to '{TargetFolder}'...");
+        await console.Output.WriteLineAsync($"Downloading release '{release.Version}' (ID: {release.Id}) to '{TargetFolder}'...");
         
         var downloadPath = Path.Combine(TargetFolder, $"{release.Version}.tar.zst");
 

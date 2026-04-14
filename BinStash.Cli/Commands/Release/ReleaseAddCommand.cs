@@ -16,18 +16,18 @@
 using BinStash.Cli.Converters;
 using BinStash.Cli.Infrastructure;
 using BinStash.Cli.Services.Releases;
-using CliFx.Attributes;
-using CliFx.Exceptions;
+using CliFx;
+using CliFx.Binding;
 using CliFx.Infrastructure;
 using Spectre.Console;
 
 namespace BinStash.Cli.Commands.Release;
 
 [Command("release add", Description = "Add a new release")]
-public class ReleaseAddCommand : TenantCommandBase
+public partial class ReleaseAddCommand : TenantCommandBase
 {
-    [CommandOption("version", 'v', Description = "The version/name of the release", IsRequired = true)]
-    public string Version { get; init; } = string.Empty;
+    [CommandOption("version", 'v', Description = "The version/name of the release")]
+    public required string Version { get; set; } = string.Empty;
     
     [CommandOption("notes", 'n', Description = "Release notes or description")]
     public string Note { get; set; } = string.Empty;
@@ -35,16 +35,16 @@ public class ReleaseAddCommand : TenantCommandBase
     [CommandOption("notes-file", Description = "File containing release notes or description")]
     public string NoteFile { get; set; } = string.Empty;
 
-    [CommandOption("repository", 'r', Description = "Repository for the release", IsRequired = true)]
-    public string RepositoryName { get; set; } = string.Empty;
+    [CommandOption("repository", 'r', Description = "Repository for the release")]
+    public required string RepositoryName { get; set; } = string.Empty;
     
-    [CommandOption("folder", 'f', Description = "Folder containing the release files", IsRequired = true)]
-    public string RootFolder { get; set; } = string.Empty;
+    [CommandOption("folder", 'f', Description = "Folder containing the release files")]
+    public required string RootFolder { get; set; } = string.Empty;
 
-    [CommandOption("component-map", 'c', Description = "The path to the component map file.", IsRequired = false)]
-    public string ComponentMapFile { get; init; } = string.Empty;
+    [CommandOption("component-map", 'c', Description = "The path to the component map file.")]
+    public string ComponentMapFile { get; set; } = string.Empty;
     
-    [CommandOption("custom-property", 'p', Description = "Custom property to add to the release. Can be specified multiple times.", IsRequired = false, Converter = typeof(KeyValuePairConverter<string, string>))]
+    [CommandOption("custom-property", 'p', Description = "Custom property to add to the release. Can be specified multiple times.", Converter = typeof(DictionaryConverter))]
     public Dictionary<string, string> CustomProperties { get; set; } = new();
 
     private readonly ReleaseAddOrchestrator _orchestrator;
