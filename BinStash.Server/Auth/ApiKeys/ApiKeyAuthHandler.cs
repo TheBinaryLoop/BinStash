@@ -1,3 +1,18 @@
+// Copyright (C) 2025-2026  Lukas Eßmann
+//
+//      This program is free software: you can redistribute it and/or modify
+//      it under the terms of the GNU Affero General Public License as published
+//      by the Free Software Foundation, either version 3 of the License, or
+//      (at your option) any later version.
+//
+//      This program is distributed in the hope that it will be useful,
+//      but WITHOUT ANY WARRANTY; without even the implied warranty of
+//      MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//      GNU Affero General Public License for more details.
+//
+//      You should have received a copy of the GNU Affero General Public License
+//      along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using BinStash.Core.Auth;
@@ -10,13 +25,7 @@ using Microsoft.Extensions.Options;
 
 namespace BinStash.Server.Auth.ApiKeys;
 
-public class ApiKeyAuthHandler(
-    IOptionsMonitor<AuthenticationSchemeOptions> options,
-    ILoggerFactory logger,
-    UrlEncoder encoder,
-    BinStashDbContext db,
-    IPasswordHasher<ApiKey> hasher)
-    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+public class ApiKeyAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder, BinStashDbContext db, IPasswordHasher<ApiKey> hasher) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
@@ -31,37 +40,25 @@ public class ApiKeyAuthHandler(
 
         var secret = parts[1];
 
-        var key = await db.ApiKeys
-            .SingleOrDefaultAsync(k => k.Id == keyId);
-        
+        var key = await db.ApiKeys.SingleOrDefaultAsync(k => k.Id == keyId);
+
         if (key is null || !key.IsActive)
             return AuthenticateResult.Fail("API key revoked/expired.");
 
-        return AuthenticateResult.Fail("Not implemented.");
-        // TODO: Implement api keys for users and service accounts
-        
-        var subject = key.SubjectType switch
-        {
-            SubjectType.ServiceAccount => "service_account",
-            _ => "unknown"
-        };
-        
-        
         var verified = hasher.VerifyHashedPassword(key, key.SecretHash, secret);
         if (verified == PasswordVerificationResult.Failed)
             return AuthenticateResult.Fail("Invalid API key.");
 
-        key.LastUsedAt = DateTime.UtcNow;
+        key.LastUsedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
 
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, key.SubjectId.ToString()),
             new("auth_type", "machine"),
+            new("subject_type", key.SubjectType.ToString()),
         };
-
-        foreach (var scope in key.Scopes)
-            claims.Add(new("scope", scope));
+        claims.AddRange(key.Scopes.Select(scope => new Claim("scope", scope)));
 
         var identity = new ClaimsIdentity(claims, Scheme.Name);
         var principal = new ClaimsPrincipal(identity);

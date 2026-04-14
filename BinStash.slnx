@@ -14,6 +14,7 @@
       <Platform Solution="Release|x64" Project="?" />
       <Build Solution="Release|x64" Project="false" />
     </Project>
+    <Project Path="BinStash.Server.Tests/BinStash.Server.Tests.csproj" />
   </Folder>
   <Folder Name="/Tooling/" />
   <Project Path="BinStash.Cli/BinStash.Cli.csproj">
