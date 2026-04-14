@@ -1,7 +1,7 @@
 # BinStash: Smart Storage for Your Builds. Chunked, Deduplicated, Compressed.
 
 ![License: AGPLv3](https://img.shields.io/badge/license-AGPLv3-blue.svg)
-![.NET](https://img.shields.io/badge/.NET-9.0-blueviolet)
+![.NET](https://img.shields.io/badge/.NET-10.0-blueviolet)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
 
 BinStash is a modern tool for efficiently storing build artifacts and release packages. It uses content-defined chunking, deduplication, and a custom binary format to dramatically reduce redundant storage, especially in CI/CD pipelines.
@@ -35,7 +35,7 @@ BinStash.Cli release add -v 1.0.0 -r my-repo -f ./build_output
 
 ## ⚙️ Build & Install
 
-- **Language**: [.NET 9](https://dotnet.microsoft.com/)
+- **Language**: [.NET 10](https://dotnet.microsoft.com/)
 - **Dependencies**:
     - [CliFx](https://github.com/Tyrrrz/CliFx)
     - [Spectre.Console](https://spectreconsole.net/)

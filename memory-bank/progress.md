@@ -2,43 +2,63 @@
 
 ## Current status
 
-Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC ingest, REST endpoints, multi-tenancy, and auth are implemented and compile cleanly. No automated deployment pipeline exists.
+Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC ingest, REST endpoints, multi-tenancy, and auth are implemented. No automated deployment pipeline exists. CliFx 3.0.0 upgrade is partially complete (API migration has outstanding LSP errors).
 
 ## What works (verified from code)
 
 - **Ingestion pipeline** — `FastCdcChunker` (FastCDC, BLAKE3), plain-file and ZIP input formats, gRPC `UploadChunks` and `UploadFileDefinitions` streams, REST release registration.
-- **Pack-file storage** — `LocalFolderChunkStoreStorage` / `ObjectStore` / `ObjectStoreManager` with `.pack` + `.idx` files; 4 GiB rotation.
-- **Release format** — `ReleasePackageSerializer` producing `.rdef` binary files; V4 format as of 2026-04-13. Format stability guarded by round-trip tests in `BinStash.Serializers.Tests`. V1/V2/V3 deserialization retained for backward compatibility.
+- **Pack-file storage** — `LocalFolderChunkStoreStorage` / `ObjectStore` / `ObjectStoreManager` with `.pack` + `.idx` files; 4 GiB rotation. `IndexedPackFileHandler` with memory-mapped index, lock-free reads, `AsyncLruHandlerCache` (capacity 256).
+- **Release format** — `ReleasePackageSerializer` producing `.rdef` binary files; V4 format as of 2026-04-13 with sort-by-path optimization. V4 is 30.4% smaller than V2 on the real 11,049-artifact sample (161,049 B vs 231,289 B). V1/V2/V3 deserialization retained for backward compatibility.
 - **GraphQL API** — HotChocolate 15 with `QueryType`, `MutationType`, filtering, sorting, projections, authorization.
 - **REST endpoints** — `ChunkStoreEndpoints`, `IdentityEndpoints`, `IngestSessionEndpoints`, `InstanceEndpoints`, `ReleaseEndpoints`, `RepositoryEndpoints`, `ServiceAccountEndpoints`, `SetupEndpoints`, `StorageClassEndpoints`, `TenantEndpoints`.
-- **Auth** — Composite "Smart" scheme (JWT Bearer / ApiKey / Cookie), "Setup" cookie scheme, ASP.NET Core Identity with confirmed-email requirement.
+- **Auth** — Composite "Smart" scheme (JWT Bearer / ApiKey / Cookie), "Setup" cookie scheme, ASP.NET Core Identity with confirmed-email requirement. ApiKey auth tested in `BinStash.Server.Tests`.
 - **Multi-tenancy** — `TenancyMode.Single` / `TenancyMode.Multi`, `TenantResolutionMiddleware`, `SetupGateMiddleware`, `SetupBootstrapper`.
 - **Background services** — `ChunkStoreProbeService`, `ChunkStoreStatsHostedService`, `SetupBootstrapper` (all registered and running).
-- **CLI** — CliFx 2 + Spectre.Console; commands: `auth`, `chunk-store`, `repo`, `release`, `analyze`, `svn-import-tags`, `test`; REST and gRPC client wrappers in `BinStash.Cli/Infrastructure/`.
+- **CLI** — CliFx 3 + Spectre.Console; 24 commands (22 active, 2 stub): `auth` (login/logout/status/token), `chunk-store` (list/get/add), `repo` (list/get/add/delete), `release` (list/get/add/install/download), `analyze` (release/rdef), `svn-import-tags`, `test server`. REST and gRPC client wrappers in `BinStash.Cli/Infrastructure/`.
+- **SVN import subsystem** — 8 files in `BinStash.Cli/Infrastructure/Svn/`, fully implemented with SQLite-backed resumable state, concurrent file reads, inline streaming chunking.
 - **DB-backed configuration** — `DbConfigurationSource` at lowest priority.
 - **Email** — Brevo provider via `BrevoEmailProvider`; Handlebars.Net `.hbs` templates embedded in `BinStash.Infrastructure`.
 - **Health checks** — PostgreSQL + `ChunkStoreHealthCheck` at `/health` (requires `Permission:Instance:Admin`).
-- **Tests** — `BinStash.Core.Tests` (unit: chunker, varint; property-based via FsCheck; snapshot via Verify); `BinStash.Serializers.Tests` (round-trip tests for `.rdef` format, including V4 tokenized-path tests). Stryker mutation testing config present.
+- **Database** — 30 EF Core migrations, most recent: `2026-03-22 BetterPerReleaseStatsTracking`. Auto-applied at startup.
+
+## Test suite
+
+| Test project | Focus | Test count |
+|---|---|---|
+| `BinStash.Core.Tests` | Unit + property-based: chunker, varint, Hash32/Hash8, BytesConverter, ZipMemberSelectionPolicy, DictionaryExtensions, BoundedStream, BitReader, ByteArrayComparer, StreamExtensions, ChecksumCompressor, ZipReconstructionPlanner, SubstringTableBuilder | ~283 |
+| `BinStash.Serializers.Tests` | Round-trip tests for `.rdef` format (V2/V3/V4) | ~48 |
+| `BinStash.Server.Tests` | ApiKeyAuthHandlerSpecs | 10 |
+| **Total** | | ~341 |
+
+- **Assertions:** FluentAssertions
+- **Property-based:** FsCheck.Xunit
+- **Snapshot/regression:** Verify.Xunit
+- **Mutation testing:** Stryker config present (`BinStash.Core.Tests/stryker-config.json`)
+- **Coverage:** `coverlet.collector`
+- **Real sample `.rdef`:** Embedded as `EmbeddedResource` in `BinStash.Serializers.Tests.csproj` (11,049 artifacts, 119 components, 2,189 distinct path segments)
+- **No integration or end-to-end tests yet.**
 
 ## Known gaps and issues
 
 | Item | Detail |
 |---|---|
-| **Dockerfile base image mismatch** | `BinStash.Server/Dockerfile` uses `aspnet:9.0` / `sdk:9.0`; all projects target `net10.0`. Must update to `aspnet:10.0` / `sdk:10.0`. |
-| **README badge mismatch** | `README.md` shows `.NET 9.0` badge; projects target `net10.0`. |
-| **S3 chunk store not implemented** | Server README and CLI docs reference S3 as a chunk store type, but no S3 `IChunkStoreStorage` implementation exists. Only `LocalFolderChunkStoreStorage` is available. |
-| **`StorageStrategy.cs` excluded from compilation** | `BinStash.Core/Ingestion/Models/StorageStrategy.cs` is excluded via `<Compile Remove=...>`. Its role is unclear; do not reference it. |
-| **`SingleTenantBootstrapper` commented out** | Registered but commented out in `Program.cs`. Single-tenant init relies solely on `SetupBootstrapper`. |
-| **Test coverage expanded** | Tier 1–3 unit tests added. Tier 1: `Hash32`, `Hash8`, `BytesConverter`, `ZipMemberSelectionPolicy`, `DictionaryExtensions`, `BoundedStream`, `BitReader`, `ByteArrayComparer`, `StreamExtensions`. Tier 2: `ChecksumCompressor` (22 tests), `ZipReconstructionPlanner` (34 tests). Tier 3: `ReleasePackageSerializer` round-trip tests (39 tests in `BinStash.Serializers.Tests`) and `SubstringTableBuilder` tokenizer tests (21 tests in `BinStash.Core.Tests`). **Bug fixed**: `SubstringTableBuilder.Tokenize` — removed `if (i > start)` guard; consecutive separators (e.g. `://` in URLs) no longer silently dropped. V4 format: 8 additional round-trip tests (including mixed opaque+reconstructed interleave test). Total: 331 tests passing (283 Core + 48 Serializers). No integration or end-to-end tests yet. Real sample rdef: 11,049 artifacts, 119 components, 2,189 distinct path segments; **V4 = 161,049 B vs V2 = 231,289 B (-30.4%)**. `.rdef` file now embedded as `EmbeddedResource` in `BinStash.Serializers.Tests.csproj`. |
-| **No automated deployment** | Deployment is manual; no pipeline for container publishing or environment promotion exists in this repository. |
+| **CliFx 3.0 migration incomplete** | CLI project has LSP/compile errors from CliFx 3.0 API renames (namespaces, class names). Must be resolved before CLI builds. |
+| **S3 chunk store not implemented** | Docs and CLI help reference S3 but no `IChunkStoreStorage` implementation exists. Only `LocalFolderChunkStoreStorage` is available. `ChunkStoreStorageFactory` throws `NotSupportedException` for non-Local types. |
+| **`StorageStrategy.cs` excluded** | `BinStash.Core/Ingestion/Models/StorageStrategy.cs` excluded via `<Compile Remove=...>`. Role unclear. |
+| **`SingleTenantBootstrapper` commented out** | In `Program.cs`. Single-tenant init relies solely on `SetupBootstrapper`. |
+| **`chunk-store delete` / `release delete` stubs** | Present but throw `NotImplementedException`. |
+| **Stale documentation** | `docs/faq.md` says ".NET 9". `docs/file-format.md` covers V2/V3 only (V4 has 10 sections). `docs/architecture.md` is a 3-line placeholder. `docs/cli-reference.md` missing auth/analyze/svn/test commands. |
+| **No automated deployment** | Deployment is manual; no pipeline for container publishing or environment promotion. |
+| **No integration tests** | Only unit and snapshot tests exist. |
 
 ## What's left to build (known backlog from code inspection)
 
+- Complete CliFx 3.0 API migration (fix compile errors in CLI project).
 - S3 chunk store storage backend implementation.
-- Fix Dockerfile to use .NET 10 base images.
-- Expand test coverage (integration tests, V2 deserialization round-trip if needed).
+- Implement `chunk-store delete` and `release delete` commands.
+- Expand test coverage (integration tests, end-to-end tests).
 - Complete or remove `StorageStrategy.cs`.
-- Finalize `SvnImportTagsCommand` (exists but may be incomplete).
+- Update stale documentation (faq, file-format, architecture, cli-reference).
 - Frontend / management UI (currently none; management is via GraphQL + REST only).
 
 ## Evolution of key decisions
@@ -47,4 +67,5 @@ Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC 
 - **Auto-migration at startup** — `db.Database.Migrate()` in `Program.cs`; no manual `dotnet ef database update` in production.
 - **`DbConfigurationSource` at index 0** — ensures database-stored settings are always overridable by env/appsettings.
 - **`ingest.proto` field numbers must remain backward-compatible** — proto is a shared contract between server and CLI.
-- **V4 `.rdef` format (2026-04-13)** — replaces V3 as the write format. Token-based string table (path segments instead of full paths). BackingIndex eliminated from §0x05 (implicit positional indexing). Artifacts sorted by path before serialisation (ordinal sort) — saves ~17 KB on the 11,049-artifact sample by giving Zstd prefix-run locality in §0x05 and §0x06. V4 is **30.4% smaller than V2** on the real sample (161,049 B vs 231,289 B). V1/V2/V3 deserialization preserved. `ComponentName` is no longer stored on the wire in V4; it is derived from the first `/`-separated segment of `Path` during deserialization. Artifact order after deserialization reflects on-disk sort order (path-alphabetical), not original insertion order — consumers must not assume positional stability.
+- **V4 `.rdef` format (2026-04-13)** — replaces V3 as the write format. Token-based string table (path segments instead of full paths). BackingIndex eliminated from §0x05 (implicit positional indexing). Artifacts sorted by path before serialisation (ordinal sort) — saves ~17 KB on the 11,049-artifact sample by giving Zstd prefix-run locality in §0x05 and §0x06. V4 is **30.4% smaller than V2** on the real sample. V1/V2/V3 deserialization preserved. `ComponentName` not stored on wire in V4 — derived from first path segment during deserialization. Artifact order after deserialization reflects on-disk sort order (path-alphabetical), not original insertion order.
+- **Format experiments closed (2026-04-13)** — 9 experiments evaluated: cross-section concat, naive §0x05+§0x06 merge, delta-hash-index, outer Zstd passthrough for §0x02 — all rejected by measurement. Sort-by-path is the confirmed winner.
