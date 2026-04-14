@@ -2,17 +2,48 @@
 
 ## Current work focus
 
-As of 2026-04-14, the main effort is **rewriting the release upgrade pipeline** (BINST-93 epic) to be async, safe, and observable. This involves:
-- Replacing the old synchronous `UpgradeReleasesToLatestVersionAsync` endpoint with an async background job pipeline.
-- Fixing three critical bugs: BUG-04 (data loss), ERR-03 (inconsistency), PERF-05 (performance).
-- Adding real-time progress via HotChocolate GraphQL subscriptions (no SignalR).
-- Using a polymorphic `BackgroundJob` entity to support future job types.
+As of 2026-04-14, the **release upgrade pipeline** (BINST-93 epic) backend work is **complete** — async background job pipeline, GraphQL subscriptions, REST endpoints all implemented and building with all tests passing.
+
+The **frontend integration** for the upgrade pipeline is now also **complete**. The Vue 3 frontend at `C:\Users\l.essmann\RiderProjects\Cruip\mosaic-vue` has been connected to the backend's async upgrade pipeline with real-time progress via GraphQL subscriptions over WebSocket.
+
+**Bug fix completed (2026-04-14):** `OpaqueBlobBacking.Length must be set before serialization` — the V4 serializer threw when upgrading V1/V2 releases because those formats did not store file lengths. Fixed by adding `PopulateMissingLengthsAsync()` in `ReleaseUpgradeService.ExecuteAsync()` which looks up null `Length` fields from the `FileDefinition` table (matching by `ContentHash`/`Checksum` + `ChunkStoreId`) before re-serialization. Both `OpaqueBlobBacking.Length` and `ContainerMemberBinding.Length` are handled.
 
 Previously completed: BINST-91 (polymorphic ChunkStore backend settings) and BINST-92 (ChunkerOptions improvements).
 
 ## Recent changes (observed from code)
 
-### Release upgrade pipeline rewrite (BINST-93, in progress)
+### Release upgrade V1/V2 Length fix (completed 2026-04-14)
+
+- **`ReleaseUpgradeService.ExecuteAsync()` fixed:** Added `PopulateMissingLengthsAsync()` static method between Step 2 (deserialize) and Step 3 (re-serialize). This method:
+  1. Collects all `OpaqueBlobBacking` instances with `Length == null` and `ContentHash != null`
+  2. Collects all `ContainerMemberBinding` instances with `Length == null` and `ContentHash != null`
+  3. Batch-queries `FileDefinition` table by `ContentHash` + `ChunkStoreId` to get lengths
+  4. Populates the null `Length` fields before V4 re-serialization
+- **Root cause:** V1/V2 `.rdef` formats did not store file lengths. `OpaqueBlobBacking.Length` and `ContainerMemberBinding.Length` were null after deserialization. The V4 serializer (`ReleasePackageSerializer.cs` lines 214-215 and 128-129) requires both to be non-null.
+- **Pattern follows existing code:** Same lookup pattern used in `IngestSessionEndpoints.CalculateOpaqueArtifactSize()` (line 671-679) and `ChunkStoreStatsCollector` (lines 238-244, 338-346).
+- **Build:** 0 errors, all 341 tests pass (283 Core + 48 Serializers + 10 Server).
+
+### Frontend upgrade pipeline integration (completed 2026-04-14)
+
+- **`graphql-ws` 6.0.8 installed** via pnpm — WebSocket transport for Apollo Client subscriptions.
+- **Vite proxy updated** — `ws: true` added to `/graphql` proxy in `vite.config.js` to enable WebSocket proxying for subscriptions.
+- **`apolloClient.ts` rewritten** — Split link architecture: `HttpLink` for queries/mutations, `GraphQLWsLink` (via `graphql-ws`) for subscriptions. Auto-detects `ws://` vs `wss://` based on page protocol.
+- **`upgradeChunkStore()` fixed** in `src/api/chunkStores.ts` — Changed from GET to POST, now returns `UpgradeJobDto` from the 202 response.
+- **`UpgradeJobDto` type added** to `src/api/chunkStores.ts`.
+- **`ChunkStoreBackendSettingsDto` type added** and `ChunkStoreDetailDto` updated to include `backendSettings`.
+- **`src/api/upgradeJobs.ts` created** — REST API functions: `getUpgradeJob(id)`, `cancelUpgradeJob(id)`, `listUpgradeJobs(chunkStoreId?)`.
+- **`src/composables/useBackgroundJobProgress.ts` created** — Composable using `apolloClient.subscribe()` with `GraphQLWsLink` for `backgroundJobProgress(jobId: UUID!)` subscription. Exposes reactive `progress`, `error`, `isSubscribed` refs plus `subscribe(jobId)` and `unsubscribe()` methods. Auto-unsubscribes on terminal states and component unmount.
+- **`src/pages/ChunkStoreDetail.vue` created** — Full detail page with:
+  - Breadcrumb navigation back to `/chunk-stores`
+  - Header card with chunk store name, type, backend settings path
+  - "Upgrade Releases" button that calls `upgradeChunkStore(id)` and subscribes to progress
+  - Real-time upgrade progress panel (progress bar, processed/total/failed/skipped counts, bytes saved, status badge, cancel button)
+  - Tabs: Overview (store details, chunker config, stats) and Upgrade Jobs (job history list)
+  - Loading/error states following existing patterns
+- **Route added** — `/chunk-stores/:id` route added to `src/app/router/index.ts` importing `ChunkStoreDetail.vue`.
+- **`ChunkStoreCard.vue` cleaned up** — Footer changed from "Send Message" (linking to `/messages`) to "View Details" (linking to the chunk store's detail page).
+
+### Release upgrade pipeline rewrite (BINST-93, backend complete)
 
 - **`BackgroundJob` entity created:** Polymorphic job entity at `BinStash.Core/Entities/BackgroundJob.cs` with `JobType` string discriminator, `Status` enum (`Pending`, `Running`, `Completed`, `Failed`, `Cancelled`), and JSON payload columns (`JobData`, `ProgressData`, `ErrorDetails` as `jsonb`). Job-type-specific data classes: `ReleaseUpgradeJobData`, `ReleaseUpgradeProgressData`.
 - **Old `ReleaseUpgradeJob` entity deleted:** Replaced by `BackgroundJob`. Old entity file, EF config, and migration removed.

@@ -91,6 +91,9 @@ public static class Program
         builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Auth:Jwt"));
         builder.Services.AddSingleton<IValidateOptions<JwtSettings>, JwtSettingsValidator>();
         builder.Services.AddOptions<JwtSettings>().ValidateOnStart();
+        builder.Services.Configure<StorageSettings>(builder.Configuration.GetSection("Storage"));
+        builder.Services.AddSingleton<IValidateOptions<StorageSettings>, StorageSettingsValidator>();
+        builder.Services.AddOptions<StorageSettings>().ValidateOnStart();
         
         // Add services to the container.
         builder.Services.AddSingleton<IChunkStoreStorageFactory, ChunkStoreStorageFactory>();

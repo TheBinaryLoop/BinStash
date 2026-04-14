@@ -233,7 +233,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             }
         }, options.EnableCompression, options.CompressionLevel, cancellationToken);
 
-        // 0x08 - container members (V4: entry path as token sequence)
+        // 0x08 - container members (entry path as token sequence)
         await WriteSectionAsync(stream, 0x08, w =>
         {
             VarIntUtils.WriteVarInt(w, (uint)flattenedMembers.Count);

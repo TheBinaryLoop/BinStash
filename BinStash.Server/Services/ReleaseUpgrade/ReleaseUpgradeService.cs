@@ -15,6 +15,7 @@
 
 using System.Text.Json;
 using BinStash.Contracts.Hashing;
+using BinStash.Contracts.Release;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
@@ -188,6 +189,11 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
                     // Step 2: Deserialize (backward-compatible)
                     var package = await ReleasePackageSerializer.DeserializeAsync(oldData, cancellationToken);
 
+                    // Step 2b: Populate null Length fields from FileDefinition table.
+                    // V1/V2 formats did not store file lengths; the V4 serializer requires them.
+                    // Look up missing lengths via ContentHash → FileDefinition.Length.
+                    await PopulateMissingLengthsAsync(db, package, store.Id, cancellationToken);
+
                     // Step 3: Re-serialize to latest version
                     var newData = await ReleasePackageSerializer.SerializeAsync(package, cancellationToken: cancellationToken);
 
@@ -288,6 +294,67 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
         job.ProgressData = JsonSerializer.Serialize(progress);
         await db.SaveChangesAsync(ct);
         await BroadcastProgress(job, jobData, ct);
+    }
+
+    /// <summary>
+    /// Populates null <see cref="OpaqueBlobBacking.Length"/> and <see cref="ContainerMemberBinding.Length"/>
+    /// fields by looking up the file size from the <see cref="FileDefinition"/> table.
+    /// V1/V2 release formats did not store file lengths; the V4 serializer requires them.
+    /// The <see cref="FileDefinition.Checksum"/> (BLAKE3 whole-file hash) matches
+    /// <see cref="OpaqueBlobBacking.ContentHash"/> and <see cref="ContainerMemberBinding.ContentHash"/>.
+    /// </summary>
+    private static async Task PopulateMissingLengthsAsync(BinStashDbContext db, ReleasePackage package, Guid chunkStoreId, CancellationToken cancellationToken)
+    {
+        // Collect content hashes that need length lookup
+        var hashesNeedingLength = new HashSet<Hash32>();
+
+        foreach (var artifact in package.OutputArtifacts ?? [])
+        {
+            switch (artifact.Backing)
+            {
+                case OpaqueBlobBacking { Length: null, ContentHash: not null } opaque:
+                    hashesNeedingLength.Add(opaque.ContentHash.Value);
+                    break;
+
+                case ReconstructedContainerBacking reconstructed:
+                    foreach (var member in reconstructed.Members)
+                    {
+                        if (member.Length == null && member.ContentHash != null)
+                            hashesNeedingLength.Add(member.ContentHash.Value);
+                    }
+                    break;
+            }
+        }
+
+        if (hashesNeedingLength.Count == 0)
+            return;
+
+        // Batch-query FileDefinition table for the missing lengths
+        var fileLengths = await db.FileDefinitions
+            .AsNoTracking()
+            .Where(fd => fd.ChunkStoreId == chunkStoreId && hashesNeedingLength.Contains(fd.Checksum))
+            .ToDictionaryAsync(fd => fd.Checksum, fd => fd.Length, cancellationToken);
+
+        // Apply the looked-up lengths back to the deserialized package
+        foreach (var artifact in package.OutputArtifacts ?? [])
+        {
+            switch (artifact.Backing)
+            {
+                case OpaqueBlobBacking { Length: null, ContentHash: not null } opaque:
+                    if (fileLengths.TryGetValue(opaque.ContentHash.Value, out var opaqueLen))
+                        opaque.Length = opaqueLen;
+                    break;
+
+                case ReconstructedContainerBacking reconstructed:
+                    foreach (var member in reconstructed.Members)
+                    {
+                        if (member.Length == null && member.ContentHash != null &&
+                            fileLengths.TryGetValue(member.ContentHash.Value, out var memberLen))
+                            member.Length = memberLen;
+                    }
+                    break;
+            }
+        }
     }
 
     private async Task BroadcastProgress(BackgroundJob job, ReleaseUpgradeJobData? jobData, CancellationToken ct)
