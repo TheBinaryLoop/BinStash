@@ -126,6 +126,6 @@ Host=localhost;Port=5432;Database=binstash;Username=binstash;Password=Buggy-Emph
 
 ## Database migrations
 
-- 30 migrations in `BinStash.Infrastructure/Data/Migrations/`
-- Most recent: `2026-03-22 BetterPerReleaseStatsTracking`
+- 31 migrations in `BinStash.Infrastructure/Data/Migrations/`
+- Most recent: `2026-04-14 PolymorphicChunkStoreBackendSettings`
 - Applied automatically at startup via `db.Database.Migrate()`

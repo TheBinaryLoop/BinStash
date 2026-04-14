@@ -14,6 +14,7 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Core.Auth.Instance;
+using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.GraphQL.Auth;
 using Microsoft.AspNetCore.Authorization;
@@ -39,16 +40,11 @@ public sealed class ChunkStoreQueryService
         var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
         await GraphQlAuth.EnsureInstancePermissionAsync(user, _authorizationService, InstancePermission.Admin);
         
-        return await _db.ChunkStores
+        var store = await _db.ChunkStores
             .AsNoTracking()
-            .Where(cs => cs.Id == chunkStoreId)
-            .Select(r => new ChunkStoreGql
-            {
-                Id = r.Id,
-                Name = r.Name,
-                Type = r.Type.ToString(),
-            })
-            .FirstOrDefaultAsync(ct);
+            .FirstOrDefaultAsync(cs => cs.Id == chunkStoreId, ct);
+
+        return store is null ? null : MapToGql(store);
     }
     
     public async Task<IQueryable<ChunkStoreGql>> GetChunkStoresAsync(CancellationToken ct)
@@ -56,13 +52,30 @@ public sealed class ChunkStoreQueryService
         var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
         await GraphQlAuth.EnsureInstancePermissionAsync(user, _authorizationService, InstancePermission.Admin);
         
-        return _db.ChunkStores
+        // Load all stores in-memory because BackendSettings is a JSON-converted column
+        // that cannot be projected via EF Core LINQ-to-SQL.
+        var stores = await _db.ChunkStores
             .AsNoTracking()
-            .Select(r => new ChunkStoreGql
-            {
-                Id = r.Id,
-                Name = r.Name,
-                Type = r.Type.ToString(),
-            });
+            .ToListAsync(ct);
+
+        return stores.Select(MapToGql).AsQueryable();
     }
+
+    private static ChunkStoreGql MapToGql(ChunkStore store) => new()
+    {
+        Id = store.Id,
+        Name = store.Name,
+        Type = store.Type.ToString(),
+        BackendSettings = MapBackendSettingsToGql(store.BackendSettings)
+    };
+
+    private static ChunkStoreBackendSettingsGql? MapBackendSettingsToGql(ChunkStoreBackendSettings? settings) => settings switch
+    {
+        LocalFolderBackendSettings local => new ChunkStoreBackendSettingsGql
+        {
+            BackendType = "LocalFolder",
+            LocalPath = local.Path
+        },
+        _ => null
+    };
 }

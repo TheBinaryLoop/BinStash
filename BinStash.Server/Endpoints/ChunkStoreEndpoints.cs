@@ -103,22 +103,31 @@ public static class ChunkStoreEndpoints
         if (!isValidChunkStoreType)
             return Results.BadRequest($"Invalid chunk store type '{dto.Type}'.");
         
-        // Check if the local path is valid for local chunk store type
-        if (chunkStoreType == ChunkStoreType.Local)
+        // Build backend settings based on the type
+        ChunkStoreBackendSettings backendSettings;
+        switch (chunkStoreType)
         {
-            if (string.IsNullOrWhiteSpace(dto.LocalPath))
-                return Results.BadRequest("Local path is required for local chunk store type.");
-            if (!Directory.Exists(dto.LocalPath))
+            case ChunkStoreType.Local:
             {
-                try
+                if (string.IsNullOrWhiteSpace(dto.LocalPath))
+                    return Results.BadRequest("Local path is required for local chunk store type.");
+                if (!Directory.Exists(dto.LocalPath))
                 {
-                    Directory.CreateDirectory(dto.LocalPath);
+                    try
+                    {
+                        Directory.CreateDirectory(dto.LocalPath);
+                    }
+                    catch (Exception e)
+                    {
+                        return Results.Problem($"Failed to create local path: {e.Message}", statusCode: 400);
+                    }
                 }
-                catch (Exception e)
-                {
-                    return Results.Problem($"Failed to create local path: {e.Message}", statusCode: 400);
-                }
+
+                backendSettings = new LocalFolderBackendSettings { Path = dto.LocalPath };
+                break;
             }
+            default:
+                return Results.BadRequest($"Chunk store type '{dto.Type}' is not yet supported.");
         }
         
         // Validate chunker options or set defaults
@@ -129,11 +138,12 @@ public static class ChunkStoreEndpoints
             AvgChunkSize = dto.Chunker.AvgChunkSize ?? 8192,
             MaxChunkSize = dto.Chunker.MaxChunkSize ?? 65536
         };
+
+        var chunkerErrors = chunkerOptions.Validate();
+        if (chunkerErrors.Count > 0)
+            return Results.BadRequest($"Invalid chunker options: {string.Join("; ", chunkerErrors)}");
         
-        if (chunkerOptions.MinChunkSize <= 0 || chunkerOptions.AvgChunkSize <= 0 || chunkerOptions.MaxChunkSize <= 0)
-            return Results.BadRequest("Chunk sizes must be greater than zero.");
-        
-        var chunkStore = new ChunkStore(dto.Name, chunkStoreType, dto.LocalPath)
+        var chunkStore = new ChunkStore(dto.Name, chunkStoreType, backendSettings)
         {
             ChunkerOptions = chunkerOptions
         };
@@ -141,7 +151,7 @@ public static class ChunkStoreEndpoints
         db.ChunkStores.Add(chunkStore);
         await db.SaveChangesAsync();
 
-        return Results.Created($"/api/chunkstores/{chunkStore.Id}", new ChunkStoreSummaryDto
+        return Results.Created($"/api/chunk-stores/{chunkStore.Id}", new ChunkStoreSummaryDto
         {
             Id = chunkStore.Id,
             Name = chunkStore.Name
@@ -176,7 +186,8 @@ public static class ChunkStoreEndpoints
                 AvgChunkSize = store.ChunkerOptions.AvgChunkSize,
                 MaxChunkSize = store.ChunkerOptions.MaxChunkSize,
             },
-            Stats = new Dictionary<string, object>() // await new LocalFolderChunkStorage(store.LocalPath).GetStorageStatsAsync()
+            BackendSettings = MapBackendSettingsToDto(store),
+            Stats = new Dictionary<string, object>()
         });
     }
 
@@ -211,6 +222,12 @@ public static class ChunkStoreEndpoints
         var store = await db.ChunkStores.FindAsync(id);
         if (store == null)
             return Results.NotFound();
+
+        // For local stores, we need the filesystem path to scan for release files
+        if (store.Type != ChunkStoreType.Local)
+            return Results.BadRequest("Release upgrade is currently only supported for local chunk stores.");
+
+        var localSettings = store.GetBackendSettings<LocalFolderBackendSettings>();
         
         var repos = await db.Repositories.Where(x => x.ChunkStoreId == id).ToListAsync();
         if (!repos.Any())
@@ -222,7 +239,7 @@ public static class ChunkStoreEndpoints
         if (!releasesToUpgrade.Any())
             return Results.Ok();
         
-        foreach (var releaseFile in Directory.EnumerateFiles(Path.Combine(store.LocalPath, "Releases"), "*.rdef",
+        foreach (var releaseFile in Directory.EnumerateFiles(Path.Combine(localSettings.Path, "Releases"), "*.rdef",
                      SearchOption.AllDirectories))
         {
             var tmpHash = Hash32.FromHexString(Path.GetFileNameWithoutExtension(releaseFile));
@@ -298,4 +315,16 @@ public static class ChunkStoreEndpoints
         return Results.Conflict();
     }
 
+    /// <summary>
+    /// Maps the entity's <see cref="ChunkStoreBackendSettings"/> to the API DTO.
+    /// </summary>
+    private static ChunkStoreBackendSettingsDto MapBackendSettingsToDto(ChunkStore store) => store.BackendSettings switch
+    {
+        LocalFolderBackendSettings local => new ChunkStoreBackendSettingsDto
+        {
+            Type = store.Type.ToString(),
+            LocalPath = local.Path
+        },
+        _ => new ChunkStoreBackendSettingsDto { Type = store.Type.ToString() }
+    };
 }

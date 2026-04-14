@@ -156,7 +156,7 @@ public static class SetupEndpoints
             Data = new
             {
                 state.TenancyMode,
-                ChunkStores = db.ChunkStores.Select(x => new { x.Id, x.Name, Type = x.Type, x.LocalPath }).ToList(),
+                ChunkStores = db.ChunkStores.Select(x => new { x.Id, x.Name, x.Type, x.BackendSettings }).ToList(),
                 StorageClasses = db.StorageClasses.Select(x => new { x.Name, x.DisplayName, x.Description }).ToList(),
                 StorageClassDefaultMappings = db.StorageClassDefaultMappings.Select(x => new { x.StorageClassName, x.ChunkStoreId, x.IsDefault, x.IsEnabled }).ToList(),
                 Tenants = db.Tenants.Select(x => new { x.Id, x.Name, x.Slug }).ToList(),
@@ -268,7 +268,12 @@ public static class SetupEndpoints
         var existing = await db.ChunkStores.SingleOrDefaultAsync(x => x.Name == req.Name);
         if (existing is null)
         {
-            var store = new ChunkStore(req.Name, req.Type, req.LocalPath); // TODO: Support other types
+            var backendSettings = req.Type switch
+            {
+                ChunkStoreType.Local => (ChunkStoreBackendSettings)new LocalFolderBackendSettings { Path = req.LocalPath! },
+                _ => throw new ArgumentOutOfRangeException(nameof(req.Type), req.Type, "Unsupported chunk store type.")
+            };
+            var store = new ChunkStore(req.Name, req.Type, backendSettings);
             db.ChunkStores.Add(store);
             await db.SaveChangesAsync();
             existing = store;

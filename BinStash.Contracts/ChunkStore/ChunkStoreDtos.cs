@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2025-2026  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -25,6 +25,7 @@ public class ChunkStoreDetailDto : ChunkStoreSummaryDto
 {
     public required string Type { get; set; }
     public required ChunkStoreChunkerDto Chunker { get; set; }
+    public required ChunkStoreBackendSettingsDto BackendSettings { get; set; }
     public required Dictionary<string, object> Stats { get; set; }
 }
 
@@ -45,11 +46,33 @@ public class ChunkStoreChunkerDto
     public int? MaxChunkSize { get; set; }
 }
 
+/// <summary>
+/// Polymorphic backend settings DTO.
+/// The <see cref="Type"/> discriminator determines which optional properties are populated.
+/// </summary>
+public class ChunkStoreBackendSettingsDto
+{
+    /// <summary>
+    /// The backend type discriminator (e.g., "Local").
+    /// </summary>
+    public required string Type { get; set; }
+
+    /// <summary>
+    /// Local filesystem path. Populated when <see cref="Type"/> is "Local".
+    /// </summary>
+    public string? LocalPath { get; set; }
+}
+
 public class CreateChunkStoreDto
 {
     public required string Name { get; set; }
     public required string Type { get; set; }
-    public required string LocalPath { get; set; }
+
+    /// <summary>
+    /// Local filesystem path. Required when <see cref="Type"/> is "Local".
+    /// </summary>
+    public string? LocalPath { get; set; }
+
     public ChunkStoreChunkerDto? Chunker { get; set; }
 }
 

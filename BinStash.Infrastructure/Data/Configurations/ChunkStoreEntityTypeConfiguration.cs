@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2025-2026  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Text.Json;
 using BinStash.Core.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -21,6 +22,14 @@ namespace BinStash.Infrastructure.Data.Configurations;
 
 public class ChunkStoreEntityTypeConfiguration : IEntityTypeConfiguration<ChunkStore>
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = false,
+        AllowOutOfOrderMetadataProperties = true
+    };
+
     public void Configure(EntityTypeBuilder<ChunkStore> builder)
     {
         builder.ToTable("ChunkStores");
@@ -30,8 +39,17 @@ public class ChunkStoreEntityTypeConfiguration : IEntityTypeConfiguration<ChunkS
         builder.Property(cs => cs.Id).HasColumnName("Id").ValueGeneratedNever();
         builder.Property(cs => cs.Name).IsRequired().HasMaxLength(256);
         builder.Property(cs => cs.Type).IsRequired();
-        builder.Property(cs => cs.LocalPath).IsRequired();
         builder.Property(cs => cs.ProbeMode).IsRequired();
+
+        // BackendSettings stored as jsonb column with STJ polymorphic serialization
+        builder.Property(cs => cs.BackendSettings)
+            .HasColumnName("BackendSettings")
+            .HasColumnType("jsonb")
+            .IsRequired()
+            .HasConversion(
+                v => JsonSerializer.Serialize(v, JsonOptions),
+                v => JsonSerializer.Deserialize<ChunkStoreBackendSettings>(v, JsonOptions)!
+            );
 
         builder.OwnsOne(cs => cs.ChunkerOptions, chunker =>
         {

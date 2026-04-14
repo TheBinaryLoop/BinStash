@@ -111,4 +111,22 @@ public sealed class ChunkStoreGql
     public required Guid Id { get; init; }
     public required string Name { get; init; }
     public required string Type { get; init; }
+    public ChunkStoreBackendSettingsGql? BackendSettings { get; init; }
+}
+
+/// <summary>
+/// GraphQL representation of backend-specific chunk store settings.
+/// Uses a flat key-value model for extensibility across backend types.
+/// </summary>
+public sealed class ChunkStoreBackendSettingsGql
+{
+    /// <summary>
+    /// The backend type discriminator (e.g. "LocalFolder").
+    /// </summary>
+    public required string BackendType { get; init; }
+
+    /// <summary>
+    /// Local filesystem path — only set when <see cref="BackendType"/> is "LocalFolder".
+    /// </summary>
+    public string? LocalPath { get; init; }
 }

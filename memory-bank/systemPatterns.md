@@ -43,7 +43,16 @@ CLI-side orchestration: `ReleaseAddOrchestrator` → `ServerUploadPlanner` + `Co
 - Pack files rotate at 4 GiB.
 - `ObjectStore` / `ObjectStoreManager` manage pack file lifecycle.
 - `LocalFolderChunkStoreStorage` is the only implemented `IChunkStoreStorage` backend.
-- `ChunkStoreStorageFactory` only supports `ChunkStoreType.Local`; throws `NotSupportedException` for other types.
+- `ChunkStoreStorageFactory` resolves backends via `ChunkStore.GetBackendSettings<T>()`.
+
+### Backend settings pattern (BINST-91, 2026-04-14)
+
+- `ChunkStore.BackendSettings` is a polymorphic `jsonb` column using `System.Text.Json` `[JsonPolymorphic]` with `$type` discriminator.
+- Abstract base: `ChunkStoreBackendSettings` (`BinStash.Core/Entities/ChunkStoreBackendSettings.cs`).
+- Concrete type: `LocalFolderBackendSettings` (discriminator `"LocalFolder"`, single `Path` property).
+- EF Core `HasConversion` with STJ serializer in `ChunkStoreEntityTypeConfiguration`. Uses `PropertyNamingPolicy = CamelCase` for writes and `PropertyNameCaseInsensitive = true` for reads (handles both PascalCase legacy data and camelCase new data).
+- `ChunkStore.GetBackendSettings<T>()` helper casts and validates the settings type.
+- Pattern is designed to be extended for future S3/Azure backends by adding new `[JsonDerivedType]` attributes and concrete classes.
 
 ### Storage implementation internals
 

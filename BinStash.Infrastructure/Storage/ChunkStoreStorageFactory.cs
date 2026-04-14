@@ -25,13 +25,25 @@ public sealed class ChunkStoreStorageFactory : IChunkStoreStorageFactory, IDispo
 
     public IChunkStoreStorage Create(ChunkStore store)
     {
-        var key = $"{store.Type}:{store.LocalPath}";
+        var key = BuildCacheKey(store);
         return _cache.GetOrAdd(key, _ => store.Type switch
         {
-            ChunkStoreType.Local => new LocalFolderChunkStoreStorage(store.LocalPath),
+            ChunkStoreType.Local => CreateLocalStorage(store),
             _ => throw new NotSupportedException($"Chunk store type '{store.Type}' is not supported.")
         });
     }
+
+    private static LocalFolderChunkStoreStorage CreateLocalStorage(ChunkStore store)
+    {
+        var settings = store.GetBackendSettings<LocalFolderBackendSettings>();
+        return new LocalFolderChunkStoreStorage(settings.Path);
+    }
+
+    private static string BuildCacheKey(ChunkStore store) => store.Type switch
+    {
+        ChunkStoreType.Local => $"Local:{store.GetBackendSettings<LocalFolderBackendSettings>().Path}",
+        _ => $"{store.Type}:{store.Id}"
+    };
 
     public void Dispose()
     {

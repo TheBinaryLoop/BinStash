@@ -114,15 +114,20 @@ public sealed class ChunkStoreProbeService : BackgroundService
         }
     }
 
-    private static async Task<ChunkStoreProbeResult> ProbeChunkStoreAsync(
-        ChunkStore store,
-        CancellationToken cancellationToken)
+    private static async Task<ChunkStoreProbeResult> ProbeChunkStoreAsync(ChunkStore store, CancellationToken cancellationToken)
     {
         var ts = DateTimeOffset.UtcNow;
 
+        // Only local-folder stores can be probed via filesystem; other types should implement their own probe logic
+        if (store.BackendSettings is not LocalFolderBackendSettings localSettings)
+        {
+            return new(store.Id, store.Name, $"[{store.Type}]", "Healthy", "Non-local store probing not yet implemented", 0, null, 0, 0, ts);
+        }
+
+        var root = localSettings.Path;
+
         try
         {
-            var root = store.LocalPath;
             if (!Directory.Exists(root))
                 return new(store.Id, store.Name, root, "Unhealthy", "RootPath does not exist", 0, null, 0, 0, ts);
 
@@ -176,15 +181,15 @@ public sealed class ChunkStoreProbeService : BackgroundService
         }
         catch (UnauthorizedAccessException ex)
         {
-            return new(store.Id, store.Name, store.LocalPath, "Unhealthy", ex.Message, 0, null, 0, 0, ts);
+            return new(store.Id, store.Name, root, "Unhealthy", ex.Message, 0, null, 0, 0, ts);
         }
         catch (IOException ex)
         {
-            return new(store.Id, store.Name, store.LocalPath, "Unhealthy", ex.Message, 0, null, 0, 0, ts);
+            return new(store.Id, store.Name, root, "Unhealthy", ex.Message, 0, null, 0, 0, ts);
         }
         catch (Exception ex)
         {
-            return new(store.Id, store.Name, store.LocalPath, "Unhealthy", ex.ToString(), 0, null, 0, 0, ts);
+            return new(store.Id, store.Name, root, "Unhealthy", ex.ToString(), 0, null, 0, 0, ts);
         }
     }
 }

@@ -4,6 +4,8 @@
 
 Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC ingest, REST endpoints, multi-tenancy, and auth are implemented. No automated deployment pipeline exists. CliFx 3.0.0 upgrade is partially complete (API migration has outstanding LSP errors).
 
+**Completed 2026-04-14:** BINST-91 (polymorphic ChunkStore backend settings) and BINST-92 (ChunkerOptions improvements). Both tickets moved to Done. Build succeeds (0 errors), all 341 tests pass. Runtime deserialization bug fixed — `PropertyNameCaseInsensitive = true` added to `JsonSerializerOptions` in `ChunkStoreEntityTypeConfiguration` to handle existing PascalCase JSON data in the database.
+
 ## What works (verified from code)
 
 - **Ingestion pipeline** — `FastCdcChunker` (FastCDC, BLAKE3), plain-file and ZIP input formats, gRPC `UploadChunks` and `UploadFileDefinitions` streams, REST release registration.
@@ -19,7 +21,9 @@ Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC 
 - **DB-backed configuration** — `DbConfigurationSource` at lowest priority.
 - **Email** — Brevo provider via `BrevoEmailProvider`; Handlebars.Net `.hbs` templates embedded in `BinStash.Infrastructure`.
 - **Health checks** — PostgreSQL + `ChunkStoreHealthCheck` at `/health` (requires `Permission:Instance:Admin`).
-- **Database** — 30 EF Core migrations, most recent: `2026-03-22 BetterPerReleaseStatsTracking`. Auto-applied at startup.
+- **Database** — 31 EF Core migrations, most recent: `2026-04-14 PolymorphicChunkStoreBackendSettings`. Auto-applied at startup.
+- **ChunkStore backend settings** — Polymorphic `BackendSettings` column (`jsonb`) replaces hardcoded `LocalPath`. Uses `[JsonPolymorphic]` with `$type` discriminator. `LocalFolderBackendSettings` is the only concrete type. Pattern is extensible for S3/Azure backends.
+- **ChunkerOptions** — Enhanced with comprehensive XML docs, `Validate()` method, clear separation of generic vs FastCDC-specific properties.
 
 ## Test suite
 
