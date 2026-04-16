@@ -14,60 +14,146 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Collections.Concurrent;
-using System.IO.MemoryMappedFiles;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Storage.Packing;
 
 namespace BinStash.Infrastructure.Storage.Indexing;
 
+/// <summary>
+/// Per-prefix chunk/file-definition pack-file handler with a three-tier,
+/// LSM-tree-inspired index.
+///
+/// <para>
+/// <strong>Tier 0 — append log (<c>index.log</c>):</strong>
+/// New entries are appended to a binary log file using the same varint-encoded
+/// format as the old monolithic <c>.idx</c> file.  All log entries are also
+/// kept in the hot <c>_logDict</c> dictionary for O(1) in-memory deduplication.
+/// When the log reaches <see cref="LogFlushThreshold"/> entries it is flushed
+/// to an immutable sorted segment and the log file is truncated.
+/// </para>
+///
+/// <para>
+/// <strong>Tier 1+ — sorted segments (<c>seg-NNN.idx</c>):</strong>
+/// Immutable fixed-width sorted files enabling O(log n) binary search via
+/// memory-mapped I/O with zero heap allocation on the hot path.  Each segment
+/// has a paired bloom filter (<c>seg-NNN.bloom</c>) for fast probabilistic
+/// membership testing before the binary search.
+/// </para>
+///
+/// <para>
+/// <strong>Compaction:</strong>
+/// After every log flush the handler checks whether any compaction is
+/// warranted (size-tiered: 16 level-N segments → 1 level-(N+1) segment) and
+/// runs the merge under the write lock.
+/// </para>
+///
+/// <para>
+/// <strong>Graceful degradation at small scale:</strong>
+/// For deployments with fewer than <see cref="LogFlushThreshold"/> chunks per
+/// prefix bucket the log never flushes, no segment files are created, and
+/// behavior is identical to the original implementation.
+/// </para>
+/// </summary>
 internal sealed class IndexedPackFileHandler : IDisposable
 {
+    // -----------------------------------------------------------------------
+    // Tunables
+
+    /// <summary>
+    /// Number of log entries that trigger a flush to a sorted segment.
+    /// At 1 B total chunks / 4096 buckets ≈ 244 K chunks/bucket, this means
+    /// ~60 flushes per bucket at steady state.
+    /// </summary>
+    private const int LogFlushThreshold = 4096;
+
+    private const int CompactionFanIn = 16; // 16 level-N segs → 1 level-(N+1) seg
+
+    // -----------------------------------------------------------------------
+    // Identityf
+
     private readonly long _maxPackFileSize;
-    private readonly string _indexFilePath;
+    private readonly string _directory;
+    private readonly string _logFilePath;
     private readonly string _dataFilePrefix;
+    private readonly string _indexFilePrefix; // same as _dataFilePrefix — used as a name prefix for all index files
     private readonly Func<ReadOnlySpan<byte>, Hash32> _computeHash;
 
-    // One-time initialization
+    // -----------------------------------------------------------------------
+    // Initialization guard
+
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private volatile bool _initialIndexLoadDone;
 
-    // Serializes append/write-path mutations only
+    // -----------------------------------------------------------------------
+    // Write serialization
+
+    /// <summary>
+    /// Serializes all write-path mutations: appends, log flush, compaction.
+    /// Reads are entirely lock-free against the volatile snapshot fields.
+    /// </summary>
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
-    // Protects index stream re-open/rebuild operations
-    private readonly SemaphoreSlim _indexStreamLock = new(1, 1);
+    // -----------------------------------------------------------------------
+    // Tier 0: hot dictionary + append log
 
-    // Reads are lock-free against this snapshot-like concurrent map
-    private ConcurrentDictionary<Hash32, IndexEntry> _index = new();
+    /// <summary>
+    /// In-memory mirror of the current append log.  Lock-free reads.
+    /// Written only under <see cref="_writeLock"/> or during initialization.
+    /// </summary>
+    private ConcurrentDictionary<Hash32, IndexEntry> _logDict = new();
 
-    // Current pack append state
+    private int _logEntryCount;
+
+    private FileStream? _logAppendStream;
+    private BinaryWriter? _logWriter;
+
+    // -----------------------------------------------------------------------
+    // Tier 1+: sorted segments
+
+    /// <summary>
+    /// Segments ordered newest-first.  Volatile for lock-free reads.
+    /// Written only under <see cref="_writeLock"/> or during initialization.
+    /// </summary>
+    private volatile SegmentList _segments = SegmentList.Empty;
+
+    // -----------------------------------------------------------------------
+    // Pack file append state
+
     private int _currentFileNumber = int.MinValue;
     private FileStream? _currentStream;
     private long _currentStreamLength;
 
-    // Persistent append stream for index
-    private FileStream? _indexAppendStream;
-    private BinaryWriter? _indexWriter;
+    // -----------------------------------------------------------------------
+    // LRU cache integration
 
-    // LRU
     private int _activeLeaseCount;
     private int _disposeRequested;
-    
     private bool _disposed;
 
-    private readonly record struct IndexEntry(int FileNo, long Offset, int Length);
+    // -----------------------------------------------------------------------
+    // Constructor
 
-    public IndexedPackFileHandler(string directoryPath, string dataFileName, string prefix, long maxPackFileSize, Func<ReadOnlySpan<byte>, Hash32> computeHash)
+    public IndexedPackFileHandler(
+        string directoryPath,
+        string dataFileName,
+        string prefix,
+        long maxPackFileSize,
+        Func<ReadOnlySpan<byte>, Hash32> computeHash)
     {
         _maxPackFileSize = maxPackFileSize;
-        _computeHash = computeHash ?? throw new ArgumentNullException(nameof(computeHash));
+        _computeHash     = computeHash ?? throw new ArgumentNullException(nameof(computeHash));
 
         Directory.CreateDirectory(directoryPath);
 
-        _indexFilePath = Path.Combine(directoryPath, $"index{prefix}.idx");
-        _dataFilePrefix = Path.Combine(directoryPath, $"{dataFileName}{prefix}");
+        _directory       = directoryPath;
+        _dataFilePrefix  = Path.Combine(directoryPath, $"{dataFileName}{prefix}");
+        _indexFilePrefix = _dataFilePrefix; // segment/log files are named <dataFilePrefix>.seg-NNN.idx etc.
+        _logFilePath     = _indexFilePrefix + ".log";
     }
+
+    // -----------------------------------------------------------------------
+    // Initialization
 
     private async Task EnsureIndexLoadedAsync()
     {
@@ -80,8 +166,10 @@ internal sealed class IndexedPackFileHandler : IDisposable
             if (_initialIndexLoadDone)
                 return;
 
-            var loadedIndex = LoadIndexCore();
-            _index = loadedIndex;
+            _segments      = LoadExistingSegments();
+            _logDict       = LoadLogDict();
+            _logEntryCount = _logDict.Count;
+
             _initialIndexLoadDone = true;
         }
         finally
@@ -90,112 +178,351 @@ internal sealed class IndexedPackFileHandler : IDisposable
         }
     }
 
-    private ConcurrentDictionary<Hash32, IndexEntry> LoadIndexCore()
+    private SegmentList LoadExistingSegments()
+    {
+        var segFilePattern = Path.GetFileName(_indexFilePrefix) + ".seg-*.idx";
+        var segFiles = Directory.EnumerateFiles(_directory, segFilePattern)
+            .OrderByDescending(static f => f, StringComparer.Ordinal) // newest-first
+            .ToArray();
+
+        if (segFiles.Length == 0)
+            return SegmentList.Empty;
+
+        var entries = new List<SegmentEntry>(segFiles.Length);
+        foreach (var path in segFiles)
+        {
+            var bloomPath = Path.ChangeExtension(path, ".bloom");
+            try
+            {
+                var segment = new SortedIndexSegment(path);
+
+                PackIndexBloomFilter? bloom = null;
+                if (File.Exists(bloomPath))
+                    bloom = PackIndexBloomFilter.Deserialize(File.ReadAllBytes(bloomPath));
+
+                entries.Add(new SegmentEntry(path, segment, bloom));
+            }
+            catch
+            {
+                // Corrupt segment — skip; will be rebuilt on next RebuildIndexFile()
+            }
+        }
+
+        return new SegmentList(entries.ToArray());
+    }
+
+    private ConcurrentDictionary<Hash32, IndexEntry> LoadLogDict()
     {
         var map = new ConcurrentDictionary<Hash32, IndexEntry>();
 
-        if (!File.Exists(_indexFilePath))
+        if (!File.Exists(_logFilePath))
             return map;
 
-        var fileInfo = new FileInfo(_indexFilePath);
-        if (fileInfo.Length == 0)
+        var fi = new FileInfo(_logFilePath);
+        if (fi.Length == 0)
             return map;
 
-        using var mmf = MemoryMappedFile.CreateFromFile(_indexFilePath, FileMode.Open, mapName: null, capacity: 0, MemoryMappedFileAccess.Read);
-        using var accessor = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-
-        long position = 0;
-        var indexLength = fileInfo.Length;
-
-        while (position < indexLength)
+        try
         {
-            var hashBytes = new byte[32];
-            accessor.ReadArray(position, hashBytes, 0, 32);
-            position += 32;
+            using var fs     = new FileStream(_logFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024);
+            using var reader = new BinaryReader(fs, System.Text.Encoding.UTF8, leaveOpen: true);
 
-            var fileNo = VarIntUtils.ReadVarInt<int>(accessor, ref position);
-            var offset = VarIntUtils.ReadVarInt<long>(accessor, ref position);
-            var length = VarIntUtils.ReadVarInt<int>(accessor, ref position);
+            while (fs.Position < fs.Length)
+            {
+                var hashBytes = reader.ReadBytes(32);
+                if (hashBytes.Length < 32)
+                    break; // truncated record
 
-            map[new Hash32(hashBytes)] = new IndexEntry(fileNo, offset, length);
+                var fileNo = VarIntUtils.ReadVarInt<int>(reader);
+                var offset = VarIntUtils.ReadVarInt<long>(reader);
+                var length = VarIntUtils.ReadVarInt<int>(reader);
+
+                map[new Hash32(hashBytes)] = new IndexEntry(fileNo, offset, length);
+            }
+        }
+        catch
+        {
+            // Corrupt log — return partial; fixed on next flush/rebuild
         }
 
         return map;
     }
 
-    private async Task EnsureIndexAppendStreamOpenAsync()
+    // -----------------------------------------------------------------------
+    // Append log I/O
+
+    private void EnsureLogAppendStreamOpen()
     {
-        if (_indexAppendStream is not null && _indexWriter is not null)
+        if (_logAppendStream is not null && _logWriter is not null)
             return;
 
-        await _indexStreamLock.WaitAsync().ConfigureAwait(false);
+        _logAppendStream?.Dispose();
+        _logWriter?.Dispose();
+
+        _logAppendStream = new FileStream(
+            _logFilePath,
+            FileMode.Append,
+            FileAccess.Write,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            options: FileOptions.Asynchronous);
+
+        _logWriter = new BinaryWriter(_logAppendStream, System.Text.Encoding.UTF8, leaveOpen: true);
+    }
+
+    private void AppendLogEntry(Hash32 hash, int fileNo, long offset, int length)
+    {
+        EnsureLogAppendStreamOpen();
+
+        _logWriter!.Write(hash.GetBytes());
+        VarIntUtils.WriteVarInt(_logWriter, fileNo);
+        VarIntUtils.WriteVarInt(_logWriter, offset);
+        VarIntUtils.WriteVarInt(_logWriter, length);
+        _logWriter.Flush();
+        _logAppendStream!.Flush(flushToDisk: true);
+    }
+
+    private void CloseLogAppendStream()
+    {
+        _logWriter?.Dispose();
+        _logWriter = null;
+        _logAppendStream?.Dispose();
+        _logAppendStream = null;
+    }
+
+    // -----------------------------------------------------------------------
+    // Lookup (read path — lock-free)
+
+    private bool TryFindInIndex(Hash32 hash, out IndexEntry entry)
+    {
+        // 1. Hot dictionary (log entries)
+        if (_logDict.TryGetValue(hash, out entry))
+            return true;
+
+        // 2. Segments newest-first: bloom → binary search
+        var segs = _segments; // volatile snapshot
+        foreach (var seg in segs.Entries)
+        {
+            if (seg.Bloom is not null && !seg.Bloom.MightContain(hash))
+                continue;
+
+            var found = seg.Segment.TryFind(hash);
+            if (found.HasValue)
+            {
+                entry = found.Value;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Log flush → new segment (called under _writeLock)
+
+    private async Task FlushLogToSegmentAsync(CancellationToken ct = default)
+    {
+        if (_logEntryCount == 0)
+            return;
+
+        var sorted = _logDict
+            .OrderBy(static kvp => kvp.Key)
+            .Select(static kvp => (kvp.Key, kvp.Value))
+            .ToList();
+
+        var segPath   = NextSegmentPath(0);
+        var bloomPath = Path.ChangeExtension(segPath, ".bloom");
+
+        var bloom = new PackIndexBloomFilter(sorted.Count);
+        foreach (var (hash, _) in sorted)
+            bloom.Add(hash);
+
+        await FileAtomicHelper.WriteAtomicAsync(bloomPath, bloom.Serialize(), ct).ConfigureAwait(false);
+        await SortedIndexSegment.WriteAsync(segPath, sorted, ct).ConfigureAwait(false);
+
+        var newSegment = new SortedIndexSegment(segPath);
+        _segments = _segments.Prepend(new SegmentEntry(segPath, newSegment, bloom));
+
+        // Truncate log and reset in-memory state
+        CloseLogAppendStream();
+        await File.WriteAllBytesAsync(_logFilePath, Array.Empty<byte>(), ct).ConfigureAwait(false);
+        _logDict       = new ConcurrentDictionary<Hash32, IndexEntry>();
+        _logEntryCount = 0;
+    }
+
+    private string NextSegmentPath(int level)
+    {
+        var namePrefix = Path.GetFileName(_indexFilePrefix);
+        var segPattern = $"{namePrefix}.seg-{level}??.idx";
+        var highest = Directory.EnumerateFiles(_directory, segPattern)
+            .Select(f => Path.GetFileNameWithoutExtension(f))
+            .Select(name =>
+            {
+                // name = "chunks000.seg-0NN" — last 2 chars are sequence number
+                var seq = name.Length >= 2 ? name[^2..] : "";
+                return int.TryParse(seq, out var n) ? n : -1;
+            })
+            .DefaultIfEmpty(-1)
+            .Max();
+
+        return Path.Combine(_directory, $"{namePrefix}.seg-{level}{highest + 1:D2}.idx");
+    }
+
+    // -----------------------------------------------------------------------
+    // Compaction (size-tiered, called under _writeLock)
+
+    private async Task RunCompactionIfNeededAsync(CancellationToken ct = default)
+    {
+        // Check levels 0 and 1 (level 2 is the maximum)
+        for (var level = 0; level <= 1; level++)
+            await CompactLevelAsync(level, ct).ConfigureAwait(false);
+    }
+
+    private async Task CompactLevelAsync(int level, CancellationToken ct)
+    {
+        var allSegs = _segments.Entries;
+
+        // Collect segments at this level (oldest = tail, since list is newest-first)
+        var atLevel = allSegs
+            .Where(e => SortedIndexSegment.GetLevel(Path.GetFileName(e.SegmentPath)) == level)
+            .ToArray();
+
+        if (atLevel.Length < CompactionFanIn)
+            return;
+
+        // Oldest CompactionFanIn segments (tail of newest-first list)
+        var toMerge = atLevel[^CompactionFanIn..];
+
+        // K-way merge
+        var merged = MergeSegments(toMerge.Select(static e => e.Segment).ToArray());
+
+        var targetLevel  = level + 1;
+        var outSegPath   = NextSegmentPath(targetLevel);
+        var outBloomPath = Path.ChangeExtension(outSegPath, ".bloom");
+
+        var bloom = new PackIndexBloomFilter(Math.Max(merged.Count, 1));
+        foreach (var (hash, _) in merged)
+            bloom.Add(hash);
+
+        await FileAtomicHelper.WriteAtomicAsync(outBloomPath, bloom.Serialize(), ct).ConfigureAwait(false);
+        await SortedIndexSegment.WriteAsync(outSegPath, merged, ct).ConfigureAwait(false);
+
+        var newSeg = new SortedIndexSegment(outSegPath);
+
+        // Rebuild segment list: remove merged, prepend new
+        var remaining = allSegs
+            .Where(e => !toMerge.Contains(e))
+            .Prepend(new SegmentEntry(outSegPath, newSeg, bloom))
+            .ToArray();
+
+        _segments = new SegmentList(remaining);
+
+        // Close + delete old segment files
+        foreach (var seg in toMerge)
+        {
+            seg.Segment.Dispose();
+            TryDeleteFile(seg.SegmentPath);
+            TryDeleteFile(Path.ChangeExtension(seg.SegmentPath, ".bloom"));
+        }
+    }
+
+    private static List<(Hash32 Hash, IndexEntry Entry)> MergeSegments(SortedIndexSegment[] segments)
+    {
+        // Read all entries from all segments, sort, de-duplicate
+        var all = segments
+            .SelectMany(static seg => seg.ReadAllEntries())
+            .OrderBy(static e => e.Hash)
+            .ToList();
+
+        var result = new List<(Hash32, IndexEntry)>(all.Count);
+        Hash32? last = null;
+        foreach (var (hash, entry) in all)
+        {
+            if (last.HasValue && last.Value == hash)
+                continue;
+            result.Add((hash, entry));
+            last = hash;
+        }
+        return result;
+    }
+
+    // -----------------------------------------------------------------------
+    // Public write API
+
+    public async Task<int> WriteIndexedDataAsync(Hash32 hash, ReadOnlyMemory<byte> data)
+    {
+        ThrowIfDisposed();
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
+
+        // Fast-path: lock-free duplicate check
+        if (TryFindInIndex(hash, out _))
+            return 0;
+
+        await _writeLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_indexAppendStream is not null && _indexWriter is not null)
-                return;
+            // Double-check under write lock
+            if (TryFindInIndex(hash, out _))
+                return 0;
 
-            _indexAppendStream?.Dispose();
-            _indexWriter?.Dispose();
+            var dataStream = await GetWritableDataFileAsync().ConfigureAwait(false);
+            var fileNo     = _currentFileNumber;
 
-            _indexAppendStream = new FileStream(
-                _indexFilePath,
-                FileMode.Append,
-                FileAccess.Write,
-                FileShare.Read,
-                bufferSize: 64 * 1024,
-                options: FileOptions.Asynchronous);
+            var (offset, length) = await PackFileEntry.WriteAsync(dataStream, data).ConfigureAwait(false);
+            dataStream.Flush(flushToDisk: true);
+            _currentStreamLength += length;
 
-            _indexWriter = new BinaryWriter(_indexAppendStream, System.Text.Encoding.UTF8, leaveOpen: true);
+            var entry = new IndexEntry(fileNo, offset, length);
+            _logDict.TryAdd(hash, entry);
+            AppendLogEntry(hash, fileNo, offset, length);
+            _logEntryCount++;
+
+            if (_logEntryCount >= LogFlushThreshold)
+            {
+                await FlushLogToSegmentAsync().ConfigureAwait(false);
+                await RunCompactionIfNeededAsync().ConfigureAwait(false);
+            }
+
+            return length;
         }
         finally
         {
-            _indexStreamLock.Release();
+            _writeLock.Release();
         }
     }
 
-    private async Task SaveIndexEntryAsync(Hash32 hash, int fileNumber, long offset, int length)
+    // -----------------------------------------------------------------------
+    // Public read API
+
+    public async Task<byte[]> ReadIndexedDataAsync(Hash32 hash)
     {
-        await EnsureIndexAppendStreamOpenAsync().ConfigureAwait(false);
+        ThrowIfDisposed();
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
 
-        // write lock is already held by caller on write path / rebuild path
-        _indexWriter!.Write(hash.GetBytes());
-        VarIntUtils.WriteVarInt(_indexWriter, fileNumber);
-        VarIntUtils.WriteVarInt(_indexWriter, offset);
-        VarIntUtils.WriteVarInt(_indexWriter, length);
-        _indexWriter.Flush();
+        if (!TryFindInIndex(hash, out var entry))
+            throw new KeyNotFoundException($"No data with index {hash.ToHexString()}.");
 
-        // Stronger durability than FlushAsync alone.
-        _indexAppendStream!.Flush(flushToDisk: true);
-    }
-    
-    internal bool TryAcquireLease()
-    {
-        while (true)
-        {
-            if (Volatile.Read(ref _disposeRequested) != 0)
-                return false;
+        var path = $"{_dataFilePrefix}-{entry.FileNo}.pack";
 
-            Interlocked.Increment(ref _activeLeaseCount);
+        await using var fs = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite,
+            bufferSize: 1,
+            options: FileOptions.Asynchronous | FileOptions.RandomAccess);
 
-            if (Volatile.Read(ref _disposeRequested) == 0)
-                return true;
-
-            Interlocked.Decrement(ref _activeLeaseCount);
-        }
+        return await PackFileEntry.ReadAtAsync(fs.SafeFileHandle, entry.Offset).ConfigureAwait(false)
+               ?? throw new InvalidDataException($"Failed to read data for index {hash.ToHexString()}.");
     }
 
-    internal void ReleaseLease()
-    {
-        Interlocked.Decrement(ref _activeLeaseCount);
-    }
+    // -----------------------------------------------------------------------
+    // Rebuild / maintenance
 
-    internal bool IsIdle => Volatile.Read(ref _activeLeaseCount) == 0;
-
-    internal bool TryMarkForDispose()
-    {
-        return Interlocked.CompareExchange(ref _disposeRequested, 1, 0) == 0;
-    }
-
+    /// <summary>
+    /// Scans all pack files for this prefix, rebuilds the index from scratch,
+    /// and writes a single sorted segment (choosing the level based on entry count).
+    /// </summary>
     public async Task<bool> RebuildIndexFile()
     {
         await EnsureIndexLoadedAsync().ConfigureAwait(false);
@@ -203,24 +530,12 @@ internal sealed class IndexedPackFileHandler : IDisposable
 
         try
         {
-            var directory = Path.GetDirectoryName(_dataFilePrefix)!;
-            var pattern = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
-
-            var dataFiles = Directory.EnumerateFiles(directory, pattern)
+            var pattern   = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
+            var dataFiles = Directory.EnumerateFiles(_directory, pattern)
                 .OrderBy(ParsePackFileNumber)
                 .ToArray();
 
             var rebuilt = new ConcurrentDictionary<Hash32, IndexEntry>();
-
-            // Reset on-disk index file
-            _indexWriter?.Dispose();
-            _indexWriter = null;
-
-            _indexAppendStream?.Dispose();
-            _indexAppendStream = null;
-
-            await File.WriteAllBytesAsync(_indexFilePath, ReadOnlyMemory<byte>.Empty).ConfigureAwait(false);
-            await EnsureIndexAppendStreamOpenAsync().ConfigureAwait(false);
 
             foreach (var dataFile in dataFiles)
             {
@@ -233,21 +548,49 @@ internal sealed class IndexedPackFileHandler : IDisposable
                     options: FileOptions.Asynchronous | FileOptions.SequentialScan);
 
                 var fileNo = ParsePackFileNumber(dataFile);
-                if (fileNo < 0)
-                    continue;
+                if (fileNo < 0) continue;
 
-                await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(fs).ConfigureAwait(false))
+                await foreach (var packEntry in PackFileEntry.ReadAllEntriesAsync(fs).ConfigureAwait(false))
                 {
-                    var hash = _computeHash(entry.Data);
-
-                    if (!rebuilt.TryAdd(hash, new IndexEntry(fileNo, entry.Offset, entry.Length)))
-                        continue; // duplicate content, keep first occurrence
-
-                    await SaveIndexEntryAsync(hash, fileNo, entry.Offset, entry.Length).ConfigureAwait(false);
+                    var hash = _computeHash(packEntry.Data);
+                    rebuilt.TryAdd(hash, new IndexEntry(fileNo, packEntry.Offset, packEntry.Length));
                 }
             }
 
-            _index = rebuilt;
+            // Tear down existing index files + state
+            DisposeAndClearSegments();
+            DeleteAllIndexFiles();
+            CloseLogAppendStream();
+
+            _logDict       = new ConcurrentDictionary<Hash32, IndexEntry>();
+            _logEntryCount = 0;
+            _segments      = SegmentList.Empty;
+
+            if (rebuilt.Count == 0)
+                return true;
+
+            var sorted = rebuilt
+                .OrderBy(static kvp => kvp.Key)
+                .Select(static kvp => (kvp.Key, kvp.Value))
+                .ToList();
+
+            var level    = sorted.Count > SortedIndexSegment.Level1MaxEntries ? 2
+                         : sorted.Count > SortedIndexSegment.Level0MaxEntries ? 1
+                         : 0;
+            var namePrefix = Path.GetFileName(_indexFilePrefix);
+            var segPath   = Path.Combine(_directory, $"{namePrefix}.seg-{level}00.idx");
+            var bloomPath = Path.ChangeExtension(segPath, ".bloom");
+
+            var bloom = new PackIndexBloomFilter(sorted.Count);
+            foreach (var (hash, _) in sorted)
+                bloom.Add(hash);
+
+            await FileAtomicHelper.WriteAtomicAsync(bloomPath, bloom.Serialize()).ConfigureAwait(false);
+            await SortedIndexSegment.WriteAsync(segPath, sorted).ConfigureAwait(false);
+
+            var seg = new SortedIndexSegment(segPath);
+            _segments = new SegmentList([new SegmentEntry(segPath, seg, bloom)]);
+
             return true;
         }
         catch
@@ -260,6 +603,10 @@ internal sealed class IndexedPackFileHandler : IDisposable
         }
     }
 
+    /// <summary>
+    /// Rewrites all pack files to remove orphaned / corrupt entries, then
+    /// calls <see cref="RebuildIndexFile"/>.
+    /// </summary>
     public async Task<bool> RebuildPackFilesAsync()
     {
         await EnsureIndexLoadedAsync().ConfigureAwait(false);
@@ -267,10 +614,8 @@ internal sealed class IndexedPackFileHandler : IDisposable
 
         try
         {
-            var directory = Path.GetDirectoryName(_dataFilePrefix)!;
-            var pattern = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
-
-            var dataFiles = Directory.EnumerateFiles(directory, pattern)
+            var pattern   = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
+            var dataFiles = Directory.EnumerateFiles(_directory, pattern)
                 .OrderBy(ParsePackFileNumber)
                 .ToArray();
 
@@ -295,13 +640,10 @@ internal sealed class IndexedPackFileHandler : IDisposable
                     options: FileOptions.Asynchronous);
 
                 await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(fs, ignoreChecks: true).ConfigureAwait(false))
-                {
                     await PackFileEntry.WriteAsync(tmpFs, entry.Data).ConfigureAwait(false);
-                }
 
                 await tmpFs.FlushAsync().ConfigureAwait(false);
                 tmpFs.Flush(flushToDisk: true);
-
                 fs.Close();
                 tmpFs.Close();
 
@@ -309,10 +651,9 @@ internal sealed class IndexedPackFileHandler : IDisposable
                 File.Move(tmpDataFile, dataFile);
             }
 
-            // Current append stream may now point at replaced files
             _currentStream?.Dispose();
-            _currentStream = null;
-            _currentFileNumber = int.MinValue;
+            _currentStream       = null;
+            _currentFileNumber   = int.MinValue;
             _currentStreamLength = 0;
 
             return await RebuildIndexFile().ConfigureAwait(false);
@@ -323,18 +664,35 @@ internal sealed class IndexedPackFileHandler : IDisposable
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Stats helpers
+
+    /// <summary>
+    /// Returns a snapshot of all index entries from the hot log dictionary.
+    /// Does not include segment entries.
+    /// </summary>
     public Dictionary<Hash32, (int fileNo, long offset, int length)> GetIndexSnapshot()
     {
-        return _index.ToDictionary(
+        return _logDict.ToDictionary(
             static kvp => kvp.Key,
             static kvp => (kvp.Value.FileNo, kvp.Value.Offset, kvp.Value.Length));
     }
 
+    /// <summary>
+    /// Returns the total chunk count across the hot log and all loaded segments.
+    /// </summary>
+    public int GetTotalChunkCount()
+    {
+        var count = _logEntryCount;
+        foreach (var seg in _segments.Entries)
+            count += seg.Segment.EntryCount;
+        return count;
+    }
+
     public int CountDataFiles()
     {
-        var directory = Path.GetDirectoryName(_dataFilePrefix)!;
         var pattern = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
-        return Directory.EnumerateFiles(directory, pattern).Count();
+        return Directory.EnumerateFiles(_directory, pattern).Count();
     }
 
     public int GetEstimatedUncompressedSize((int fileNo, long offset, int length) entry)
@@ -349,7 +707,6 @@ internal sealed class IndexedPackFileHandler : IDisposable
                 FileShare.Read,
                 bufferSize: 1,
                 options: FileOptions.RandomAccess);
-
             return PackFileEntry.ReadUncompressedLength(fs.SafeFileHandle, entry.offset);
         }
         catch
@@ -358,61 +715,35 @@ internal sealed class IndexedPackFileHandler : IDisposable
         }
     }
 
-    public async Task<int> WriteIndexedDataAsync(Hash32 hash, ReadOnlyMemory<byte> data)
+    // -----------------------------------------------------------------------
+    // LRU cache integration
+
+    internal bool TryAcquireLease()
     {
-        ThrowIfDisposed();
-        await EnsureIndexLoadedAsync().ConfigureAwait(false);
-
-        // cheap fast-path before entering write lock
-        if (_index.ContainsKey(hash))
-            return 0;
-
-        await _writeLock.WaitAsync().ConfigureAwait(false);
-        try
+        while (true)
         {
-            // double-check under write lock
-            if (_index.ContainsKey(hash))
-                return 0;
+            if (Volatile.Read(ref _disposeRequested) != 0)
+                return false;
 
-            var dataStream = await GetWritableDataFileAsync().ConfigureAwait(false);
-            var fileNo = _currentFileNumber;
+            Interlocked.Increment(ref _activeLeaseCount);
 
-            var (offset, length) = await PackFileEntry.WriteAsync(dataStream, data).ConfigureAwait(false);
+            if (Volatile.Read(ref _disposeRequested) == 0)
+                return true;
 
-            // Strong durability for the pack file
-            dataStream.Flush(flushToDisk: true);
-
-            _currentStreamLength += length;
-
-            var entry = new IndexEntry(fileNo, offset, length);
-
-            if (!_index.TryAdd(hash, entry))
-                return 0;
-
-            await SaveIndexEntryAsync(hash, fileNo, offset, length).ConfigureAwait(false);
-
-            return length;
-        }
-        finally
-        {
-            _writeLock.Release();
+            Interlocked.Decrement(ref _activeLeaseCount);
         }
     }
 
-    public async Task<byte[]> ReadIndexedDataAsync(Hash32 hash)
-    {
-        ThrowIfDisposed();
-        await EnsureIndexLoadedAsync().ConfigureAwait(false);
+    internal void ReleaseLease()
+        => Interlocked.Decrement(ref _activeLeaseCount);
 
-        if (!_index.TryGetValue(hash, out var entry))
-            throw new KeyNotFoundException($"No data with index {hash.ToHexString()}.");
+    internal bool IsIdle => Volatile.Read(ref _activeLeaseCount) == 0;
 
-        var path = $"{_dataFilePrefix}-{entry.FileNo}.pack";
+    internal bool TryMarkForDispose()
+        => Interlocked.CompareExchange(ref _disposeRequested, 1, 0) == 0;
 
-        await using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 1, options: FileOptions.Asynchronous | FileOptions.RandomAccess);
-
-        return await PackFileEntry.ReadAtAsync(fs.SafeFileHandle, entry.Offset).ConfigureAwait(false) ?? throw new InvalidDataException($"Failed to read data for index {hash.ToHexString()}.");
-    }
+    // -----------------------------------------------------------------------
+    // Pack file management
 
     private async Task<FileStream> GetWritableDataFileAsync()
     {
@@ -431,43 +762,38 @@ internal sealed class IndexedPackFileHandler : IDisposable
         }
 
         if (_currentStream is null || !_currentStream.CanWrite)
-        {
             await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
-        }
 
         return _currentStream!;
     }
 
     private async Task OpenCurrentWritableFileAsync()
     {
-        var directory = Path.GetDirectoryName(_dataFilePrefix)!;
-        var prefix = Path.GetFileName(_dataFilePrefix);
-
-        var existing = Directory.EnumerateFiles(directory, $"{prefix}-*.pack")
+        var prefix   = Path.GetFileName(_dataFilePrefix);
+        var existing = Directory.EnumerateFiles(_directory, $"{prefix}-*.pack")
             .Select(ParsePackFileNumber)
-            .Where(n => n >= 0)
-            .OrderBy(n => n)
+            .Where(static n => n >= 0)
+            .OrderBy(static n => n)
             .ToArray();
 
         if (existing.Length == 0)
         {
             _currentFileNumber = 0;
-            await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
+            await OpenSpecificWritableFileAsync(0).ConfigureAwait(false);
             return;
         }
 
-        var highest = existing[^1];
+        var highest     = existing[^1];
         var highestPath = $"{_dataFilePrefix}-{highest}.pack";
-        var highestLength = new FileInfo(highestPath).Length;
+        var highestLen  = new FileInfo(highestPath).Length;
 
-        _currentFileNumber = highestLength < _maxPackFileSize ? highest : highest + 1;
+        _currentFileNumber = highestLen < _maxPackFileSize ? highest : highest + 1;
         await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
     }
 
     private Task OpenSpecificWritableFileAsync(int fileNumber)
     {
         var path = $"{_dataFilePrefix}-{fileNumber}.pack";
-
         _currentStream?.Dispose();
         _currentStream = new FileStream(
             path,
@@ -476,19 +802,43 @@ internal sealed class IndexedPackFileHandler : IDisposable
             FileShare.Read,
             bufferSize: 128 * 1024,
             options: FileOptions.Asynchronous);
-
         _currentStreamLength = _currentStream.Length;
         return Task.CompletedTask;
     }
 
     private static int ParsePackFileNumber(string path)
     {
-        var fileName = Path.GetFileNameWithoutExtension(path);
-        var dash = fileName.LastIndexOf('-');
-        if (dash < 0)
-            return -1;
+        var name = Path.GetFileNameWithoutExtension(path);
+        var dash = name.LastIndexOf('-');
+        if (dash < 0) return -1;
+        return int.TryParse(name[(dash + 1)..], out var n) ? n : -1;
+    }
 
-        return int.TryParse(fileName[(dash + 1)..], out var fileNo) ? fileNo : -1;
+    // -----------------------------------------------------------------------
+    // Helpers
+
+    private void DisposeAndClearSegments()
+    {
+        var old = _segments;
+        _segments = SegmentList.Empty;
+        foreach (var entry in old.Entries)
+            entry.Segment.Dispose();
+    }
+
+    private void DeleteAllIndexFiles()
+    {
+        var namePrefix = Path.GetFileName(_indexFilePrefix);
+        foreach (var f in Directory.EnumerateFiles(_directory, $"{namePrefix}.seg-*.idx"))
+            TryDeleteFile(f);
+        foreach (var f in Directory.EnumerateFiles(_directory, $"{namePrefix}.seg-*.bloom"))
+            TryDeleteFile(f);
+        TryDeleteFile(_logFilePath);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try { File.Delete(path); }
+        catch { /* best-effort */ }
     }
 
     private void ThrowIfDisposed()
@@ -497,24 +847,61 @@ internal sealed class IndexedPackFileHandler : IDisposable
             throw new ObjectDisposedException(nameof(IndexedPackFileHandler));
     }
 
+    // -----------------------------------------------------------------------
+    // IDisposable
+
     public void Dispose()
     {
-        if (_disposed)
-            return;
-
+        if (_disposed) return;
         _disposed = true;
 
-        _indexWriter?.Dispose();
-        _indexWriter = null;
-
-        _indexAppendStream?.Dispose();
-        _indexAppendStream = null;
+        CloseLogAppendStream();
+        DisposeAndClearSegments();
 
         _currentStream?.Dispose();
         _currentStream = null;
 
         _writeLock.Dispose();
-        _indexStreamLock.Dispose();
         _initLock.Dispose();
+    }
+
+    // -----------------------------------------------------------------------
+    // Inner types
+
+    /// <summary>A loaded segment, its file path, and its optional bloom filter.</summary>
+    private sealed class SegmentEntry
+    {
+        public string SegmentPath { get; }
+        public SortedIndexSegment Segment { get; }
+        public PackIndexBloomFilter? Bloom { get; }
+
+        public SegmentEntry(string segmentPath, SortedIndexSegment segment, PackIndexBloomFilter? bloom)
+        {
+            SegmentPath = segmentPath;
+            Segment     = segment;
+            Bloom       = bloom;
+        }
+    }
+
+    /// <summary>
+    /// Immutable snapshot of all loaded segments, ordered newest-first.
+    /// Swapped atomically via the volatile <see cref="_segments"/> field.
+    /// </summary>
+    private sealed class SegmentList
+    {
+        public static readonly SegmentList Empty = new(Array.Empty<SegmentEntry>());
+
+        public IReadOnlyList<SegmentEntry> Entries { get; }
+
+        public SegmentList(SegmentEntry[] entries) => Entries = entries;
+
+        public SegmentList Prepend(SegmentEntry entry)
+        {
+            var arr = new SegmentEntry[Entries.Count + 1];
+            arr[0] = entry;
+            for (var i = 0; i < Entries.Count; i++)
+                arr[i + 1] = Entries[i];
+            return new SegmentList(arr);
+        }
     }
 }

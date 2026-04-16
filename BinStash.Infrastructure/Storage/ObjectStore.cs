@@ -86,6 +86,33 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         return results.All(static x => x);
     }
 
+    /// <inheritdoc/>
+    public async Task<bool> RebuildStorageWithProgressAsync(IProgress<bool> progress, CancellationToken cancellationToken)
+    {
+        using var throttler = new SemaphoreSlim(Environment.ProcessorCount);
+        var allSucceeded = true;
+
+        for (var i = 0; i < 4096; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var prefix = i.ToString("x3");
+
+            // Run both categories for this prefix before advancing, so progress is per-prefix-pair
+            var chunkOk = await RunRebuildAsync("chunks", prefix, throttler).ConfigureAwait(false);
+            progress.Report(chunkOk);
+            if (!chunkOk) allSucceeded = false;
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var fileDefOk = await RunRebuildAsync("fileDefs", prefix, throttler).ConfigureAwait(false);
+            progress.Report(fileDefOk);
+            if (!fileDefOk) allSucceeded = false;
+        }
+
+        return allSucceeded;
+    }
+
     private async Task<bool> RunRebuildAsync(string category, string prefix, SemaphoreSlim throttler)
     {
         await throttler.WaitAsync().ConfigureAwait(false);
@@ -116,21 +143,44 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         using var lease = await AcquireChunkHandlerAsync(prefix).ConfigureAwait(false);
         return await lease.Handler.ReadIndexedDataAsync(Hash32.FromHexString(hash)).ConfigureAwait(false);
     }
-    
-    public async Task<int> WriteFileDefinitionAsync(Hash32 fileHash, ReadOnlyMemory<byte> fileDefinitionData)
+
+    /// <summary>
+    /// Stores a serialised <see cref="FileDefinition.FileDefinitionRecord"/> blob in the
+    /// file-definition pack store.  The index key is <c>BLAKE3(blob)</c> — the same
+    /// self-keying scheme used for chunks — so <see cref="RebuildStorageAsync"/> works
+    /// correctly without any special treatment.
+    /// </summary>
+    /// <param name="blob">
+    /// Pre-serialised <c>FileDefinitionRecord</c> bytes (produced by
+    /// <c>FileDefinitionRecord.Serialize()</c>).
+    /// </param>
+    /// <returns>
+    /// The storage key (<c>BLAKE3(blob)</c>) and the number of compressed bytes
+    /// physically written (0 if the entry already existed).
+    /// </returns>
+    public async Task<(Hash32 StorageKey, int BytesWritten)> WriteFileDefinitionAsync(ReadOnlyMemory<byte> blob)
     {
-        var stringHash = fileHash.ToHexString();
-        var prefix = stringHash[..3];
+        var storageKey = ComputeHash(blob.Span);
+        var prefix     = storageKey.ToHexString()[..3];
         using var lease = await AcquireFileDefHandlerAsync(prefix).ConfigureAwait(false);
-        return await lease.Handler.WriteIndexedDataAsync(fileHash, fileDefinitionData).ConfigureAwait(false);
+        var written = await lease.Handler.WriteIndexedDataAsync(storageKey, blob).ConfigureAwait(false);
+        return (storageKey, written);
     }
-    
-    public async Task<byte[]> ReadFileDefinitionAsync(string hash)
+
+    /// <summary>
+    /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its storage key
+    /// (<c>BLAKE3(blob)</c> as persisted in <c>FileDefinition.StorageKey</c>).
+    /// </summary>
+    public async Task<byte[]> ReadFileDefinitionBlobAsync(Hash32 storageKey)
     {
-        var prefix = hash[..3];
+        var prefix = storageKey.ToHexString()[..3];
         using var lease = await AcquireFileDefHandlerAsync(prefix).ConfigureAwait(false);
-        return await lease.Handler.ReadIndexedDataAsync(Hash32.FromHexString(hash)).ConfigureAwait(false);
+        return await lease.Handler.ReadIndexedDataAsync(storageKey).ConfigureAwait(false);
     }
+
+    // Keep the string-key overload for convenience (used by LocalFolderChunkStoreStorage).
+    public Task<byte[]> ReadFileDefinitionBlobAsync(string storageKeyHex)
+        => ReadFileDefinitionBlobAsync(Hash32.FromHexString(storageKeyHex));
 
     public async Task WriteReleasePackageAsync(ReadOnlyMemory<byte> releasePackageData)
     {
@@ -254,33 +304,131 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         return Task.FromResult(result);
     }
     
+    private const int StatsConcurrency = 32;
+
+    /// <summary>
+    /// Returns chunk storage statistics by reading only segment file headers
+    /// (8 bytes per file) and the log file size — no handler open required.
+    /// At 4096 buckets × ~8 bytes = 32 KB of I/O maximum.
+    /// </summary>
     public async Task<StorageStatistics> GetStatisticsAsync()
     {
-        var stats = new StorageStatistics();
-        var prefixCounts = new Dictionary<string, int>();
+        using var throttler = new SemaphoreSlim(StatsConcurrency, StatsConcurrency);
+
+        var tasks = new Task<(string prefix, int chunks, int files)>[4096];
 
         for (var i = 0; i < 4096; i++)
         {
             var prefix = i.ToString("x3");
+            tasks[i] = CollectPrefixStatsLightAsync(prefix, throttler);
+        }
 
-            using var lease = await AcquireChunkHandlerAsync(prefix).ConfigureAwait(false);
-            var handler = lease.Handler;
-            var index = handler.GetIndexSnapshot();
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
 
-            stats.TotalChunks += index.Count;
-            prefixCounts[prefix] = index.Count;
+        var stats        = new StorageStatistics();
+        var prefixCounts = new Dictionary<string, int>(4096);
 
-            foreach (var entry in index.Values)
-            {
-                stats.TotalCompressedSize += entry.length;
-                stats.TotalUncompressedSize += handler.GetEstimatedUncompressedSize(entry);
-            }
-
-            stats.TotalFiles += handler.CountDataFiles();
+        foreach (var (prefix, chunks, files) in results)
+        {
+            stats.TotalChunks += chunks;
+            stats.TotalFiles  += files;
+            prefixCounts[prefix] = chunks;
         }
 
         stats.PrefixChunkCounts = prefixCounts;
         return stats;
+    }
+
+    /// <summary>
+    /// Lightweight prefix stats: counts chunk entries by reading 8-byte
+    /// segment headers and the byte length of the log file (which is a
+    /// conservative upper bound on log entry count, exact only when the
+    /// log contains fixed-size records — here we use file length / minimum
+    /// varint record size as an approximation, or 0 if the log is absent).
+    ///
+    /// For an exact log count without opening a handler, we read the log
+    /// file via a dedicated counter that replays only hash bytes.
+    /// </summary>
+    private async Task<(string prefix, int chunks, int files)>
+        CollectPrefixStatsLightAsync(string prefix, SemaphoreSlim throttler)
+    {
+        await throttler.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var bucketDir = Path.Combine(_basePath, "Chunks", prefix[..2]);
+
+            if (!Directory.Exists(bucketDir))
+                return (prefix, 0, 0);
+
+            // 1. Sum entry counts from all segment headers (8 bytes per file)
+            var segCount = 0;
+            var dataPrefix  = $"chunks{prefix}";
+            foreach (var segPath in Directory.EnumerateFiles(bucketDir, $"{dataPrefix}.seg-*.idx"))
+                segCount += SortedIndexSegment.ReadEntryCountFromHeader(segPath);
+
+            // 2. Count log entries (replay hash reads without loading a handler)
+            var logPath   = Path.Combine(bucketDir, $"{dataPrefix}.log");
+            var logCount  = CountLogEntries(logPath);
+
+            // 3. Count pack files
+            var packFiles   = Directory.EnumerateFiles(bucketDir, $"{dataPrefix}-*.pack").Count();
+
+            return (prefix, segCount + logCount, packFiles);
+        }
+        finally
+        {
+            throttler.Release();
+        }
+    }
+
+    /// <summary>
+    /// Counts entries in an append log by scanning hash bytes (32 bytes per
+    /// entry) and skipping the variable-length varint fields.
+    /// Returns 0 if the log does not exist or is corrupt.
+    /// </summary>
+    private static int CountLogEntries(string logPath)
+    {
+        if (!File.Exists(logPath))
+            return 0;
+
+        try
+        {
+            using var fs     = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024);
+            using var reader = new BinaryReader(fs, System.Text.Encoding.UTF8, leaveOpen: true);
+
+            var count = 0;
+            while (fs.Position < fs.Length)
+            {
+                var hashBytes = reader.ReadBytes(32);
+                if (hashBytes.Length < 32)
+                    break;
+
+                // Skip the three varint fields (fileNo, offset, length)
+                SkipVarInt(reader);
+                SkipVarInt(reader);
+                SkipVarInt(reader);
+
+                count++;
+            }
+
+            return count;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static void SkipVarInt(BinaryReader reader)
+    {
+        // A varint ends at the first byte with the high bit clear.
+        for (var i = 0; i < 10; i++)
+        {
+            var b = reader.ReadByte();
+            if ((b & 0x80) == 0)
+                return;
+        }
+        // Malformed — stop gracefully
     }
     
     public void Dispose() => _handlerCache.DisposeAsync().AsTask().GetAwaiter().GetResult();

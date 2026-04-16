@@ -2,15 +2,279 @@
 
 ## Current work focus
 
-As of 2026-04-14, the **release upgrade pipeline** (BINST-93 epic) backend work is **complete** — async background job pipeline, GraphQL subscriptions, REST endpoints all implemented and building with all tests passing.
+As of 2026-04-15, **BinStash.ChunkStoreExplorer** TUI utility has been **fully redesigned** as a file-explorer-style split-pane TUI (replacing the sequential CLI-style menu). New "Rebuild bloom filter" and "Rebuild segment file" write operations added. **Builds with 0 errors, 0 warnings.**
 
-The **frontend integration** for the upgrade pipeline is now also **complete**. The Vue 3 frontend at `C:\Users\l.essmann\RiderProjects\Cruip\mosaic-vue` has been connected to the backend's async upgrade pipeline with real-time progress via GraphQL subscriptions over WebSocket.
+### BinStash.ChunkStoreExplorer — split-pane TUI redesign (completed 2026-04-15)
+
+Previously a sequential CLI-style menu; now a file-explorer-style split-pane TUI with keyboard navigation, drill-down tree, and contextual action menus.
+
+**Architecture:**
+- Left panel: navigable tree `Store → Chunks/FileDefs → prefix-group-1 (e.g. "5") → prefix-group-2 (e.g. "5c") → bucket (e.g. "5c3") → files (pack/seg/bloom/log)`
+- Right panel: stats and contextual information for the selected node
+- Keyboard: `↑↓` move, `Enter`/`→` drill in, `Backspace`/`Esc`/`←` go up, `A` open action menu, `Q` quit
+- `Console.ReadKey` manual loop with full-screen clear+re-render each keypress (no Spectre.Console SelectionPrompt owns the terminal)
+- `ScanBucketCounts` runs once on startup; result reused for entire session
+
+**Node model:**
+- `ExplorerItem(Label, Detail, Tag)` record; tag types: `StoreTag`, `CategoryTag`, `PrefixGroup1Tag`, `PrefixGroup2Tag`, `BucketTag`, `PackFileTag`, `SegFileTag`, `BloomFileTag`, `LogFileTag`
+- `ExplorerLevel` class: `Title`, `List<ExplorerItem> Items`, `int Cursor`
+- Navigation: `Stack<ExplorerLevel>`
+
+**New write operations (rebuild — atomic, safe while server is running):**
+1. **Rebuild segment from packs** (`RebuildSegmentFromPacksAsync`) — scans all `.pack` files, decompresses blobs (Zstd), hashes with BLAKE3, sorts+deduplicates, writes new `seg-000.idx` via `SortedIndexSegment.WriteAsync`. Prompts for confirmation.
+2. **Rebuild bloom filter (single segment)** (`RebuildBloomFilterForSegmentAsync`) — reads all entries from a segment via `SortedIndexSegment.ReadAllEntries()`, builds `PackIndexBloomFilter`, writes atomically.
+3. **Rebuild all bloom filters in bucket** (`RebuildAllBloomFiltersInBucketAsync`) — iterates all segment files in bucket, rebuilds each bloom; option to skip existing blooms.
+
+**All original features preserved:** Store Overview, Bucket Browser, Pack File Inspector, Segment File Inspector, Bloom Filter Inspector, FileDef Record Decoder, Hash Lookup, Integrity Check, Verify Pack Offsets, Dump Log Entries, Search Log, Read Raw Blob.
+
+**File concurrency / FileShare rules (unchanged):**
+- `.pack` files: `FileShare.ReadWrite`
+- `.log` files: `FileShare.Read`
+- `.seg-*.idx` files: `FileShare.ReadWrite | FileShare.Delete`
+- `.bloom` files: `File.ReadAllBytes`
+
+**Fix applied (2026-04-15):** `CS8803` compile error — type declarations (`record`s and `class ExplorerLevel`) were placed between top-level statements. Moved to end of file (after all top-level methods), which is the correct C# position.
+
+**Build:** 0 errors, 0 warnings.
+
+**Usage:**
+```
+BinStash.ChunkStoreExplorer <storeRoot>
+# Example:
+BinStash.ChunkStoreExplorer "C:\Tmp\BinStash\SecondLocalStoreSetup"
+```
+
+### BinStash.RepackFileDefs (completed 2026-04-14)
+
+Cross-bucket repack tool that fixes the bucket-mismatch bug introduced by `BinStash.StoreMigration`. After `StoreMigration` ran, each FileDef pack entry was stored in the bucket corresponding to the **old file-hash prefix** (e.g., `aa8`) but `ObjectStore` routes reads by `storageKey = BLAKE3(blob)` prefix (e.g., `e86`). This caused all 10 `StoreVerify` tests to fail with `KeyNotFoundException`.
+
+**Root cause (confirmed):** `StoreMigration.MigratePrefixAsync` iterates by old file-hash prefix `i.ToString("x3")` and writes new pack file and seg entries into `bucketDir = FileDefs/{oldPrefix[..2]}/` — the old prefix bucket. The `storageKey` is an independent BLAKE3 hash routing to a completely different bucket at read time.
+
+**Fix:** `RepackFileDefs` does a cross-bucket redistribution:
+1. Scans all 4096 existing `FileDefs` prefix directories and reads every pack entry.
+2. Computes `storageKey = BLAKE3(decompressed_blob)` and derives `correctPrefix = storageKey.ToHexString()[..3]`.
+3. Groups entries by `correctPrefix` and writes new `fileDefs{correctPrefix}-0.pack` files.
+4. Deduplicates by `storageKey` within each target bucket (skips duplicate entries).
+5. Deletes all stale seg/bloom/log index files.
+6. Calls `ObjectStore.RebuildStorageAsync()` to regenerate all seg files from the correctly-routed pack files.
+
+**Results on `C:\Tmp\BinStash\SecondLocalStoreSetup`:**
+- 194,857 entries repacked across all 4,096 buckets in ~62s
+- `RebuildStorageAsync()` returned OK
+- `BinStash.StoreVerify` — **all 10 tests PASS**
+
+**New files created:**
+- `Utils/RepackFileDefs/RepackFileDefs.csproj` — console project, net10.0, references BinStash.Infrastructure + Blake3 2.2.1.
+- `Utils/RepackFileDefs/Program.cs` — 4-step pipeline: scan → write correct packs → delete stale index → rebuild index.
+
+**Infrastructure modified:**
+- `BinStash.Infrastructure/BinStash.Infrastructure.csproj` — added `InternalsVisibleTo("BinStash.RepackFileDefs")`.
+
+**Solution modified:**
+- `BinStash.slnx` — `Utils/RepackFileDefs/RepackFileDefs.csproj` added to `/Tooling/` folder.
+
+**Usage:**
+```
+BinStash.RepackFileDefs <storeRoot>
+# Example:
+BinStash.RepackFileDefs "C:\Tmp\BinStash\SecondLocalStoreSetup"
+```
+
+### FileDefinition retrieval call-site fix (completed 2026-04-14)
+
+All server-side retrieval paths that previously passed `fileHash.ToHexString()` to the pack store (wrong) now look up `StorageKey` from the DB first and pass `storageKey.ToHexString()` (correct). The `ChecksumCompressor.TransposeDecompressHashes(blob)` calls that assumed the old raw-bytes format have been replaced with `FileDefinitionRecord.Deserialize(blob).ChunkHashes`.
+
+**Files modified:**
+- `BinStash.Server/Endpoints/ReleaseEndpoints.cs`:
+  - Added `using BinStash.Infrastructure.Storage.FileDefinition;`
+  - Primary download loop (`GetReleaseDownloadAsync`): pre-queries `(Checksum → StorageKey)` map from DB before `Task.WhenAll`, passes `storageKey.ToHexString()` to `RetrieveFileDefinitionAsync`, deserializes via `FileDefinitionRecord.Deserialize(blob).ChunkHashes`.
+  - Diff-release download loop: identical fix with `diffStorageKeyMap`.
+- `BinStash.Server/Endpoints/IngestSessionEndpoints.cs` (`FinalizeIngestSessionAsync`):
+  - Pre-queries `(Checksum → StorageKey)` map from DB for `distinctContentHashes`.
+  - Passes `fdStorageKeyMap.Values.Select(k => k.ToHexString())` to `RetrieveFileDefinitionsAsync`.
+  - Iterates `fileDefinitionBytesByStorageKey` and deserializes via `FileDefinitionRecord.Deserialize(blob).ChunkHashes` to build `releaseUniqueChunks`.
+  - The `storageKeyHexToFileHash` reverse map is built but available for future consumers; the `releaseUniqueChunks` HashSet only needs the chunk hashes (not the file-hash keying), so no further re-keying was required.
+
+**Previously completed on 2026-04-14:** **BinStash.StoreMigration** standalone console project is **complete** and verified. Build is 0 errors. All 341 tests pass.
+
+### BinStash.StoreMigration (completed 2026-04-14)
+
+One-shot migration tool that repairs the existing on-disk FileDef store and PostgreSQL database after the BINST-99 LSM-tree index rewrite + BLAKE3-self-keying FileDef format changes.
+
+**New files created:**
+- `BinStash.StoreMigration/BinStash.StoreMigration.csproj` — console project, targets `net10.0`, references `BinStash.Infrastructure`, depends on `Npgsql` 10.0.2.
+- `BinStash.StoreMigration/OldFlatIndexReader.cs` — reads old flat varint append-log index files (`index{prefix}.idx`): 32-byte hash + signed varint fileNo/offset/length per record.
+- `BinStash.StoreMigration/Program.cs` — 5-step migration pipeline:
+  1. `pg_dump` backup of PostgreSQL before changes.
+  2. Parallel scan of all 4096 prefix buckets: reads old flat index, reads old pack payloads (raw `TransposeCompress(chunkHashes)`), queries DB for file lengths, re-serialises as `FileDefinitionRecord` blobs, writes new pack entries, builds new IDX2 sorted segment entries in memory.
+  3. Writes new `fileDefs{prefix}.seg-000.idx` IDX2 segment files with correct `BLAKE3(blob)` keys.
+  4. Deletes stale bloom filters (`fileDefs{prefix}.seg-000.bloom`), old flat index files (`index{prefix}.idx`), and legacy un-prefixed `seg-000.idx`/`seg-000.bloom` files.
+  5. Bulk-updates `FileDefinition.StorageKey` in PostgreSQL (batched 500 rows, transactional).
+
+**Infrastructure modified:**
+- `BinStash.Infrastructure/BinStash.Infrastructure.csproj` — added `<AssemblyAttribute>` `InternalsVisibleTo("BinStash.StoreMigration")` to expose `PackFileEntry`, `SortedIndexSegment`, `IndexEntry`, `FileAtomicHelper`.
+
+**Solution modified:**
+- `BinStash.slnx` — `BinStash.StoreMigration` added to the `/Tooling/` solution folder.
+
+**On-disk store structure confirmed:**
+- Each bucket dir = `FileDefs/{xx}/` (first 2 hex digits of 3-hex prefix).
+- 16 sub-prefixes per bucket (`000`–`00f` for bucket `00`, etc.) → 4096 total prefixes.
+- Old files per prefix: `fileDefs{prefix}-0.pack` + `fileDefs{prefix}.seg-000.idx` (wrong-keyed) + `fileDefs{prefix}.seg-000.bloom` + `index{prefix}.idx` (source of truth).
+- Migration: atomically replaces pack file, replaces seg-000.idx, deletes bloom, deletes old flat index.
+
+**Usage:**
+```
+BinStash.StoreMigration <storeRoot> <connectionString>
+# Example:
+BinStash.StoreMigration "C:\Tmp\BinStash\SecondLocalStoreSetup" \
+    "Host=localhost;Port=6432;Database=binstash;Username=postgres;Password=postgres"
+```
+
+Previously completed on 2026-04-14: **BINST-100 (migrate chunk store rebuild to background job system)** is **complete** and verified.
+
+Previously completed on 2026-04-14: **BINST-99 (LSM-tree segmented pack-file index)** — monolithic `.idx` replaced with three-tier LSM-tree per prefix bucket.
+
+## Recent changes (observed from code)
+
+### BINST-100: Chunk store rebuild as async background job (completed 2026-04-14)
+
+- **`BinStash.Core/Entities/BackgroundJob.cs`** updated — added `BackgroundJobTypes.ChunkStoreRebuild = "ChunkStoreRebuild"`, `ChunkStoreRebuildJobData` (with `ChunkStoreId`), `ChunkStoreRebuildProgressData` (with `TotalBuckets`, `ProcessedBuckets`, `FailedBuckets`).
+- **`BinStash.Core/Storage/IChunkStoreStorage.cs`** — added `RebuildStorageWithProgressAsync(IProgress<bool> progress, CancellationToken ct)`.
+- **`BinStash.Infrastructure/Storage/ObjectStore.cs`** — implemented `RebuildStorageWithProgressAsync`: sequential loop over 4096 prefixes × 2 categories, calls `progress.Report(bool)` after each bucket.
+- **`BinStash.Infrastructure/Storage/LocalFolderChunkStoreStorage.cs`** — delegates `RebuildStorageWithProgressAsync` to `_objectStore`.
+- **`BinStash.Server/Services/ChunkStores/IChunkStoreService.cs`** — added `RebuildStorageWithProgressAsync(ChunkStore store, IProgress<bool> progress, CancellationToken ct)`.
+- **`BinStash.Server/Services/ChunkStores/ChunkStoreService.cs`** — implemented `RebuildStorageWithProgressAsync` delegating to storage.
+- **`BinStash.Server/Services/ChunkStores/IChunkStoreRebuildService.cs`** — new interface with `ExecuteAsync(Guid jobId, CancellationToken ct)`.
+- **`BinStash.Server/Services/ChunkStores/ChunkStoreRebuildService.cs`** — new service: runs 8192 bucket rebuild, broadcasts progress every 64 buckets via `ITopicEventSender`, checks DB cancellation flag at each broadcast interval, uses `LinkedCancellationTokenSource` for host-shutdown vs user-cancel separation. Inner `BroadcastingProgress : IProgress<bool>` chains async callbacks sequentially via `ContinueWith().Unwrap().GetAwaiter().GetResult()`.
+- **`BinStash.Server/Services/ReleaseUpgrade/ReleaseUpgradeService.cs`** — `BackgroundJobProgressDto` extended with `TotalBuckets`, `ProcessedBuckets`, `FailedBuckets` (shared between upgrade and rebuild job types).
+- **`BinStash.Server/HostedServices/RebuildJobChannel.cs`** — new typed wrapper around `Channel<Guid>` dedicated to rebuild jobs; prevents DI collision with the upgrade pipeline's plain `Channel<Guid>` singleton.
+- **`BinStash.Server/HostedServices/ChunkStoreRebuildBackgroundService.cs`** — new hosted service: drains `RebuildJobChannel`, calls `IChunkStoreRebuildService.ExecuteAsync`, on startup re-enqueues any `ChunkStoreRebuild` jobs stuck in `Pending`/`Running` state (crash recovery).
+- **`BinStash.Server/Endpoints/ChunkStoreEndpoints.cs`** — `RebuildChunkStoreAsync` replaced: now creates `BackgroundJob`, enqueues to `RebuildJobChannel`, returns `202 Accepted` with `RebuildJobDto`. Duplicate detection returns `409 Conflict`. Route registration updated from `Produces(200)` to `Produces<RebuildJobDto>(202)`.
+- **`BinStash.Server/Endpoints/RebuildJobEndpoints.cs`** — new file: `GET /api/rebuild-jobs/{id}`, `POST /api/rebuild-jobs/{id}/cancel`, `GET /api/rebuild-jobs/` (with optional `chunkStoreId` filter). `RebuildJobDto` class defined here.
+- **`BinStash.Server/Extensions/EndpointRouteBuilderExtensions.cs`** — added `app.MapRebuildJobEndpoints()` call.
+- **`BinStash.Server/Program.cs`** — added `AddSingleton<RebuildJobChannel>()`, `AddScoped<IChunkStoreRebuildService, ChunkStoreRebuildService>()`, `AddHostedService<ChunkStoreRebuildBackgroundService>()`.
+- **Bug fix: `BinStash.Server/Endpoints/IngestSessionEndpoints.cs`** — `GetMissingFileDefinitionsAsync` line 169: `ToList()` replaced with `ToListAsync()`.
+- **Build:** 0 errors, 3 pre-existing warnings (unchanged). All 341 tests pass.
+
+### BINST-99: LSM-tree segmented pack-file index (completed 2026-04-14)
+
+- **`FileAtomicHelper.cs`** created — cross-platform atomic file replacement via write-to-temp-then-rename (`MoveFileExW` on Windows, `rename(2)` on POSIX).
+- **`PackIndexBloomFilter.cs`** created — classic double-hashing bloom filter using first 16 bytes of BLAKE3 hash as h1/h2; target FPR 0.1%. On-disk: `[4 bytes bitCount][4 bytes hashCount][bitCount/8 bytes data]`.
+- **`SortedIndexSegment.cs`** created — immutable memory-mapped sorted segment file (`seg-NNN.idx`). Fixed 48-byte records (32 hash + 4 fileNo + 8 offset + 4 length), header magic `0x58324449` ("IDX2"). Level encoded in filename. Binary search uses `stackalloc` 32-byte scratch buffer.
+- **`IndexedPackFileHandler.cs`** fully rewritten — three-tier LSM-tree index: Tier 0 `index.log` + `_logDict`, Tier 1+ immutable sorted segments with bloom filters. Size-tiered compaction (16:1 fan-in, levels 0→1→2). All public method signatures unchanged.
+- **`ObjectStore.cs`** updated — `GetStatisticsAsync()` uses lightweight stats path (8-byte segment headers + log hash replay). `CollectPrefixStatsLightAsync()` + helpers added.
+- **Build:** 0 errors, 0 warnings. All 341 tests pass.
+
+### AOT fix: CredentialStore DataProtection → Windows DPAPI / AES-GCM (completed 2026-04-14)
+
+- Root cause: `XmlSerializer` in DataProtection's key ring management is trimmed under AOT.
+- Fix: Pure BCL cryptography (`ProtectedData.Protect/Unprotect` on Windows; AES-256-GCM + HKDF-SHA256 on Linux/macOS).
+- `auth.dat` format bumped to v2 (`BSA\x02` magic). Old v1 files silently discarded.
+- Packages: Removed `Microsoft.AspNetCore.DataProtection` 10.0.5 and `.Extensions` 10.0.5. Added `System.Security.Cryptography.ProtectedData` 9.0.5.
+- Verified: AOT publish produces 0 IL warnings. `auth list` works on AOT binary.
+
+### Release upgrade V1/V2 Length fix (completed 2026-04-14)
+
+- `PopulateMissingLengthsAsync()` added between deserialize and re-serialize steps.
+- Batch-queries `FileDefinition` by `ContentHash` + `ChunkStoreId` to fill null `Length` fields.
+- Handles both `OpaqueBlobBacking.Length` and `ContainerMemberBinding.Length`.
+
+### Frontend upgrade pipeline integration (completed 2026-04-14)
+
+- `graphql-ws` 6.0.8 installed; Apollo Client split link (HTTP + WebSocket).
+- Vite proxy updated with `ws: true`.
+- `upgradeChunkStore()` fixed (GET → POST), `UpgradeJobDto` + `ChunkStoreBackendSettingsDto` types added.
+- `src/api/upgradeJobs.ts` created.
+- `src/composables/useBackgroundJobProgress.ts` created (GraphQL subscription composable).
+- `src/pages/ChunkStoreDetail.vue` created (full detail page with upgrade UI, real-time progress, tabs).
+- `/chunk-stores/:id` route added. `ChunkStoreCard.vue` footer updated to "View Details".
+
+### Release upgrade pipeline rewrite (BINST-93, backend complete)
+
+- `BackgroundJob` entity created (polymorphic, `JobType` discriminator, `jsonb` payload columns).
+- Old `ReleaseUpgradeJob` entity deleted. Migration `ReplaceReleaseUpgradeJobsWithBackgroundJobs` generated.
+- `ReleaseUpgradeService` rewritten to use `ITopicEventSender` (HotChocolate).
+- `ReleaseUpgradeBackgroundService` rewritten with `Channel<Guid>` job queue.
+- `ChunkStoreEndpoints.cs` + `UpgradeJobEndpoints.cs` updated.
+- `Subscription.cs` + `SubscriptionType.cs` created; `Program.cs` wired with WebSockets + in-memory subscriptions.
+
+### Previous changes
+
+- ChunkStore `LocalPath` replaced with polymorphic `BackendSettings` (`jsonb`, `[JsonPolymorphic]` with `$type`).
+- `ChunkerOptions` enhanced with XML docs and `Validate()` method.
+- CliFx upgraded to 3.0.0 (migration partially complete — LSP errors remain in CLI).
+- V4 `.rdef` format with sort-by-path optimization (−30.4% vs V2).
+
+## Known discrepancies / items requiring attention
+
+- **BackendSettings JSON case sensitivity fixed:** `PropertyNameCaseInsensitive = true` added to handle existing PascalCase data.
+- **CliFx 3.0.0 migration incomplete:** CLI has LSP/compile errors from API renames.
+- **`StorageStrategy.cs` excluded from compilation.**
+- **S3 chunk store not implemented.**
+- **`SingleTenantBootstrapper` commented out.**
+- **Stale documentation:** `docs/faq.md` references ".NET 9"; `docs/file-format.md` covers V2/V3 only; `docs/architecture.md` is a placeholder; `docs/cli-reference.md` missing several commands.
+- **`chunk-store delete` and `release delete` commands throw `NotImplementedException`.**
+- **`appsettings.Development.json`** uses `Email2` section, effectively disabling email in dev.
+- **CLI `chunk-store show`** should display `BackendSettings` instead of `LocalPath`.
+
+## Active decisions and preferences
+
+- Deduplication scope is intentionally per-chunk-store.
+- Auto-migration at startup; no manual `dotnet ef database update` in production.
+- JWT key fallback must never reach production.
+- V4 `.rdef` is the current write format; V1/V2/V3 deserialization retained.
+- Artifacts sorted by path before V4 serialization — consumers must not assume positional stability.
+- ChunkStore backend settings use JSON polymorphism (`$type` discriminator in `jsonb` column).
+- Background jobs use polymorphic `BackgroundJob` entity with JSON payload columns.
+- No SignalR — real-time updates use HotChocolate GraphQL subscriptions over WebSockets.
+- Each background job pipeline uses a **typed channel wrapper** to avoid DI collision (e.g., `RebuildJobChannel` wraps the rebuild pipeline's `Channel<Guid>` separately from the upgrade pipeline's plain `Channel<Guid>` singleton).
+
+## Important patterns observed
+
+- All source files carry the AGPLv3 copyright header with author `Lukas Eßmann`.
+- Authorization policies consistently named `Permission:<Scope>:<Level>`.
+- `DbConfigurationSource` inserted at index 0 (lowest priority).
+- CLI uses constructor DI via `ServiceCollection` in `Program.cs` `UseTypeInstantiator`.
+- Ingestion pipeline supports plain directory and ZIP archive input.
+- `ReleaseAddOrchestrator`, `ServerUploadPlanner`, `ComponentMapLoader` are CLI-side orchestration services.
+- `BinStashApiClient` (REST) and `BinStashGrpcClient` (gRPC) are server communication wrappers.
+- SVN import subsystem (8 files) fully implemented with SQLite-backed resumable state.
+
+
+Previously completed on 2026-04-14: the **release upgrade pipeline** (BINST-93 epic) backend work and its **frontend integration**. The Vue 3 frontend at `C:\Users\l.essmann\RiderProjects\Cruip\mosaic-vue` has been connected to the backend's async upgrade pipeline with real-time progress via GraphQL subscriptions over WebSocket.
+
+**AOT fix completed (2026-04-14):** `CredentialStore` replaced `Microsoft.AspNetCore.DataProtection` with `System.Security.Cryptography.ProtectedData` (Windows DPAPI) + AES-256-GCM fallback (Linux/macOS). This resolves the `Value cannot be null (Parameter 'dictionary')` runtime crash in the AOT-published `win-x64` binary. Root cause was DataProtection's XML key ring management using `XmlSerializer` (reflection-based, trimmed under AOT). The new implementation is fully AOT-safe. Both `Microsoft.AspNetCore.DataProtection` and `Microsoft.AspNetCore.DataProtection.Extensions` packages removed from `BinStash.Cli.csproj`. `System.Security.Cryptography.ProtectedData` 9.0.5 added. The auth.dat file format was bumped to v2 (magic bytes `BSA\x02`) — old v1 DataProtection-encrypted files are gracefully discarded (forces re-login). AOT publish produces 0 IL warnings, 0 errors.
 
 **Bug fix completed (2026-04-14):** `OpaqueBlobBacking.Length must be set before serialization` — the V4 serializer threw when upgrading V1/V2 releases because those formats did not store file lengths. Fixed by adding `PopulateMissingLengthsAsync()` in `ReleaseUpgradeService.ExecuteAsync()` which looks up null `Length` fields from the `FileDefinition` table (matching by `ContentHash`/`Checksum` + `ChunkStoreId`) before re-serialization. Both `OpaqueBlobBacking.Length` and `ContainerMemberBinding.Length` are handled.
 
 Previously completed: BINST-91 (polymorphic ChunkStore backend settings) and BINST-92 (ChunkerOptions improvements).
 
 ## Recent changes (observed from code)
+
+### BINST-99: LSM-tree segmented pack-file index (completed 2026-04-14)
+
+- **`FileAtomicHelper.cs`** created at `BinStash.Infrastructure/Storage/Indexing/FileAtomicHelper.cs` — cross-platform atomic file replacement via write-to-temp-then-rename (`MoveFileExW` on Windows, `rename(2)` on POSIX).
+- **`PackIndexBloomFilter.cs`** created at `BinStash.Infrastructure/Storage/Indexing/PackIndexBloomFilter.cs` — classic double-hashing bloom filter using first 16 bytes of BLAKE3 hash as h1/h2; target FPR 0.1%. On-disk: `[4 bytes bitCount][4 bytes hashCount][bitCount/8 bytes data]`.
+- **`SortedIndexSegment.cs`** created at `BinStash.Infrastructure/Storage/Indexing/SortedIndexSegment.cs` — immutable memory-mapped sorted segment file (`seg-NNN.idx`). Fixed 48-byte records (32 hash + 4 fileNo + 8 offset + 4 length), header magic `0x58324449` ("IDX2"). Level encoded in filename (`seg-0NN` = L0 ≤65K, `seg-1NN` = L1 ≤1M, `seg-2NN` = L2 ≤16M). Binary search uses `stackalloc` 32-byte scratch buffer (zero heap on hot path). `ReadEntryCountFromHeader()` reads only 8 bytes for lightweight stats.
+- **`IndexedPackFileHandler.cs`** fully rewritten at `BinStash.Infrastructure/Storage/Indexing/IndexedPackFileHandler.cs` — three-tier LSM-tree index:
+  - Tier 0: `index.log` append log + `_logDict` ConcurrentDictionary (O(1) lookup). Flush to sorted segment at `LogFlushThreshold = 4096` entries.
+  - Tier 1+: immutable sorted segments with paired bloom filters, newest-first traversal.
+  - Size-tiered compaction: 16:1 fan-in, levels 0→1→2.
+  - `RebuildIndexFile()` scans pack files, writes single sorted segment at correct level.
+  - All public method signatures unchanged (transparent replacement).
+- **`ObjectStore.cs`** updated:
+  - `GetStatisticsAsync()` replaced with lightweight stats path: reads only 8-byte segment headers + replays log hashes (32 bytes/entry), no handler open.  `TotalCompressedSize`/`TotalUncompressedSize` remain 0 (intentional — would require opening every pack file).
+  - `CollectPrefixStatsLightAsync()` + `CountLogEntries()` + `SkipVarInt()` helpers added.
+- **Build:** 0 errors, 0 warnings. All 341 tests pass (283 Core + 48 Serializers + 10 Server).
+
+### AOT fix: CredentialStore DataProtection → Windows DPAPI / AES-GCM (completed 2026-04-14)
+
+- **Root cause:** `Microsoft.AspNetCore.DataProtection` uses XML-based key ring management internally (`XmlSerializer`) which relies on reflection and is trimmed/broken under AOT publish. The `ILLink.Substitutions.xml` file in DataProtection suppressed all IL2026/IL3050 warnings at publish time, making the failure silent until runtime.
+- **Fix:** `CredentialStore.cs` rewritten to use `System.Security.Cryptography.ProtectedData.Protect/Unprotect` (Windows DPAPI) on Windows, and AES-256-GCM with HKDF-SHA256-derived key on Linux/macOS. Both paths are pure BCL cryptography — no XML serialization, no reflection, fully AOT-safe.
+- **Format migration:** `auth.dat` now uses a `BSA\x02` magic prefix to identify the v2 format. If the file is missing the prefix (old v1 DataProtection format), it is silently discarded and the user is prompted to re-login.
+- **Packages:** Removed `Microsoft.AspNetCore.DataProtection` 10.0.5 and `Microsoft.AspNetCore.DataProtection.Extensions` 10.0.5. Added `System.Security.Cryptography.ProtectedData` 9.0.5.
+- **Verified:** AOT publish (`dotnet publish -r win-x64`) produces 0 IL warnings. `BinStash.Cli.exe auth list` runs cleanly on the AOT binary and returns "No authenticated servers."
 
 ### Release upgrade V1/V2 Length fix (completed 2026-04-14)
 

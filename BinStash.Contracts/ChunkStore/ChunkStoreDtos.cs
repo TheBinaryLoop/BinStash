@@ -13,6 +13,8 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Text.Json;
+
 namespace BinStash.Contracts.ChunkStore;
 
 public class ChunkStoreSummaryDto
@@ -26,7 +28,7 @@ public class ChunkStoreDetailDto : ChunkStoreSummaryDto
     public required string Type { get; set; }
     public required ChunkStoreChunkerDto Chunker { get; set; }
     public required ChunkStoreBackendSettingsDto BackendSettings { get; set; }
-    public required Dictionary<string, object> Stats { get; set; }
+    public required Dictionary<string, JsonElement> Stats { get; set; }
 }
 
 public class ChunkStoreStatsDto

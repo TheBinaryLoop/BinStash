@@ -25,6 +25,7 @@ using BinStash.Core.Extensions;
 using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Data;
+using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
 using BinStash.Server.Services.ChunkStores;
@@ -163,10 +164,10 @@ public static class IngestSessionEndpoints
             if (!fileDefinitionChecksums.Any())
                 return Results.Bytes(ChecksumCompressor.TransposeCompress([]), "application/octet-stream");
             
-            var knownChecksums = db.FileDefinitions
+            var knownChecksums = await db.FileDefinitions
                 .Where(c => c.ChunkStoreId == store.Id && fileDefinitionChecksums.Contains(c.Checksum))
                 .Select(c => c.Checksum)
-                .ToList();
+                .ToListAsync();
             
             var missingChecksums = fileDefinitionChecksums.Except(knownChecksums).ToList();
             if (!missingChecksums.Any())
@@ -236,14 +237,16 @@ public static class IngestSessionEndpoints
         
         foreach (var fileDefinition in fileDefinitions.Where(x => !existingFiles.Contains(x.Key)))
         {
-            var entry = new FileDefinition
+            var record = new FileDefinitionRecord
             {
-                Checksum = fileDefinition.Key,
-                ChunkStoreId = storeMeta.Id,
-                Length = fileDefinition.Value.Length,
+                FileHash    = fileDefinition.Key,
+                FileLength  = fileDefinition.Value.Length,
+                ChunkHashes = fileDefinition.Value.Chunks
             };
-            
-            var storeFileDefinitionResult = await chunkStoreService.StoreFileDefinitionAsync(storeMeta, fileDefinition.Key, ChecksumCompressor.TransposeCompress(fileDefinition.Value.Chunks.Select(x => x.GetBytes()).ToList()));
+
+            var blob = record.Serialize();
+
+            var storeFileDefinitionResult = await chunkStoreService.StoreFileDefinitionAsync(storeMeta, blob);
             
             if (!storeFileDefinitionResult.Success)
                 return Results.Problem($"Failed to store file definition ({fileDefinition.Key.ToHexString()}) in chunk store.");
@@ -251,6 +254,14 @@ public static class IngestSessionEndpoints
             ingestSession.FilesSeenUnique++;
             ingestSession.FilesSeenNew++;
             ingestSession.MetadataSize += storeFileDefinitionResult.BytesWritten;
+            
+            var entry = new FileDefinition
+            {
+                Checksum     = fileDefinition.Key,
+                ChunkStoreId = storeMeta.Id,
+                Length       = fileDefinition.Value.Length,
+                StorageKey   = storeFileDefinitionResult.StorageKey
+            };
             
             db.FileDefinitions.Add(entry);
         }
@@ -522,13 +533,15 @@ public static class IngestSessionEndpoints
         {
             Id = releaseId,
             Version = releasePackage.Version,
-            CreatedAt = createdAt,
-            Notes = releasePackage.Notes,
-            RepoId = repo.Id,
-            Repository = repo,
-            ReleaseDefinitionChecksum = releasePackageHash,
-            CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null,
-            SerializerVersion = ReleasePackageSerializer.Version
+             CreatedAt = createdAt,
+             Notes = releasePackage.Notes,
+             RepoId = repo.Id,
+             Repository = repo,
+             ReleaseDefinitionChecksum = releasePackageHash,
+#pragma warning disable IL2026, IL3050 // ToJson uses reflection; Server is not AOT-published
+             CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null,
+#pragma warning restore IL2026, IL3050
+             SerializerVersion = ReleasePackageSerializer.Version
         };
 
         await db.Releases.AddAsync(release);
@@ -561,16 +574,31 @@ public static class IngestSessionEndpoints
 
         ingestSession.TotalLogicalBytes = (long)totalLogicalBytes;
 
-        var fileDefinitionBytes = distinctContentHashes.Count == 0
+        // Look up StorageKey for each content hash — the pack store is indexed by BLAKE3(blob), not by file hash.
+        // Build a (Checksum → StorageKey) map so we can pass the correct storage keys to the retrieval API,
+        // then re-key the blobs back by file hash for the consumers below.
+        var fdStorageKeyMap = distinctContentHashes.Count == 0
+            ? new Dictionary<Hash32, Hash32>()
+            : await db.FileDefinitions
+                .AsNoTracking()
+                .Where(x => x.ChunkStoreId == repo.ChunkStoreId && distinctContentHashes.Contains(x.Checksum))
+                .ToDictionaryAsync(x => x.Checksum, x => x.StorageKey);
+
+        // storageKeyHex → fileHash reverse map for re-keying after retrieval
+        var storageKeyHexToFileHash = fdStorageKeyMap.ToDictionary(
+            kvp => kvp.Value.ToHexString(),
+            kvp => kvp.Key);
+
+        var fileDefinitionBytesByStorageKey = fdStorageKeyMap.Count == 0
             ? new Dictionary<string, byte[]>()
             : await chunkStoreService.RetrieveFileDefinitionsAsync(
                 store,
-                distinctContentHashes.Select(x => x.ToHexString()).ToArray());
+                fdStorageKeyMap.Values.Select(k => k.ToHexString()).ToArray());
 
         var releaseUniqueChunks = new HashSet<Hash32>();
-        foreach (var fd in fileDefinitionBytes.Values)
+        foreach (var (storageKeyHex, blob) in fileDefinitionBytesByStorageKey)
         {
-            foreach (var chunkHash in ChecksumCompressor.TransposeDecompressHashes(fd))
+            foreach (var chunkHash in FileDefinitionRecord.Deserialize(blob).ChunkHashes)
                 releaseUniqueChunks.Add(chunkHash);
         }
 

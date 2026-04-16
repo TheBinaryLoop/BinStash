@@ -29,7 +29,6 @@ public sealed class QueryType : ObjectType<Query>
         
         descriptor
             .Field(x => x.GetTenants(null!))
-            .Type<NonNullType<ListType<NonNullType<TenantType>>>>()
             .Authorize()
             .UsePaging(options: new PagingOptions
             {
@@ -47,7 +46,6 @@ public sealed class QueryType : ObjectType<Query>
         
         descriptor
             .Field(x => x.GetRepositories(null!))
-            .Type<NonNullType<ListType<NonNullType<RepositoryType>>>>()
             .Authorize()
             .UsePaging(options: new PagingOptions
             {
@@ -71,7 +69,6 @@ public sealed class QueryType : ObjectType<Query>
         
         descriptor
             .Field(x => x.GetChunkStores(null!, CancellationToken.None))
-            .Type<NonNullType<ListType<NonNullType<ChunkStoreType>>>>()
             .Authorize()
             .UsePaging(options: new PagingOptions
             {
@@ -89,7 +86,6 @@ public sealed class QueryType : ObjectType<Query>
         
         descriptor
             .Field(x => x.GetServiceAccounts(null!, CancellationToken.None))
-            .Type<NonNullType<ListType<NonNullType<ServiceAccountType>>>>()
             .Authorize()
             .UsePaging(options: new PagingOptions
             {
@@ -101,7 +97,6 @@ public sealed class QueryType : ObjectType<Query>
         
         descriptor
             .Field(x => x.GetUsers(null!, CancellationToken.None))
-            .Type<NonNullType<ListType<NonNullType<UserType>>>>()
             .Authorize()
             .UsePaging(options: new PagingOptions
             {

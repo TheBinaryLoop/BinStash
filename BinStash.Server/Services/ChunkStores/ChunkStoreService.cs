@@ -58,22 +58,22 @@ public sealed class ChunkStoreService : IChunkStoreService
         return await storage.RetrieveChunkAsync(chunkId);
     }
 
-    public Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, Hash32 fileHash, ReadOnlyMemory<byte> data)
+    public Task<(bool Success, Hash32 StorageKey, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob)
     {
-        if (data.IsEmpty)
-            throw new ArgumentException("Data cannot be null or empty.", nameof(data));
+        if (recordBlob.IsEmpty)
+            throw new ArgumentException("Record blob cannot be empty.", nameof(recordBlob));
 
         var storage = _storageFactory.Create(store);
-        return storage.StoreFileDefinitionAsync(fileHash, data);
+        return storage.StoreFileDefinitionAsync(recordBlob);
     }
 
-    public Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string fileHash)
+    public Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string storageKeyHex)
     {
-        if (string.IsNullOrWhiteSpace(fileHash))
-            throw new ArgumentException("File hash cannot be null or empty.", nameof(fileHash));
+        if (string.IsNullOrWhiteSpace(storageKeyHex))
+            throw new ArgumentException("Storage key cannot be null or empty.", nameof(storageKeyHex));
 
         var storage = _storageFactory.Create(store);
-        return storage.RetrieveFileDefinitionAsync(fileHash);
+        return storage.RetrieveFileDefinitionAsync(storageKeyHex);
     }
 
     public Task<bool> StoreReleasePackageAsync(ChunkStore store, ReadOnlyMemory<byte> packageData)
@@ -104,6 +104,12 @@ public sealed class ChunkStoreService : IChunkStoreService
     {
         var storage = _storageFactory.Create(store);
         return storage.RebuildStorageAsync();
+    }
+
+    public Task<bool> RebuildStorageWithProgressAsync(ChunkStore store, IProgress<bool> progress, CancellationToken cancellationToken)
+    {
+        var storage = _storageFactory.Create(store);
+        return storage.RebuildStorageWithProgressAsync(progress, cancellationToken);
     }
 
     public Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(ChunkStore store, IReadOnlyCollection<string> fileHashes)

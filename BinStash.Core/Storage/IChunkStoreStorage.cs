@@ -22,17 +22,42 @@ public interface IChunkStoreStorage
 {
     Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, ReadOnlyMemory<byte> data);
     Task<byte[]?> RetrieveChunkAsync(string key);
-    
-    Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, ReadOnlyMemory<byte> data);
-    Task<byte[]?> RetrieveFileDefinitionAsync(string key);
-    
+
+    /// <summary>
+    /// Stores a serialised <c>FileDefinitionRecord</c> blob in the pack store.
+    /// The index key is <c>BLAKE3(blob)</c> (self-keyed).
+    /// </summary>
+    /// <returns>
+    /// Success flag, storage key (<c>BLAKE3(blob)</c>), and the number of
+    /// compressed bytes physically written (0 = already existed / deduplicated).
+    /// </returns>
+    Task<(bool Success, Hash32 StorageKey, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob);
+
+    /// <summary>
+    /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its storage key
+    /// as persisted in <c>FileDefinition.StorageKey</c>.
+    /// </summary>
+    Task<byte[]?> RetrieveFileDefinitionAsync(string storageKeyHex);
+
     Task<bool> StoreReleasePackageAsync(ReadOnlyMemory<byte> packageData);
     Task<byte[]?> RetrieveReleasePackageAsync(string key);
     Task<bool> DeleteReleasePackageAsync(string packageId);
-    Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> fileHashes);
+
+    /// <summary>
+    /// Retrieves multiple file definition blobs in parallel, keyed by
+    /// their storage-key hex strings.
+    /// </summary>
+    Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> storageKeyHexes);
     Task<Dictionary<string, byte[]>> RetrieveReleasePackagesAsync(IReadOnlyCollection<string> packageIds);
     Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync();
 
     Task<bool> RebuildStorageAsync();
+
+    /// <summary>
+    /// Rebuilds the storage index, reporting incremental progress via <paramref name="progress"/>.
+    /// The progress callback receives <c>true</c> when a bucket succeeded, <c>false</c> when it failed.
+    /// </summary>
+    Task<bool> RebuildStorageWithProgressAsync(IProgress<bool> progress, CancellationToken cancellationToken);
+
     Task<Dictionary<string, object>> GetStorageStatsAsync();
 }

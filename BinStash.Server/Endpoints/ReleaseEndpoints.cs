@@ -25,6 +25,7 @@ using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
+using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Server.Extensions;
 using BinStash.Server.Helpers;
 using BinStash.Server.Services.ChunkStores;
@@ -176,6 +177,14 @@ public static class ReleaseEndpoints
 
         var fileChunkMap = new ConcurrentDictionary<Hash32, List<(Hash32 Hash, int Length)>>();
 
+        // Look up StorageKey for each file hash — the pack store is indexed by BLAKE3(blob), not by file hash.
+        var storageKeyMap = fileHashes.Count == 0
+            ? new Dictionary<Hash32, Hash32>()
+            : await db.FileDefinitions
+                .AsNoTracking()
+                .Where(x => x.ChunkStoreId == repo.ChunkStoreId && fileHashes.Contains(x.Checksum))
+                .ToDictionaryAsync(x => x.Checksum, x => x.StorageKey);
+
         using (var throttler = new SemaphoreSlim(32))
         {
             await Task.WhenAll(fileHashes.Select(async uniqueFileHash =>
@@ -183,14 +192,17 @@ public static class ReleaseEndpoints
                 await throttler.WaitAsync();
                 try
                 {
-                    var fileDefinition = await chunkStoreService.RetrieveFileDefinitionAsync(
-                        repo.ChunkStore,
-                        uniqueFileHash.ToHexString());
+                    if (!storageKeyMap.TryGetValue(uniqueFileHash, out var storageKey))
+                        throw new FileNotFoundException($"StorageKey for file {uniqueFileHash.ToHexString()} not found in the database.");
 
-                    if (fileDefinition == null)
+                    var fileDefinitionBlob = await chunkStoreService.RetrieveFileDefinitionAsync(
+                        repo.ChunkStore,
+                        storageKey.ToHexString());
+
+                    if (fileDefinitionBlob == null)
                         throw new FileNotFoundException("File definition not found in the chunk store.");
 
-                    var chunkList = ChecksumCompressor.TransposeDecompressHashes(fileDefinition)
+                    var chunkList = FileDefinitionRecord.Deserialize(fileDefinitionBlob).ChunkHashes
                         .Select(static x => (x, -1))
                         .ToList();
 
@@ -275,6 +287,14 @@ public static class ReleaseEndpoints
 
             var diffFileChunkMap = new ConcurrentDictionary<Hash32, List<(Hash32 Hash, int Length)>>();
 
+            // Look up StorageKey for diff file hashes — pack store is indexed by BLAKE3(blob), not by file hash.
+            var diffStorageKeyMap = diffFileHashes.Count == 0
+                ? new Dictionary<Hash32, Hash32>()
+                : await db.FileDefinitions
+                    .AsNoTracking()
+                    .Where(x => x.ChunkStoreId == repo.ChunkStoreId && diffFileHashes.Contains(x.Checksum))
+                    .ToDictionaryAsync(x => x.Checksum, x => x.StorageKey);
+
             using (var throttler = new SemaphoreSlim(32))
             {
                 await Task.WhenAll(diffFileHashes.Select(async uniqueFileHash =>
@@ -282,14 +302,17 @@ public static class ReleaseEndpoints
                     await throttler.WaitAsync();
                     try
                     {
-                        var fileDefinition = await chunkStoreService.RetrieveFileDefinitionAsync(
-                            repo.ChunkStore,
-                            uniqueFileHash.ToHexString());
+                        if (!diffStorageKeyMap.TryGetValue(uniqueFileHash, out var storageKey))
+                            throw new FileNotFoundException($"StorageKey for file {uniqueFileHash.ToHexString()} not found in the database.");
 
-                        if (fileDefinition == null)
+                        var fileDefinitionBlob = await chunkStoreService.RetrieveFileDefinitionAsync(
+                            repo.ChunkStore,
+                            storageKey.ToHexString());
+
+                        if (fileDefinitionBlob == null)
                             throw new FileNotFoundException("File definition not found in the chunk store.");
 
-                        var chunkList = ChecksumCompressor.TransposeDecompressHashes(fileDefinition)
+                        var chunkList = FileDefinitionRecord.Deserialize(fileDefinitionBlob).ChunkHashes
                             .Select(static x => (x, -1))
                             .ToList();
 

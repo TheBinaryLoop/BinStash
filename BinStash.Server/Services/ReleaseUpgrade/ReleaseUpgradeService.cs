@@ -393,18 +393,26 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
 
 /// <summary>
 /// DTO broadcast via GraphQL subscriptions on each progress update.
+/// Fields relevant to upgrade jobs are populated for <c>ReleaseUpgrade</c> job types;
+/// fields relevant to rebuild jobs are populated for <c>ChunkStoreRebuild</c> job types.
 /// </summary>
 public sealed class BackgroundJobProgressDto
 {
     public Guid JobId { get; init; }
     public required string JobType { get; init; }
     public required string Status { get; init; }
+    // --- ReleaseUpgrade fields ---
     public int TotalReleases { get; init; }
     public int ProcessedReleases { get; init; }
     public int FailedReleases { get; init; }
     public int SkippedReleases { get; init; }
     public long BytesSaved { get; init; }
     public long BytesGrown { get; init; }
+    // --- ChunkStoreRebuild fields ---
+    public int TotalBuckets { get; init; }
+    public int ProcessedBuckets { get; init; }
+    public int FailedBuckets { get; init; }
+    // --- Common ---
     public Guid? ChunkStoreId { get; init; }
     public DateTimeOffset? StartedAt { get; init; }
     public DateTimeOffset? CompletedAt { get; init; }

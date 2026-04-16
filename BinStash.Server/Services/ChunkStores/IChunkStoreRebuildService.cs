@@ -1,4 +1,4 @@
-﻿// Copyright (C) 2025-2026  Lukas Eßmann
+// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -13,20 +13,16 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Contracts.Hashing;
+namespace BinStash.Server.Services.ChunkStores;
 
-namespace BinStash.Core.Entities;
-
-public class FileDefinition
+/// <summary>
+/// Executes a <c>ChunkStoreRebuild</c> background job.
+/// Progress is persisted to the database and broadcast via GraphQL subscriptions.
+/// </summary>
+public interface IChunkStoreRebuildService
 {
-    public required Hash32 Checksum { get; set; }
-    public required Guid ChunkStoreId { get; set; }
-    public required long Length { get; set; }
-
     /// <summary>
-    /// BLAKE3 hash of the serialised <c>FileDefinitionRecord</c> blob stored in
-    /// the object-store pack file.  This is the pack-index lookup key and is
-    /// separate from <see cref="Checksum"/> (= BLAKE3 of the original file content).
+    /// Executes the rebuild job identified by <paramref name="jobId"/>.
     /// </summary>
-    public required Hash32 StorageKey { get; set; }
+    Task ExecuteAsync(Guid jobId, CancellationToken cancellationToken);
 }

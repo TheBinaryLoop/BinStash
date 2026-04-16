@@ -39,6 +39,12 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage, IDisposable, IAs
     {
         return _objectStore.RebuildStorageAsync();
     }
+
+    /// <inheritdoc/>
+    public Task<bool> RebuildStorageWithProgressAsync(IProgress<bool> progress, CancellationToken cancellationToken)
+    {
+        return _objectStore.RebuildStorageWithProgressAsync(progress, cancellationToken);
+    }
     
     public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, ReadOnlyMemory<byte> data)
     {
@@ -51,15 +57,15 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage, IDisposable, IAs
         return _objectStore.ReadChunkAsync(key)!;
     }
 
-    public async Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(Hash32 fileHash, ReadOnlyMemory<byte> data)
+    public async Task<(bool Success, Hash32 StorageKey, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob)
     {
-        var bytesWritten = await _objectStore.WriteFileDefinitionAsync(fileHash, data);
-        return (true, bytesWritten);
+        var (storageKey, bytesWritten) = await _objectStore.WriteFileDefinitionAsync(recordBlob);
+        return (true, storageKey, bytesWritten);
     }
 
-    public Task<byte[]?> RetrieveFileDefinitionAsync(string key)
+    public Task<byte[]?> RetrieveFileDefinitionAsync(string storageKeyHex)
     {
-        return _objectStore.ReadFileDefinitionAsync(key)!;
+        return _objectStore.ReadFileDefinitionBlobAsync(storageKeyHex)!;
     }
 
     public async Task<bool> StoreReleasePackageAsync(ReadOnlyMemory<byte> packageData)
@@ -78,19 +84,19 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage, IDisposable, IAs
         return await _objectStore.DeleteReleasePackageAsync(packageId);
     }
 
-    public async Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> fileHashes)
+    public async Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> storageKeyHexes)
     {
         var result = new ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         using var throttler = new SemaphoreSlim(16);
 
-        await Task.WhenAll(fileHashes.Select(async hash =>
+        await Task.WhenAll(storageKeyHexes.Select(async hex =>
         {
             await throttler.WaitAsync();
             try
             {
-                var data = await RetrieveFileDefinitionAsync(hash);
+                var data = await RetrieveFileDefinitionAsync(hex);
                 if (data != null)
-                    result[hash] = data;
+                    result[hex] = data;
             }
             finally
             {

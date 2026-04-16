@@ -17,7 +17,7 @@ using System.Runtime.InteropServices;
 
 namespace BinStash.Cli.Utils;
 
-internal static class HardLinkHelper
+internal static partial class HardLinkHelper
 {
     public static void CreateHardLink(string linkPath, string existingFilePath)
     {
@@ -40,13 +40,11 @@ internal static class HardLinkHelper
     }
 
     // Windows
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool CreateHardLink(
-        string lpFileName,
-        string lpExistingFileName,
-        IntPtr lpSecurityAttributes);
+    [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CreateHardLink(string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
 
     // Unix (Linux/macOS)
-    [DllImport("libc", SetLastError = true)]
-    private static extern int link(string oldpath, string newpath);
+    [LibraryImport("libc", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial int link(string oldpath, string newpath);
 }

@@ -308,7 +308,7 @@ When changing a cross-cutting or integration-heavy flow, always inspect:
 
 ```bash
 # Full solution build (Release)
-dotnet build BinStash.sln --configuration Release
+dotnet build BinStash.slnx --configuration Release
 
 # Build single project
 dotnet build BinStash.Server/BinStash.Server.csproj --configuration Release
@@ -318,7 +318,7 @@ dotnet build BinStash.Server/BinStash.Server.csproj --configuration Release
 
 ```bash
 # All tests
-dotnet test BinStash.sln --configuration Release
+dotnet test BinStash.slnx --configuration Release
 
 # Specific test project
 dotnet test BinStash.Core.Tests/BinStash.Core.Tests.csproj

@@ -4,6 +4,38 @@
 
 Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC ingest, REST endpoints, multi-tenancy, and auth are implemented. No automated deployment pipeline exists. CliFx 3.0.0 upgrade is partially complete (API migration has outstanding LSP errors).
 
+**Completed 2026-04-15:** `BinStash.ChunkStoreExplorer` redesigned as a file-explorer-style split-pane TUI. Builds with 0 errors, 0 warnings.
+- Replaced sequential CLI menu with keyboard-driven split-pane: left panel = navigable tree (Store → Category → PrefixGroup1 → PrefixGroup2 → Bucket → Files), right panel = node stats/detail.
+- New write operations: **Rebuild segment from packs** (scan packs → decompress → BLAKE3 hash → sort+dedup → write `seg-000.idx`), **Rebuild bloom filter** (single segment or all segments in a bucket).
+- All original features preserved (Store Overview, Bucket Browser, Pack/Segment/Bloom inspectors, FileDef decoder, Hash Lookup, Integrity Check, Verify Pack Offsets, Log Dump/Search, Raw Blob Read).
+- Fix: moved `record`/`class` type declarations to end of file to resolve `CS8803` top-level statement ordering error.
+
+**Completed 2026-04-14:** `BinStash.RepackFileDefs` cross-bucket repack tool. Fixes the bucket-mismatch bug in `BinStash.StoreMigration` that caused all 10 `StoreVerify` tests to fail with `KeyNotFoundException`.
+- New project at `Utils/RepackFileDefs/` (console, net10.0, references Infrastructure + Blake3 2.2.1).
+- `Program.cs` — 4-step pipeline: scan all FileDef packs → route each entry to correct storageKey prefix → write new correctly-routed pack files → delete stale index → call `ObjectStore.RebuildStorageAsync()`.
+- `InternalsVisibleTo("BinStash.RepackFileDefs")` added to `BinStash.Infrastructure.csproj`.
+- Added to `/Tooling/` folder in `BinStash.slnx`.
+- Results on `C:\Tmp\BinStash\SecondLocalStoreSetup`: 194,857 entries repacked, rebuild OK, **all 10 StoreVerify tests PASS**.
+- Build: 0 errors, 0 warnings.
+
+**Completed 2026-04-14:** `BinStash.StoreMigration` standalone console tool. Repairs the on-disk FileDef store and PostgreSQL `FileDefinition.StorageKey` column after the BINST-99 LSM-tree + self-keying format change.
+- New project at `BinStash.StoreMigration/` (console, net10.0, references Infrastructure + Npgsql 10.0.2).
+- `OldFlatIndexReader.cs` — reads legacy `index{prefix}.idx` flat varint files (hash + fileNo + offset + length).
+- `Program.cs` — 5-step pipeline: pg_dump backup → parallel prefix scan → write new IDX2 segments → delete stale files → update StorageKey in DB.
+- `InternalsVisibleTo("BinStash.StoreMigration")` added to `BinStash.Infrastructure.csproj` for access to `PackFileEntry`, `SortedIndexSegment`, `IndexEntry`, `FileAtomicHelper`.
+- Added to `/Tooling/` folder in `BinStash.slnx`.
+- Build: 0 errors, 0 warnings. All 341 tests pass.
+
+**Completed 2026-04-14:** BINST-100 (chunk store rebuild as async background job). Build is 0 errors. All 341 tests pass.
+
+
+- **New files:** `FileAtomicHelper.cs`, `PackIndexBloomFilter.cs`, `SortedIndexSegment.cs` in `BinStash.Infrastructure/Storage/Indexing/`
+- **Rewritten:** `IndexedPackFileHandler.cs` — three-tier lookup (log dict → bloom+binary-search on segments), append log with `LogFlushThreshold=4096`, log flush to sorted segment, size-tiered compaction (16:1, levels 0→1→2). All public signatures unchanged.
+- **Updated:** `ObjectStore.cs` — lightweight stats path reads only 8-byte segment headers + log hash replay; no handler open required.
+- **Build:** 0 errors, 0 warnings. All 341 tests pass.
+
+**Completed 2026-04-14:** AOT fix for `BinStash.Cli` — `CredentialStore` now uses Windows DPAPI (`ProtectedData`) on Windows and AES-256-GCM on Linux/macOS instead of `Microsoft.AspNetCore.DataProtection`. This fixes the `Value cannot be null (Parameter 'dictionary')` runtime crash in AOT-published binaries. `Microsoft.AspNetCore.DataProtection` and `.Extensions` packages removed. `System.Security.Cryptography.ProtectedData` 9.0.5 added. AOT publish produces 0 IL warnings, 0 errors. `auth list` verified working on the AOT binary.
+
 **Completed 2026-04-14:** BINST-91 (polymorphic ChunkStore backend settings) and BINST-92 (ChunkerOptions improvements). Both tickets moved to Done. Build succeeds (0 errors), all 341 tests pass. Runtime deserialization bug fixed — `PropertyNameCaseInsensitive = true` added to `JsonSerializerOptions` in `ChunkStoreEntityTypeConfiguration` to handle existing PascalCase JSON data in the database.
 
 **Completed 2026-04-14:** BINST-93 epic (release upgrade pipeline rewrite). All backend sub-tasks complete:
@@ -29,7 +61,7 @@ Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC 
 ## What works (verified from code)
 
 - **Ingestion pipeline** — `FastCdcChunker` (FastCDC, BLAKE3), plain-file and ZIP input formats, gRPC `UploadChunks` and `UploadFileDefinitions` streams, REST release registration.
-- **Pack-file storage** — `LocalFolderChunkStoreStorage` / `ObjectStore` / `ObjectStoreManager` with `.pack` + `.idx` files; 4 GiB rotation. `IndexedPackFileHandler` with memory-mapped index, lock-free reads, `AsyncLruHandlerCache` (capacity 256).
+- **Pack-file storage** — `LocalFolderChunkStoreStorage` / `ObjectStore` / `ObjectStoreManager` with `.pack` + segment index files; 4 GiB rotation. `IndexedPackFileHandler` with three-tier LSM-tree index (log dict → bloom+binary-search on MMF segments), `AsyncLruHandlerCache` (capacity 256). Lightweight stats path reads only segment headers (8 bytes each) + log hash replay without opening a handler.
 - **Release format** — `ReleasePackageSerializer` producing `.rdef` binary files; V4 format as of 2026-04-13 with sort-by-path optimization. V4 is 30.4% smaller than V2 on the real 11,049-artifact sample (161,049 B vs 231,289 B). V1/V2/V3 deserialization retained for backward compatibility.
 - **GraphQL API** — HotChocolate 15 with `QueryType`, `MutationType`, filtering, sorting, projections, authorization.
 - **REST endpoints** — `ChunkStoreEndpoints`, `IdentityEndpoints`, `IngestSessionEndpoints`, `InstanceEndpoints`, `ReleaseEndpoints`, `RepositoryEndpoints`, `ServiceAccountEndpoints`, `SetupEndpoints`, `StorageClassEndpoints`, `TenantEndpoints`.

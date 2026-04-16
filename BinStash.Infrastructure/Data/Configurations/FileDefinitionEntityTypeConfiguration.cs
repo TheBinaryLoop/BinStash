@@ -39,5 +39,16 @@ public class FileDefinitionEntityTypeConfiguration : IEntityTypeConfiguration<Fi
             .IsRequired();
         builder.Property(fd => fd.ChunkStoreId).IsRequired();
         builder.Property(fd => fd.Length).IsRequired();
+
+        builder.Property(fd => fd.StorageKey)
+            .HasConversion(
+                v => v.GetBytes(),
+                v => new Hash32(v))
+            .HasColumnType("bytea")
+            .IsRequired();
+
+        builder.HasIndex(fd => new { fd.ChunkStoreId, fd.StorageKey })
+            .IsUnique()
+            .HasFilter("\"StorageKey\" != '\\x'::bytea");
     }
 }

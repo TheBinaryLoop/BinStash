@@ -238,7 +238,7 @@ public static class Program
         builder.Services.AddHostedService<SetupBootstrapper>();
         //builder.Services.AddHostedService<SingleTenantBootstrapper>();
         builder.Services.AddHostedService<ChunkStoreProbeService>();
-        builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
+        //builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
         
         // Release upgrade pipeline: Channel queue → BackgroundService → ReleaseUpgradeService
         builder.Services.AddSingleton(Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
@@ -248,6 +248,11 @@ public static class Program
         }));
         builder.Services.AddScoped<IReleaseUpgradeService, ReleaseUpgradeService>();
         builder.Services.AddHostedService<ReleaseUpgradeBackgroundService>();
+
+        // Chunk-store rebuild pipeline: RebuildJobChannel → ChunkStoreRebuildBackgroundService → ChunkStoreRebuildService
+        builder.Services.AddSingleton<RebuildJobChannel>();
+        builder.Services.AddScoped<IChunkStoreRebuildService, ChunkStoreRebuildService>();
+        builder.Services.AddHostedService<ChunkStoreRebuildBackgroundService>();
 
         builder.Services.AddGraphQLServer()
             .ModifyCostOptions(options =>

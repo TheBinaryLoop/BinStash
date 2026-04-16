@@ -19,6 +19,7 @@ using BinStash.Core.Auth.Repository;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization.Utils;
+using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Grpc;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Auth;
@@ -130,13 +131,18 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
                 if (existingSet.Contains(fileHash))
                     continue;
 
-                var compressedChunkList = ChecksumCompressor.TransposeCompress(
-                    chunkList.Select(x => x.GetBytes()).ToList());
+                var record = new FileDefinitionRecord
+                {
+                    FileHash    = fileHash,
+                    FileLength  = fileLength,
+                    ChunkHashes = chunkList
+                };
+
+                var blob = record.Serialize();
 
                 var storeResult = await _chunkStoreService.StoreFileDefinitionAsync(
                     store,
-                    fileHash,
-                    compressedChunkList);
+                    blob);
 
                 if (!storeResult.Success)
                     throw new RpcException(new Status(StatusCode.Internal, $"Failed to store file definition ({fileHash.ToHexString()}) in chunk store."));
@@ -146,9 +152,10 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
 
                 fileDefinitionsToAdd.Add(new FileDefinition
                 {
-                    Checksum = fileHash,
+                    Checksum     = fileHash,
                     ChunkStoreId = store.Id,
-                    Length = fileLength
+                    Length       = fileLength,
+                    StorageKey   = storeResult.StorageKey
                 });
             }
         }

@@ -24,6 +24,7 @@ internal sealed class StreamingFileIngest : IAsyncDisposable
     private Blake3.Hasher _fileHasher;
     private readonly IStreamingChunker _chunker;
     private long _length;
+    private bool _hasherDisposed;
 
     public StreamingFileIngest(string stagingPath, IStreamingChunker chunker)
     {
@@ -46,6 +47,12 @@ internal sealed class StreamingFileIngest : IAsyncDisposable
         await _output.DisposeAsync();
 
         var fileHash = new Hash32(_fileHasher.Finalize().AsSpan());
+        if (!_hasherDisposed)
+        {
+            _fileHasher.Dispose();
+            _hasherDisposed = true;
+        }
+
         var chunkBoundaries = _chunker.Complete();
 
         var chunkMap = chunkBoundaries
@@ -64,6 +71,11 @@ internal sealed class StreamingFileIngest : IAsyncDisposable
     {
         await _output.DisposeAsync();
         _chunker.Dispose();
+        if (!_hasherDisposed)
+        {
+            _fileHasher.Dispose();
+            _hasherDisposed = true;
+        }
     }
 }
 

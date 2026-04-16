@@ -23,9 +23,12 @@ using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
 using BinStash.Core.Storage;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Configuration;
 using BinStash.Server.Extensions;
+using BinStash.Server.HostedServices;
 using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Path = System.IO.Path;
 
 namespace BinStash.Server.Endpoints;
@@ -68,9 +71,10 @@ public static class ChunkStoreEndpoints
         
         group.MapPost("/{id:guid}/rebuild", RebuildChunkStoreAsync)!
             .WithDescription(
-                "Rebuilds the chunk store by scanning the underlying storage and rewriting the pack and index files.")
-            .WithSummary("Rebuild Chunk Store")
-            .Produces(StatusCodes.Status200OK);
+                "Starts an asynchronous background job to rebuild the chunk store index by scanning all pack-file buckets. Returns 202 Accepted with the job ID. Subscribe via GraphQL subscription 'backgroundJobProgress(jobId)' for real-time progress, or poll GET /api/background-jobs/{jobId}.")
+            .WithSummary("Start Chunk Store Rebuild Job")
+            .Produces<RebuildJobDto>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status409Conflict);
         group.MapPost("/{id:guid}/upgrade", StartUpgradeReleasesAsync)!
             .WithDescription("Starts an asynchronous background job to upgrade all releases in the chunk store to the latest serializer version. Returns 202 Accepted with the job ID. Subscribe via GraphQL subscription 'backgroundJobProgress(jobId)' for real-time progress, or poll GET /api/upgrade-jobs/{jobId}.")
             .WithSummary("Start Release Upgrade Job")
@@ -93,7 +97,7 @@ public static class ChunkStoreEndpoints
         return Results.Ok(types);
     }
     
-    internal static async Task<IResult> CreateChunkStoreAsync(CreateChunkStoreDto dto, BinStashDbContext db)
+    internal static async Task<IResult> CreateChunkStoreAsync(CreateChunkStoreDto dto, BinStashDbContext db, IOptions<StorageSettings> storageOptions)
     {
         if (string.IsNullOrWhiteSpace(dto.Name))
             return Results.BadRequest("Chunk store name is required.");
@@ -114,11 +118,65 @@ public static class ChunkStoreEndpoints
             {
                 if (string.IsNullOrWhiteSpace(dto.LocalPath))
                     return Results.BadRequest("Local path is required for local chunk store type.");
-                if (!Directory.Exists(dto.LocalPath))
+
+                var localPath = dto.LocalPath.Trim();
+
+                // Reject UNC paths (\\server\share or //server/share)
+                if (localPath.StartsWith(@"\\", StringComparison.Ordinal) ||
+                    localPath.StartsWith("//", StringComparison.Ordinal))
+                    return Results.BadRequest("UNC paths are not permitted for local chunk store paths.");
+
+                // Require an absolute path
+                if (!Path.IsPathRooted(localPath))
+                    return Results.BadRequest("LocalPath must be an absolute path.");
+
+                // Canonicalise to eliminate traversal sequences (e.g. /../)
+                string canonicalPath;
+                try
+                {
+                    canonicalPath = Path.GetFullPath(localPath);
+                }
+                catch (Exception e)
+                {
+                    return Results.BadRequest($"LocalPath is not a valid filesystem path: {e.Message}");
+                }
+
+                // Enforce allowed-root constraint when configured
+                var allowedRoot = storageOptions.Value.AllowedRootPath;
+                if (!string.IsNullOrWhiteSpace(allowedRoot))
+                {
+                    // Canonicalise the allowed root as well so comparisons are reliable
+                    string canonicalRoot;
+                    try
+                    {
+                        canonicalRoot = Path.GetFullPath(allowedRoot);
+                    }
+                    catch (Exception e)
+                    {
+                        return Results.Problem(
+                            $"Server configuration error: Storage:AllowedRootPath is invalid: {e.Message}",
+                            statusCode: StatusCodes.Status500InternalServerError);
+                    }
+
+                    // Ensure the path is strictly inside the allowed root.
+                    // Append separator to both sides to avoid a partial-prefix
+                    // match (e.g. /data/stores vs /data/stores-extra).
+                    var rootWithSep = canonicalRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                                      + Path.DirectorySeparatorChar;
+                    var pathWithSep = canonicalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                                      + Path.DirectorySeparatorChar;
+
+                    if (!pathWithSep.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
+                        return Results.BadRequest(
+                            $"LocalPath must reside within the configured allowed root '{canonicalRoot}'. " +
+                            "Paths outside this root are not permitted.");
+                }
+
+                if (!Directory.Exists(canonicalPath))
                 {
                     try
                     {
-                        Directory.CreateDirectory(dto.LocalPath);
+                        Directory.CreateDirectory(canonicalPath);
                     }
                     catch (Exception e)
                     {
@@ -126,7 +184,7 @@ public static class ChunkStoreEndpoints
                     }
                 }
 
-                backendSettings = new LocalFolderBackendSettings { Path = dto.LocalPath };
+                backendSettings = new LocalFolderBackendSettings { Path = canonicalPath };
                 break;
             }
             default:
@@ -190,7 +248,7 @@ public static class ChunkStoreEndpoints
                 MaxChunkSize = store.ChunkerOptions.MaxChunkSize,
             },
             BackendSettings = MapBackendSettingsToDto(store),
-            Stats = new Dictionary<string, object>()
+            Stats = new Dictionary<string, JsonElement>()
         });
     }
 
@@ -206,24 +264,42 @@ public static class ChunkStoreEndpoints
         });
     }
     
-    private static async Task<IResult> RebuildChunkStoreAsync(Guid id, BinStashDbContext db, IChunkStoreService chunkStoreService)
+    private static async Task<IResult> RebuildChunkStoreAsync(Guid id, BinStashDbContext db, RebuildJobChannel rebuildJobChannel)
     {
         var store = await db.ChunkStores.FindAsync(id);
         if (store == null)
             return Results.NotFound();
 
-        var result = await chunkStoreService.RebuildStorageAsync(store);
-        if (!result)
-            return Results.Problem("Failed to rebuild chunk store.");
-        
-        return Results.Ok();
-        
+        // Prevent duplicate running/pending jobs for the same chunk store
+        var hasActiveJob = db.BackgroundJobs.Where(j =>
+            j.JobType == BackgroundJobTypes.ChunkStoreRebuild
+            && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running)
+            && j.JobData != null).AsEnumerable().Any(j => j.JobData!.Contains(id.ToString()));
+
+        if (hasActiveJob)
+            return Results.Conflict("A rebuild job is already running or pending for this chunk store.");
+
+        var jobData = new ChunkStoreRebuildJobData { ChunkStoreId = id };
+
+        var job = new BackgroundJob
+        {
+            Id = Guid.NewGuid(),
+            JobType = BackgroundJobTypes.ChunkStoreRebuild,
+            Status = BackgroundJobStatus.Pending,
+            JobData = JsonSerializer.Serialize(jobData),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        db.BackgroundJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        // Enqueue the job for the background service
+        await rebuildJobChannel.Channel.Writer.WriteAsync(job.Id);
+
+        return Results.Accepted($"/api/background-jobs/{job.Id}", RebuildJobEndpoints.MapToDto(job));
     }
     
-    private static async Task<IResult> StartUpgradeReleasesAsync(
-        Guid id,
-        BinStashDbContext db,
-        Channel<Guid> jobChannel)
+    private static async Task<IResult> StartUpgradeReleasesAsync(Guid id, BinStashDbContext db, Channel<Guid> jobChannel)
     {
         var store = await db.ChunkStores.FindAsync(id);
         if (store == null)
@@ -233,10 +309,10 @@ public static class ChunkStoreEndpoints
             return Results.BadRequest("Release upgrade is currently only supported for local chunk stores.");
 
         // Prevent duplicate running/pending jobs for the same chunk store
-        var hasActiveJob = await db.BackgroundJobs.AnyAsync(j =>
+        var hasActiveJob = db.BackgroundJobs.Where(j =>
             j.JobType == BackgroundJobTypes.ReleaseUpgrade
             && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running)
-            && j.JobData != null && j.JobData.Contains(id.ToString()));
+            && j.JobData != null).AsEnumerable().Any(j => j.JobData!.Contains(id.ToString()));
 
         if (hasActiveJob)
             return Results.Conflict("An upgrade job is already running or pending for this chunk store.");

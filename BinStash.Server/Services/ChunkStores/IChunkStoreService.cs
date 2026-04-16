@@ -24,12 +24,27 @@ public interface IChunkStoreService
 {
     Task<(bool Success, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData);
     Task<byte[]?> RetrieveChunkAsync(ChunkStore store, string chunkId);
-    Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, Hash32 fileHash, ReadOnlyMemory<byte> data);
-    Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string fileHash);
+    /// <summary>
+    /// Stores a serialised <c>FileDefinitionRecord</c> blob in the pack store.
+    /// The index key is <c>BLAKE3(blob)</c> (self-keyed).
+    /// </summary>
+    Task<(bool Success, Hash32 StorageKey, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob);
+
+    /// <summary>
+    /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its storage key
+    /// (as persisted in <c>FileDefinition.StorageKey</c>).
+    /// </summary>
+    Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string storageKeyHex);
     Task<bool> StoreReleasePackageAsync(ChunkStore store, ReadOnlyMemory<byte> packageData);
     Task<byte[]?> RetrieveReleasePackageAsync(ChunkStore store, string packageId);
     Task<bool> DeleteReleasePackageAsync(ChunkStore store, string packageId);
     Task<bool> RebuildStorageAsync(ChunkStore store);
+
+    /// <summary>
+    /// Rebuilds the storage index for <paramref name="store"/>, reporting incremental bucket progress.
+    /// </summary>
+    Task<bool> RebuildStorageWithProgressAsync(ChunkStore store, IProgress<bool> progress, CancellationToken cancellationToken);
+
     Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(ChunkStore store, IReadOnlyCollection<string> fileHashes);
     Task<Dictionary<string, byte[]>> RetrieveReleasePackagesAsync(ChunkStore store, IReadOnlyCollection<string> packageIds);
     Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync(ChunkStore store);
