@@ -34,5 +34,6 @@ public static class EndpointRouteBuilderExtensions
         app.MapStorageClassEndpoints();
         app.MapTenantEndpoints();
         app.MapUpgradeJobEndpoints();
+        app.MapRebuildJobEndpoints();
     }
 }

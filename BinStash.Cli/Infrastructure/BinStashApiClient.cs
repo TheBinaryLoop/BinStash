@@ -15,6 +15,7 @@
 
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Web;
 using BinStash.Cli.Auth;
 using BinStash.Contracts.ChunkStore;
@@ -78,21 +79,21 @@ public class BinStashApiClient
     #region Tenant Info
 
     public async Task<List<TenantInfoDto>?> GetTenantsAsync()
-        => await GetAsync<List<TenantInfoDto>>("tenants");
+        => await GetAsync("tenants", SourceGenerationContext.Default.ListTenantInfoDto);
 
     #endregion
     
     #region ChunkStore
     
     public async Task<List<ChunkStoreSummaryDto>?> GetChunkStoresAsync()
-        => await GetAsync<List<ChunkStoreSummaryDto>>("chunkstores");
+        => await GetAsync("chunkstores", SourceGenerationContext.Default.ListChunkStoreSummaryDto);
     
     public async Task<ChunkStoreDetailDto?> GetChunkStoreAsync(Guid id)
-        => await GetAsync<ChunkStoreDetailDto>($"chunkstores/{id}");
+        => await GetAsync($"chunkstores/{id}", SourceGenerationContext.Default.ChunkStoreDetailDto);
     
     public async Task<ChunkStoreDetailDto?> CreateChunkStoreAsync(CreateChunkStoreDto dto)
     {
-        var response = await _httpClient.PostAsJsonAsync("chunkstores", dto);
+        var response = await _httpClient.PostAsJsonAsync("chunkstores", dto, SourceGenerationContext.Default.CreateChunkStoreDto);
         response.EnsureSuccessStatusCode();
         
         if (response.StatusCode != HttpStatusCode.Created) return null;
@@ -108,7 +109,7 @@ public class BinStashApiClient
         // Make follow-up GET request // TODO: Maybe use the existing GetChunkStoreAsync method instead?
         response = await _httpClient.GetAsync(locationHeader);
         response.EnsureSuccessStatusCode();
-        var content = await response.Content.ReadFromJsonAsync<ChunkStoreDetailDto>();
+        var content = await response.Content.ReadFromJsonAsync(SourceGenerationContext.Default.ChunkStoreDetailDto);
         return content;
     }
     
@@ -132,14 +133,14 @@ public class BinStashApiClient
     #region Repository
     
     public async Task<List<RepositorySummaryDto>?> GetRepositoriesAsync()
-        => await GetAsync<List<RepositorySummaryDto>>("repositories");
+        => await GetAsync("repositories", SourceGenerationContext.Default.ListRepositorySummaryDto);
     
     public async Task<RepositorySummaryDto?> GetRepositoryAsync(Guid repositoryId)
-        => await GetAsync<RepositorySummaryDto>($"repositories/{repositoryId}");
+        => await GetAsync($"repositories/{repositoryId}", SourceGenerationContext.Default.RepositorySummaryDto);
     
     public async Task<RepositorySummaryDto?> CreateRepositoryAsync(CreateRepositoryDto createDto)
     {
-        var response = await _httpClient.PostAsJsonAsync("repositories", createDto);
+        var response = await _httpClient.PostAsJsonAsync("repositories", createDto, SourceGenerationContext.Default.CreateRepositoryDto);
         response.EnsureSuccessStatusCode();
         
         if (response.StatusCode != HttpStatusCode.Created)
@@ -158,7 +159,7 @@ public class BinStashApiClient
         }
         
         // Make the follow-up GET request
-        return await GetAsync<RepositorySummaryDto>(locationHeader);
+        return await GetAsync(locationHeader, SourceGenerationContext.Default.RepositorySummaryDto);
     }
     
     #endregion
@@ -166,10 +167,10 @@ public class BinStashApiClient
     #region Release
     
     public async Task<List<ReleaseSummaryDto>?> GetReleasesAsync()
-        => await GetAsync<List<ReleaseSummaryDto>>("releases");
+        => await GetAsync("releases", SourceGenerationContext.Default.ListReleaseSummaryDto);
     
     public async Task<List<ReleaseSummaryDto>?> GetReleasesForRepoAsync(Guid repositoryId)
-        => await GetAsync<List<ReleaseSummaryDto>>($"repositories/{repositoryId}/releases");
+        => await GetAsync($"repositories/{repositoryId}/releases", SourceGenerationContext.Default.ListReleaseSummaryDto);
     
     public async Task CreateReleaseAsync(Guid ingestSessionId, string repositoryId, ReleasePackage release, ReleasePackageSerializerOptions? options = null)
     {
@@ -235,7 +236,11 @@ public class BinStashApiClient
     
     public async Task<Guid> CreateIngestSessionAsync(Guid repoId, string intendedRelease)
     { 
-        var response = await PostAsJsonAsync<CreateIngestSessionResponse>($"repositories/{repoId}/ingest/sessions", new CreateIngestSessionRequest($"BinStash.Cli/{Environment.Version}", intendedRelease));
+        var response = await PostAsJsonAsync(
+            $"repositories/{repoId}/ingest/sessions",
+            new CreateIngestSessionRequest($"BinStash.Cli/{Environment.Version}", intendedRelease),
+            SourceGenerationContext.Default.CreateIngestSessionRequest,
+            SourceGenerationContext.Default.CreateIngestSessionResponse);
         if (response == null)
             throw new InvalidOperationException("Failed to create ingest session: No response from server.");
         if (response.SessionId == Guid.Empty)
@@ -266,7 +271,7 @@ public class BinStashApiClient
 
             var request = new HttpRequestMessage(HttpMethod.Post, $"repositories/{repoId}/ingest/sessions/{ingestSessionId}/chunks/batch");
             request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
-            request.Content = JsonContent.Create(uploadDtos);
+            request.Content = JsonContent.Create(uploadDtos, SourceGenerationContext.Default.ListChunkUploadDto);
             
             var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
@@ -329,19 +334,19 @@ public class BinStashApiClient
 
     #region Helpers
 
-    private async Task<T?> GetAsync<T>(string path)
+    private async Task<T?> GetAsync<T>(string path, JsonTypeInfo<T> typeInfo)
     {
         var response = await _httpClient.GetAsync(path);
         response.EnsureSuccessStatusCode();
-        var content = await response.Content.ReadFromJsonAsync<T>();
+        var content = await response.Content.ReadFromJsonAsync(typeInfo);
         return content;
     }
 
-    private async Task<T?> PostAsJsonAsync<T>(string path, object? body)
+    private async Task<TResponse?> PostAsJsonAsync<TRequest, TResponse>(string path, TRequest body, JsonTypeInfo<TRequest> requestTypeInfo, JsonTypeInfo<TResponse> responseTypeInfo)
     {
-        var response = await _httpClient.PostAsJsonAsync(path, body);
+        var response = await _httpClient.PostAsJsonAsync(path, body, requestTypeInfo);
         response.EnsureSuccessStatusCode();
-        var content = await response.Content.ReadFromJsonAsync<T>();
+        var content = await response.Content.ReadFromJsonAsync(responseTypeInfo);
         return content;
     }
     
@@ -352,6 +357,48 @@ public class BinStashApiClient
         response.EnsureSuccessStatusCode();
         var respStream = await response.Content.ReadAsStreamAsync();
         return await ChecksumCompressor.TransposeDecompressHashesAsync(respStream);
+    }
+
+    #endregion
+
+    #region File Definition Storage Keys
+
+    /// <summary>
+    /// Fetches the <c>StorageKey</c> for each content hash that is already known to the
+    /// server (i.e., was previously uploaded to the chunk store for this repository).
+    /// Content hashes that the server does not recognise are silently omitted from the result.
+    /// </summary>
+    public async Task<Dictionary<Hash32, Hash32>> GetFileDefinitionStorageKeysAsync(
+        Guid repositoryId,
+        Guid ingestSessionId,
+        IReadOnlyList<Hash32> contentHashes,
+        CancellationToken cancellationToken = default)
+    {
+        if (contentHashes.Count == 0)
+            return new Dictionary<Hash32, Hash32>();
+
+        var compressedBody = ChecksumCompressor.TransposeCompress(
+            contentHashes.Select(h => h.GetBytes()).ToList());
+
+        var response = await _httpClient.PostAsync(
+            $"repositories/{repositoryId}/ingest/sessions/{ingestSessionId}/files/storage-keys",
+            new ByteArrayContent(compressedBody),
+            cancellationToken);
+
+        response.EnsureSuccessStatusCode();
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+
+        // Response: N × 64 bytes (32-byte ContentHash || 32-byte StorageKey)
+        var result = new Dictionary<Hash32, Hash32>(bytes.Length / 64);
+        for (var i = 0; i + 64 <= bytes.Length; i += 64)
+        {
+            var contentHash = new Hash32(bytes.AsSpan(i, 32));
+            var storageKey  = new Hash32(bytes.AsSpan(i + 32, 32));
+            result[contentHash] = storageKey;
+        }
+
+        return result;
     }
 
     #endregion

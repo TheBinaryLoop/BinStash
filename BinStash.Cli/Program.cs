@@ -13,6 +13,8 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Cli.Commands;
+using BinStash.Cli.Commands.Release;
 using BinStash.Cli.Services.Releases;
 using BinStash.Core.Ingestion.Abstractions;
 using BinStash.Core.Ingestion.Execution;
@@ -28,7 +30,7 @@ public static class Program
     public static async Task<int> Main() =>
         await new CommandLineApplicationBuilder()
             .AddCommandsFromThisAssembly()
-            .UseTypeInstantiator(commands =>
+            .UseTypeInstantiator(_ =>
             {
                 var services = new ServiceCollection();
                 
@@ -57,9 +59,31 @@ public static class Program
                 services.AddSingleton<ServerUploadPlanner>();
                 services.AddSingleton<ReleaseAddOrchestrator>();
                 
-                // Register commands
-                foreach (var command in commands)
-                    services.AddTransient(command.Type);
+                // Register commands explicitly (generic overloads are AOT-safe; avoids IL2072 from AddTransient(Type))
+                services.AddTransient<AuthRootCommand>();
+                services.AddTransient<AuthLoginCommand>();
+                services.AddTransient<AuthLogoutCommand>();
+                services.AddTransient<AuthLogoutAllCommand>();
+                services.AddTransient<AuthListCommand>();
+                services.AddTransient<ChunkStoreRootCommand>();
+                services.AddTransient<ChunkStoreListCommand>();
+                services.AddTransient<ChunkStoreAddCommand>();
+                services.AddTransient<ChunkStoreDeleteCommand>();
+                services.AddTransient<ChunkStoreShowCommand>();
+                services.AddTransient<ReleasesRootCommand>();
+                services.AddTransient<ReleasesListCommand>();
+                services.AddTransient<ReleaseAddCommand>();
+                services.AddTransient<ReleaseDeleteCommand>();
+                services.AddTransient<ReleaseDownloadCommand>();
+                services.AddTransient<ReleaseInstallCommand>();
+                services.AddTransient<RepoRootCommand>();
+                services.AddTransient<RepoListCommand>();
+                services.AddTransient<RepoAddCommand>();
+                services.AddTransient<AnalyzeBaseCommand>();
+                services.AddTransient<AnalyzeChunkerCommand>();
+                services.AddTransient<TestBaseCommand>();
+                services.AddTransient<TestSerializationCommand>();
+                services.AddTransient<SvnImportTagsCommand>();
 
                 return services.BuildServiceProvider();
             })

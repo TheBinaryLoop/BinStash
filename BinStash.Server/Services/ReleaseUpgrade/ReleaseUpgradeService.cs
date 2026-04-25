@@ -31,7 +31,7 @@ namespace BinStash.Server.Services.ReleaseUpgrade;
 /// Algorithm per release:
 ///   1. Read old .rdef from storage (by current checksum).
 ///   2. Deserialize with backward-compatible deserializer.
-///   3. Re-serialize to latest version (V4).
+///   3. Re-serialize to latest version (V5).
 ///   4. Compute BLAKE3 hash of the new bytes.
 ///   5. Write new .rdef to storage (content-addressed, so a new hash = new file).
 ///   6. Update DB row (SerializerVersion, ReleaseDefinitionChecksum).
@@ -190,9 +190,14 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
                     var package = await ReleasePackageSerializer.DeserializeAsync(oldData, cancellationToken);
 
                     // Step 2b: Populate null Length fields from FileDefinition table.
-                    // V1/V2 formats did not store file lengths; the V4 serializer requires them.
+                    // V1/V2 formats did not store file lengths; the V5 serializer requires them.
                     // Look up missing lengths via ContentHash → FileDefinition.Length.
                     await PopulateMissingLengthsAsync(db, package, store.Id, cancellationToken);
+
+                    // Step 2c: Populate StorageKey fields from FileDefinition table.
+                    // V1–V4 formats stored ContentHash; the V5 serializer requires StorageKey.
+                    // Look up StorageKey via ContentHash → FileDefinition.StorageKey.
+                    await PopulateStorageKeysAsync(db, package, store.Id, cancellationToken);
 
                     // Step 3: Re-serialize to latest version
                     var newData = await ReleasePackageSerializer.SerializeAsync(package, cancellationToken: cancellationToken);
@@ -354,6 +359,72 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
                     }
                     break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Populates null <see cref="OpaqueBlobBacking.StorageKey"/> and <see cref="ContainerMemberBinding.StorageKey"/>
+    /// fields by looking up the storage key from the <see cref="FileDefinition"/> table.
+    /// V1–V4 release formats stored <c>ContentHash</c>; the V5 serializer requires <c>StorageKey</c>.
+    /// The <see cref="FileDefinition.Checksum"/> (BLAKE3 whole-file hash) matches
+    /// <see cref="OpaqueBlobBacking.ContentHash"/> and <see cref="ContainerMemberBinding.ContentHash"/>.
+    /// </summary>
+    private static async Task PopulateStorageKeysAsync(BinStashDbContext db, ReleasePackage package, Guid chunkStoreId, CancellationToken cancellationToken)
+    {
+        // Collect content hashes that need storage key lookup
+        var hashesNeedingStorageKey = new HashSet<Hash32>();
+
+        foreach (var artifact in package.OutputArtifacts ?? [])
+        {
+            switch (artifact.Backing)
+            {
+                case OpaqueBlobBacking { StorageKey: null, ContentHash: not null } opaque:
+                    hashesNeedingStorageKey.Add(opaque.ContentHash.Value);
+                    break;
+
+                case ReconstructedContainerBacking reconstructed:
+                    foreach (var member in reconstructed.Members)
+                    {
+                        if (member.StorageKey == null && member.ContentHash != null)
+                            hashesNeedingStorageKey.Add(member.ContentHash.Value);
+                    }
+                    break;
+            }
+        }
+
+        if (hashesNeedingStorageKey.Count == 0)
+            return;
+
+        // Batch-query FileDefinition table for the storage keys
+        var storageKeys = await db.FileDefinitions
+            .AsNoTracking()
+            .Where(fd => fd.ChunkStoreId == chunkStoreId && hashesNeedingStorageKey.Contains(fd.Checksum))
+            .ToDictionaryAsync(fd => fd.Checksum, fd => fd.StorageKey, cancellationToken);
+
+        // Apply the looked-up storage keys back to the deserialized package
+        foreach (var artifact in package.OutputArtifacts ?? [])
+        {
+            switch (artifact.Backing)
+            {
+                case OpaqueBlobBacking { StorageKey: null, ContentHash: not null } opaque:
+                    if (storageKeys.TryGetValue(opaque.ContentHash.Value, out var opaqueKey))
+                    {
+                        opaque.StorageKey = opaqueKey;
+                        opaque.ContentHash = null;
+                    }
+                    break;
+
+                case ReconstructedContainerBacking reconstructed:
+                    foreach (var member in reconstructed.Members)
+                    {
+                        if (member.StorageKey == null && member.ContentHash != null &&
+                            storageKeys.TryGetValue(member.ContentHash.Value, out var memberKey))
+                        {
+                            member.StorageKey = memberKey;
+                            member.ContentHash = null;
+                        }
+                    }
+                    break;            }
         }
     }
 

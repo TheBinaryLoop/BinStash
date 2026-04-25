@@ -14,20 +14,20 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace BinStash.Cli.Auth;
 
 public class AuthService(HttpClient http)
 {
-    private record TokenResponse(string AccessToken, string RefreshToken, long ExpiresIn);
-
     public async Task<TokenInfo> LoginAsync(string email, string password)
     {
         var now = DateTimeOffset.UtcNow;
-        var response = await http.PostAsJsonAsync("auth/login", new { email, password });
+        var response = await http.PostAsJsonAsync("auth/login", new LoginRequest(email, password), SourceGenerationContext.Default.LoginRequest);
         response.EnsureSuccessStatusCode();
 
-        var token = await response.Content.ReadFromJsonAsync<TokenResponse>();
+        var tokenResponse = await response.Content.ReadAsStringAsync();
+        var token = JsonSerializer.Deserialize(tokenResponse, SourceGenerationContext.Default.TokenResponse);
         var tokenInfo = new TokenInfo
         {
             AccessToken = token!.AccessToken,
@@ -62,10 +62,11 @@ public class AuthService(HttpClient http)
     {
         var now = DateTimeOffset.UtcNow;
 
-        var response = await http.PostAsJsonAsync("auth/refresh", new { refreshToken });
+        var response = await http.PostAsJsonAsync("auth/refresh", new RefreshRequest(refreshToken), SourceGenerationContext.Default.RefreshRequest);
         response.EnsureSuccessStatusCode();
 
-        var token = await response.Content.ReadFromJsonAsync<TokenResponse>();
+        var tokenResponse = await response.Content.ReadAsStringAsync();
+        var token = JsonSerializer.Deserialize(tokenResponse, SourceGenerationContext.Default.TokenResponse);
         return new TokenInfo
         {
             AccessToken = token!.AccessToken,
@@ -74,3 +75,7 @@ public class AuthService(HttpClient http)
         };
     }
 }
+
+internal record TokenResponse(string AccessToken, string RefreshToken, long ExpiresIn);
+internal record LoginRequest(string Email, string Password);
+internal record RefreshRequest(string RefreshToken);

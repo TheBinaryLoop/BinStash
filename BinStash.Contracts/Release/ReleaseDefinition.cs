@@ -72,6 +72,13 @@ public class ReleasePackage
     public List<string> StringTable { get; set; } = [];
     public List<OutputArtifact> OutputArtifacts { get; set; } = [];
     public ReleaseStats Stats { get; set; } = new();
+
+    /// <summary>
+    /// The wire format version this package was deserialized from (1–5).
+    /// Set by <c>ReleasePackageSerializer.DeserializeAsync</c>; 0 if not yet deserialized.
+    /// Used by server endpoints to select the V5 (StorageKey) or V1–V4 (ContentHash) code path.
+    /// </summary>
+    public int PackageFormatVersion { get; set; }
 }
 
 // Only used for file-rebuilding, not part of the actual release data

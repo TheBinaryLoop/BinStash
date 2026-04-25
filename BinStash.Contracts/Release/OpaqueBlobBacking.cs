@@ -19,6 +19,17 @@ namespace BinStash.Contracts.Release;
 
 public sealed class OpaqueBlobBacking : ArtifactBacking
 {
+    /// <summary>
+    /// The file-content hash (<c>BLAKE3(file bytes)</c>). Populated for V1–V4 packages.
+    /// Null for V5 packages (use <see cref="StorageKey"/> instead).
+    /// </summary>
     public Hash32? ContentHash { get; set; }
+
+    /// <summary>
+    /// The FileDef pack-store key (<c>BLAKE3(FileDefinitionRecord blob)</c>).
+    /// Populated for V5 packages. Null for V1–V4 packages (server falls back to DB lookup).
+    /// </summary>
+    public Hash32? StorageKey { get; set; }
+
     public long? Length { get; set; }
 }

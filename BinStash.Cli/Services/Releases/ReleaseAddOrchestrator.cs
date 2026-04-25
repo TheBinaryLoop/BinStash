@@ -22,6 +22,7 @@ using BinStash.Core.Entities;
 using BinStash.Core.Ingestion.Abstractions;
 using BinStash.Core.Ingestion.Execution;
 using BinStash.Core.Ingestion.Models;
+using BinStash.Core.Storage;
 using Blake3;
 using Spectre.Console;
 
@@ -159,6 +160,40 @@ public sealed class ReleaseAddOrchestrator
                     new HashSet<Hash32>(missingFileChecksums));
 
                 log?.Invoke($"Generated chunk maps for {chunkMapResult.FileChunkMaps.Count} stored contents");
+
+                // Compute StorageKey = BLAKE3(FileDefinitionRecord blob) for file definitions
+                // that we are uploading now (i.e., those in chunkMapResult.FileChunkMaps).
+                var storageKeyMap = new Dictionary<Hash32, Hash32>(chunkMapResult.FileChunkMaps.Count + (hashingResult.ContentHashes.Count - missingFileChecksums.Count));
+                foreach (var (contentHash, chunkMapEntries) in chunkMapResult.FileChunkMaps)
+                {
+                    storageKeyMap[contentHash] = FileDefinitionStorageKeyComputer.Compute(
+                        contentHash,
+                        hashingResult.ContentSizes[contentHash],
+                        chunkMapEntries.Select(cme => cme.Checksum).ToList());
+                }
+
+                // For file definitions already on the server we do not have chunk maps locally,
+                // so fetch their StorageKeys from the server.
+                var alreadyStoredHashes = hashingResult.ContentHashes.Keys
+                    .Except(new HashSet<Hash32>(missingFileChecksums))
+                    .ToList();
+
+                if (alreadyStoredHashes.Count > 0)
+                {
+                    ctx.Status("Fetching storage keys for already-stored file definitions...");
+                    var serverStorageKeys = await restClient.GetFileDefinitionStorageKeysAsync(
+                        repository.Id,
+                        ingestSessionId,
+                        alreadyStoredHashes,
+                        ct);
+
+                    foreach (var (contentHash, storageKey) in serverStorageKeys)
+                        storageKeyMap[contentHash] = storageKey;
+
+                    log?.Invoke($"Fetched {serverStorageKeys.Count} storage keys from server for already-stored file definitions");
+                }
+
+                bindContext.BindStorageKeys(storageKeyMap);
 
                 ctx.Status("Planning upload...");
                 var uploadPlan = await _serverUploadPlanner.CreateAsync(

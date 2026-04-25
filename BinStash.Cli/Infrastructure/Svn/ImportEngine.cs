@@ -14,7 +14,6 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Collections.Concurrent;
-using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using BinStash.Cli.Services.Releases;
@@ -26,7 +25,6 @@ using BinStash.Core.Chunking;
 using BinStash.Core.Ingestion.Abstractions;
 using BinStash.Core.Ingestion.Execution;
 using BinStash.Core.Ingestion.Models;
-using Blake3;
 using CliFx.Infrastructure;
 using Spectre.Console;
 
@@ -151,7 +149,8 @@ public sealed class SvnImportEngine
         });
 
         var componentsByName = new ConcurrentDictionary<string, Component>(StringComparer.OrdinalIgnoreCase);
-        var inputItems = new ConcurrentBag<InputItem>();
+        var inputItems = new List<InputItem>();
+        var inputItemsLock = new object();
 
         var cacheHits = 0;
         var cacheMisses = 0;
@@ -165,16 +164,19 @@ public sealed class SvnImportEngine
 
             var spoolRoot = Path.Combine(Directory.GetCurrentDirectory(), "svn-import-spool");
             var contentRoot = Path.Combine(spoolRoot, "content");
-            var aliasRoot = Path.Combine(spoolRoot, "aliases");
             var stagingRoot = Path.Combine(spoolRoot, "staging");
 
             Directory.CreateDirectory(contentRoot);
-            Directory.CreateDirectory(aliasRoot);
             Directory.CreateDirectory(stagingRoot);
 
+            // Virtual alias map: candidateKey → (canonical file path, file size) (in-memory only,
+            // no hard links on disk). On resume, cache hits are resolved directly to their canonical
+            // path via the SQLite file cache, so no persistent alias directory is required.
+            var virtualAliases = new ConcurrentDictionary<string, (string Path, long Size)>(StringComparer.OrdinalIgnoreCase);
             var canonicalLocks = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
-            var aliasLocks = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
 
+            try
+            {
             await Task.WhenAll(tagFiles.Select(async file =>
             {
                 await throttler.WaitAsync();
@@ -184,46 +186,32 @@ public sealed class SvnImportEngine
                     var releaseFileName = _componentMapper.ResolveReleaseFileName(file.RelativePath, componentName);
                     var relativePath = NormalizeReleasePath(componentName, releaseFileName);
 
-                    var candidateKeyHash = HashStringToHex(file.CandidateKey);
-                    var aliasFileName = $"{candidateKeyHash}.bin";
-                    var aliasPath = Path.Combine(aliasRoot, aliasFileName);
-
                     string? backingPath = null;
                     long fileSize = 0;
 
-                    var cached = await _state.TryGetCachedFileAsync(file.CandidateKey);
-                    if (cached != null)
+                    // Check the virtual alias map first (populated during this run), then fall back to
+                    // the SQLite file cache, then to a fresh SVN download.
+                    if (virtualAliases.TryGetValue(file.CandidateKey, out var virtualEntry) && File.Exists(virtualEntry.Path))
                     {
-                        var fileHash = Hash32.FromHexString(cached.FileHashHex);
-                        var canonicalPath = Path.Combine(contentRoot, $"{fileHash.ToHexString()}.bin");
-
-                        backingPath = File.Exists(aliasPath)
-                            ? aliasPath
-                            : File.Exists(canonicalPath)
-                                ? canonicalPath
-                                : null;
-
-                        if (backingPath != null)
+                        backingPath = virtualEntry.Path;
+                        fileSize = virtualEntry.Size;
+                        Interlocked.Increment(ref cacheHits);
+                    }
+                    else
+                    {
+                        var cached = await _state.TryGetCachedFileAsync(file.CandidateKey);
+                        if (cached != null)
                         {
-                            if (!File.Exists(aliasPath) && File.Exists(canonicalPath))
+                            var fileHash = Hash32.FromHexString(cached.FileHashHex);
+                            var canonicalPath = Path.Combine(contentRoot, $"{fileHash.ToHexString()}.bin");
+
+                            if (File.Exists(canonicalPath))
                             {
-                                var aliasLock = aliasLocks.GetOrAdd(aliasPath, _ => new SemaphoreSlim(1, 1));
-                                await aliasLock.WaitAsync();
-                                try
-                                {
-                                    if (!File.Exists(aliasPath) && File.Exists(canonicalPath))
-                                        EnsureHardLink(aliasPath, canonicalPath);
-                                }
-                                finally
-                                {
-                                    aliasLock.Release();
-                                }
-
-                                backingPath = aliasPath;
+                                backingPath = canonicalPath;
+                                fileSize = cached.FileSize;
+                                virtualAliases[file.CandidateKey] = (canonicalPath, cached.FileSize);
+                                Interlocked.Increment(ref cacheHits);
                             }
-
-                            fileSize = cached.FileSize;
-                            Interlocked.Increment(ref cacheHits);
                         }
                     }
 
@@ -283,24 +271,12 @@ public sealed class SvnImportEngine
                             if (File.Exists(stagingPath))
                                 TryDeleteFile(stagingPath);
 
-                            var aliasLock = aliasLocks.GetOrAdd(aliasPath, _ => new SemaphoreSlim(1, 1));
-                            await aliasLock.WaitAsync();
-                            try
-                            {
-                                if (!File.Exists(aliasPath))
-                                    EnsureHardLink(aliasPath, canonicalPath);
-                            }
-                            finally
-                            {
-                                aliasLock.Release();
-                            }
-
                             var cachedMap = ChunkMapCacheExtensions.ToCached(
                                 fileHash.ToHexString(),
                                 fileSize,
                                 RebindChunkMapEntries(ingestResult.ChunkMap, canonicalPath));
 
-                            var cachedJson = JsonSerializer.Serialize(cachedMap);
+                            var cachedJson = JsonSerializer.Serialize(cachedMap, SourceGenerationContext.Default.CachedChunkMap);
 
                             await _state.SaveCachedFileAsync(new CachedFileResult(
                                 file.CandidateKey,
@@ -308,7 +284,8 @@ public sealed class SvnImportEngine
                                 fileSize,
                                 cachedJson));
 
-                            backingPath = aliasPath;
+                            virtualAliases[file.CandidateKey] = (canonicalPath, fileSize);
+                            backingPath = canonicalPath;
                         }
                         catch (SvnPathNotFoundException ex)
                         {
@@ -326,13 +303,15 @@ public sealed class SvnImportEngine
                     {
                         var component = GetOrAddComponent(componentsByName, componentName);
 
-                        inputItems.Add(new InputItem(
+                        var item = new InputItem(
                             AbsolutePath: backingPath,
                             RelativePath: relativePath,
                             RelativePathWithinComponent: releaseFileName.Replace('\\', '/').TrimStart('/'),
                             Component: component,
                             Length: fileSize > 0 ? fileSize : new FileInfo(backingPath).Length,
-                            LastWriteTimeUtc: /*file.LastChangedAt ??*/ DateTimeOffset.UtcNow));
+                            LastWriteTimeUtc: /*file.LastChangedAt ??*/ DateTimeOffset.UtcNow);
+                        lock (inputItemsLock)
+                            inputItems.Add(item);
                     }
 
                     var done = Interlocked.Increment(ref completed);
@@ -343,15 +322,20 @@ public sealed class SvnImportEngine
                     throttler.Release();
                 }
             }));
+            }
+            finally
+            {
+                foreach (var sem in canonicalLocks.Values)
+                    sem.Dispose();
+            }
         });
 
         _progress.Info($"{tagName}: resolved {inputItems.Count} input files, cache hits={cacheHits}, misses={cacheMisses}");
 
         var componentMap = componentsByName.ToDictionary(x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase);
-        var inputList = inputItems.ToList();
 
         var ingestionResult = await _releaseIngestionEngine.IngestAsync(
-            inputList,
+            inputItems,
             componentMap,
             CancellationToken.None);
 
@@ -519,9 +503,6 @@ public sealed class SvnImportEngine
             : $"{componentName}/{normalized}";
     }
     
-    private static string HashStringToHex(string value)
-        => new Hash32(Hasher.Hash(Encoding.UTF8.GetBytes(value)).AsSpan()).ToHexString();
-
     private static List<ChunkMapEntry> RebindChunkMapEntries(
         List<ChunkBoundary> boundaries,
         string filePath)
@@ -537,25 +518,6 @@ public sealed class SvnImportEngine
             .ToList();
     }
     
-    static void EnsureHardLink(string linkPath, string existingFilePath)
-    {
-        if (File.Exists(linkPath))
-            return;
-
-        Directory.CreateDirectory(Path.GetDirectoryName(linkPath)!);
-
-        try
-        {
-            HardLinkHelper.CreateHardLink(linkPath, existingFilePath);
-        }
-        catch (IOException)
-        {
-            // Another worker may have created it concurrently.
-            if (!File.Exists(linkPath))
-                throw;
-        }
-    }
-
     private static void TryDeleteFile(string path)
     {
         try

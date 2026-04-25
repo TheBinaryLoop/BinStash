@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Buffers;
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -124,14 +125,22 @@ public sealed class SvnCliClient
 
         using var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start svn process.");
 
-        var buffer = new byte[128 * 1024];
-        while (true)
+        const int bufferSize = 128 * 1024;
+        var buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+        try
         {
-            var read = await process.StandardOutput.BaseStream.ReadAsync(buffer, cancellationToken);
-            if (read <= 0)
-                break;
+            while (true)
+            {
+                var read = await process.StandardOutput.BaseStream.ReadAsync(buffer.AsMemory(0, bufferSize), cancellationToken);
+                if (read <= 0)
+                    break;
 
-            await onChunk(buffer.AsMemory(0, read), cancellationToken);
+                await onChunk(buffer.AsMemory(0, read), cancellationToken);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);

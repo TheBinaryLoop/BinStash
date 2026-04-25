@@ -16,7 +16,12 @@
     </Project>
     <Project Path="BinStash.Server.Tests/BinStash.Server.Tests.csproj" />
   </Folder>
-  <Folder Name="/Tooling/" />
+  <Folder Name="/Tooling/">
+    <Project Path="BinStash.StoreMigration/BinStash.StoreMigration.csproj" />
+    <Project Path="Utils/StoreVerify/StoreVerify.csproj" />
+    <Project Path="Utils/RepackFileDefs/RepackFileDefs.csproj" />
+    <Project Path="Utils/ChunkStoreExplorer/ChunkStoreExplorer.csproj" />
+  </Folder>
   <Project Path="BinStash.Cli/BinStash.Cli.csproj">
     <BuildType Solution="Release|x64" Project="?" />
     <Platform Solution="Debug|x64" Project="x64" />

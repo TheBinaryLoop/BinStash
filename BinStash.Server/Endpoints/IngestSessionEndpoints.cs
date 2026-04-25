@@ -69,6 +69,14 @@ public static class IngestSessionEndpoints
             .Produces<byte[]>(contentType: "application/octet-stream")
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status400BadRequest);
+        session.MapPost("/files/storage-keys", GetFileDefinitionStorageKeysAsync)
+            .WithDescription("Returns the StorageKey for each known file definition ContentHash. " +
+                             "Request and response bodies are raw binary: request is a TransposeCompressed list of 32-byte content hashes; " +
+                             "response is N×64 bytes (32-byte ContentHash + 32-byte StorageKey per entry) for all hashes that are known to the server.")
+            .WithSummary("Get File Definition Storage Keys")
+            .Produces<byte[]>(contentType: "application/octet-stream")
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status400BadRequest);
         session.MapPost("/files/batch", UploadFileDefinitionsBatchAsync)
             .WithDescription("Uploads a batch of file definitions to the chunk store.")
             .WithSummary("Upload File Definitions Batch")
@@ -145,6 +153,47 @@ public static class IngestSessionEndpoints
         return Results.Json(stats);
     }
     
+    private static async Task<IResult> GetFileDefinitionStorageKeysAsync(Guid repoId, Guid sessionId, HttpRequest request, BinStashDbContext db)
+    {
+        try
+        {
+            var contentHashes = await ChecksumCompressor.TransposeDecompressHashesAsync(request.Body);
+
+            var ingestSession = await db.IngestSessions.FindAsync(sessionId);
+            var repo = await db.Repositories.FindAsync(repoId);
+            if (repo == null || ingestSession == null)
+                return Results.NotFound();
+
+            var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
+            if (store == null)
+                return Results.NotFound();
+
+            if (!contentHashes.Any())
+                return Results.Bytes([], "application/octet-stream");
+
+            // Query StorageKey for every known content hash in this chunk store.
+            var pairs = await db.FileDefinitions
+                .Where(fd => fd.ChunkStoreId == store.Id && contentHashes.Contains(fd.Checksum))
+                .Select(fd => new { fd.Checksum, fd.StorageKey })
+                .ToListAsync();
+
+            // Response: N × 64 bytes (32-byte ContentHash || 32-byte StorageKey)
+            var buf = new byte[pairs.Count * 64];
+            var span = buf.AsSpan();
+            for (var i = 0; i < pairs.Count; i++)
+            {
+                pairs[i].Checksum.WriteBytes(span[(i * 64)..(i * 64 + 32)]);
+                pairs[i].StorageKey.WriteBytes(span[(i * 64 + 32)..(i * 64 + 64)]);
+            }
+
+            return Results.Bytes(buf, "application/octet-stream");
+        }
+        catch (Exception)
+        {
+            return Results.BadRequest("Invalid request body.");
+        }
+    }
+
     private static async Task<IResult> GetMissingFileDefinitionsAsync(Guid repoId, Guid sessionId, HttpRequest request, BinStashDbContext db)
     {
         try
@@ -556,47 +605,25 @@ public static class IngestSessionEndpoints
 
         var outputArtifacts = releasePackage.OutputArtifacts;
 
-        var allReferencedContentHashes = CollectReferencedContentHashes(outputArtifacts);
-        var distinctContentHashes = allReferencedContentHashes.Distinct().ToList();
-
-        var fileLengths = distinctContentHashes.Count == 0
-            ? new Dictionary<Hash32, long>()
-            : await db.FileDefinitions
-                .AsNoTracking()
-                .Where(x => x.ChunkStoreId == repo.ChunkStoreId && distinctContentHashes.Contains(x.Checksum))
-                .ToDictionaryAsync(x => x.Checksum, x => x.Length);
+        var allReferencedStorageKeys = CollectReferencedStorageKeys(outputArtifacts);
+        var distinctStorageKeys = allReferencedStorageKeys.Distinct().ToList();
 
         ulong totalLogicalBytes = 0;
         foreach (var artifact in outputArtifacts)
         {
-            totalLogicalBytes += CalculateLogicalArtifactSize(artifact, fileLengths);
+            totalLogicalBytes += CalculateLogicalArtifactSize(artifact);
         }
 
         ingestSession.TotalLogicalBytes = (long)totalLogicalBytes;
 
-        // Look up StorageKey for each content hash — the pack store is indexed by BLAKE3(blob), not by file hash.
-        // Build a (Checksum → StorageKey) map so we can pass the correct storage keys to the retrieval API,
-        // then re-key the blobs back by file hash for the consumers below.
-        var fdStorageKeyMap = distinctContentHashes.Count == 0
-            ? new Dictionary<Hash32, Hash32>()
-            : await db.FileDefinitions
-                .AsNoTracking()
-                .Where(x => x.ChunkStoreId == repo.ChunkStoreId && distinctContentHashes.Contains(x.Checksum))
-                .ToDictionaryAsync(x => x.Checksum, x => x.StorageKey);
-
-        // storageKeyHex → fileHash reverse map for re-keying after retrieval
-        var storageKeyHexToFileHash = fdStorageKeyMap.ToDictionary(
-            kvp => kvp.Value.ToHexString(),
-            kvp => kvp.Key);
-
-        var fileDefinitionBytesByStorageKey = fdStorageKeyMap.Count == 0
+        var fileDefinitionBytesByStorageKey = distinctStorageKeys.Count == 0
             ? new Dictionary<string, byte[]>()
             : await chunkStoreService.RetrieveFileDefinitionsAsync(
                 store,
-                fdStorageKeyMap.Values.Select(k => k.ToHexString()).ToArray());
+                distinctStorageKeys.Select(k => k.ToHexString()).ToArray());
 
         var releaseUniqueChunks = new HashSet<Hash32>();
-        foreach (var (storageKeyHex, blob) in fileDefinitionBytesByStorageKey)
+        foreach (var (_, blob) in fileDefinitionBytesByStorageKey)
         {
             foreach (var chunkHash in FileDefinitionRecord.Deserialize(blob).ChunkHashes)
                 releaseUniqueChunks.Add(chunkHash);
@@ -660,67 +687,55 @@ public static class IngestSessionEndpoints
         return Results.Created($"/api/releases/{releaseId}", null);
     }
     
-    private static List<Hash32> CollectReferencedContentHashes(IEnumerable<OutputArtifact> outputArtifacts)
+    private static List<Hash32> CollectReferencedStorageKeys(IEnumerable<OutputArtifact> outputArtifacts)
     {
-        var hashes = new List<Hash32>();
+        var keys = new List<Hash32>();
 
         foreach (var artifact in outputArtifacts)
         {
             switch (artifact.Backing)
             {
                 case OpaqueBlobBacking opaque:
-                    if (opaque.ContentHash != null)
-                        hashes.Add(opaque.ContentHash.Value);
+                    if (opaque.StorageKey != null)
+                        keys.Add(opaque.StorageKey.Value);
                     break;
 
                 case ReconstructedContainerBacking reconstructed:
                     foreach (var member in reconstructed.Members)
                     {
-                        if (member.ContentHash != null)
-                            hashes.Add(member.ContentHash.Value);
+                        if (member.StorageKey != null)
+                            keys.Add(member.StorageKey.Value);
                     }
                     break;
             }
         }
 
-        return hashes;
+        return keys;
     }
 
-    private static ulong CalculateLogicalArtifactSize(OutputArtifact artifact, IReadOnlyDictionary<Hash32, long> fileLengths)
+    private static ulong CalculateLogicalArtifactSize(OutputArtifact artifact)
     {
         return artifact.Backing switch
         {
-            OpaqueBlobBacking opaque => CalculateOpaqueArtifactSize(opaque, fileLengths),
-            ReconstructedContainerBacking reconstructed => CalculateReconstructedArtifactSize(reconstructed, fileLengths),
+            OpaqueBlobBacking opaque => CalculateOpaqueArtifactSize(opaque),
+            ReconstructedContainerBacking reconstructed => CalculateReconstructedArtifactSize(reconstructed),
             _ => 0UL
         };
     }
 
-    private static ulong CalculateOpaqueArtifactSize(OpaqueBlobBacking backing, IReadOnlyDictionary<Hash32, long> fileLengths)
+    private static ulong CalculateOpaqueArtifactSize(OpaqueBlobBacking backing)
     {
-        if (backing.Length.HasValue)
-            return (ulong)backing.Length.Value;
-
-        if (backing.ContentHash != null && fileLengths.TryGetValue(backing.ContentHash.Value, out var len))
-            return (ulong)len;
-
-        return 0UL;
+        return backing.Length.HasValue ? (ulong)backing.Length.Value : 0UL;
     }
 
-    private static ulong CalculateReconstructedArtifactSize(ReconstructedContainerBacking backing, IReadOnlyDictionary<Hash32, long> fileLengths)
+    private static ulong CalculateReconstructedArtifactSize(ReconstructedContainerBacking backing)
     {
         ulong total = 0;
 
         foreach (var member in backing.Members)
         {
             if (member.Length.HasValue)
-            {
                 total += (ulong)member.Length.Value;
-                continue;
-            }
-
-            if (member.ContentHash != null && fileLengths.TryGetValue(member.ContentHash.Value, out var len))
-                total += (ulong)len;
         }
 
         return total;

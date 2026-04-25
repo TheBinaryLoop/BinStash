@@ -28,7 +28,7 @@ namespace BinStash.Core.Serialization;
 public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
 {
     private const string Magic = "BPKG";
-    public static readonly byte Version = 4;
+    public static readonly byte Version = 5;
     // Flags
     private const byte CompressionFlag = 0b0000_0001;
     private const byte FileDefinitionLikedFlag = 0b0000_0010; // Only used for V1
@@ -57,7 +57,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         writer.Write(flags);
 
         // Build tables
-        var contentHashes = CollectContentHashes(package);
+        var contentHashes = CollectStorageKeys(package);
         var contentHashIndex = contentHashes
             .Select((h, i) => (h, i))
             .ToDictionary(x => x.h, x => x.i);
@@ -69,7 +69,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         var reconstructedBackings = new List<ReconstructedContainerBacking>();
         var outputArtifactRecords = new List<OutputArtifactRecord>();
 
-        // Sort artifacts by path before serialisation.
+        // Sort artifacts by path before serialization.
         // Adjacent artifacts share path-token prefix runs, which significantly
         // improves Zstd compression of §0x05 and §0x06 (~17 KB saving on a
         // ~11k-artifact sample vs insertion order).
@@ -123,8 +123,8 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
 
             foreach (var member in backing.Members)
             {
-                if (member.ContentHash == null)
-                    throw new InvalidDataException($"Container member '{member.EntryPath}' is missing ContentHash.");
+                if (member.StorageKey == null)
+                    throw new InvalidDataException($"Container member '{member.EntryPath}' is missing StorageKey.");
                 if (member.Length == null)
                     throw new InvalidDataException($"Container member '{member.EntryPath}' is missing Length.");
 
@@ -132,7 +132,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                 flattenedMembers.Add(new V4ContainerMemberRecord
                 {
                     EntryPathTokenIndices = memberPathTokens.Select(t => tokenIndex[t]).ToArray(),
-                    ContentHashIndex = contentHashIndex[member.ContentHash.Value],
+                    ContentHashIndex = contentHashIndex[member.StorageKey.Value],
                     Length = member.Length.Value
                 });
             }
@@ -167,7 +167,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             w.Write(ChecksumCompressor.TransposeCompress(contentHashes.Select(x => x.GetBytes()).ToList()));
         }, options.EnableCompression, options.CompressionLevel, cancellationToken);
 
-        // 0x03 - token table (V4: path segments, not full paths)
+        // 0x03 - token table (path segments, not full paths)
         await WriteSectionAsync(stream, 0x03, w =>
         {
             WriteStringTable(w, tokenTable);
@@ -185,7 +185,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             }
         }, options.EnableCompression, options.CompressionLevel, cancellationToken);
 
-        // 0x05 - output artifacts (V4: path as token sequence, no ComponentNameIndex, no BackingIndex)
+        // 0x05 - output artifacts (path as token sequence, no ComponentNameIndex, no BackingIndex)
         // BackingIndex is implicit: the k-th artifact with BackingType=OpaqueBlob maps to
         // the k-th entry in §0x06; similarly for ReconstructedContainer → §0x07.
         await WriteSectionAsync(stream, 0x05, w =>
@@ -209,12 +209,12 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             VarIntUtils.WriteVarInt(w, (uint)opaqueBackings.Count);
             foreach (var backing in opaqueBackings)
             {
-                if (backing.ContentHash == null)
-                    throw new InvalidDataException("OpaqueBlobBacking.ContentHash must be set before serialization.");
+                if (backing.StorageKey == null)
+                    throw new InvalidDataException("OpaqueBlobBacking.StorageKey must be set before serialization.");
                 if (backing.Length == null)
                     throw new InvalidDataException("OpaqueBlobBacking.Length must be set before serialization.");
 
-                VarIntUtils.WriteVarInt(w, (uint)contentHashIndex[backing.ContentHash.Value]);
+                VarIntUtils.WriteVarInt(w, (uint)contentHashIndex[backing.StorageKey.Value]);
                 VarIntUtils.WriteVarInt(w, (ulong)backing.Length.Value);
             }
         }, options.EnableCompression, options.CompressionLevel, cancellationToken);
@@ -257,16 +257,6 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
                 w.Write(payload);
             }
         }, options.EnableCompression, options.CompressionLevel, cancellationToken);
-
-        // 0x0A - stats
-        await WriteSectionAsync(stream, 0x0A, w =>
-        {
-            VarIntUtils.WriteVarInt(w, package.Stats.ComponentCount);
-            VarIntUtils.WriteVarInt(w, package.Stats.FileCount);
-            VarIntUtils.WriteVarInt(w, package.Stats.ChunkCount);
-            VarIntUtils.WriteVarInt(w, package.Stats.RawSize);
-            VarIntUtils.WriteVarInt(w, package.Stats.DedupedSize);
-        }, options.EnableCompression, options.CompressionLevel, cancellationToken);
     }
 
     public static async Task<ReleasePackage> DeserializeAsync(byte[] data, CancellationToken cancellationToken = default)
@@ -288,6 +278,7 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             2 => DeserializeV2Async(reader, stream, cancellationToken),
             3 => DeserializeV3Async(reader, stream, cancellationToken),
             4 => DeserializeV4Async(reader, stream, cancellationToken),
+            5 => DeserializeV5Async(reader, stream, cancellationToken),
             _ => throw new NotSupportedException($"Unsupported version {version}")
         };
     }
@@ -298,7 +289,6 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
         var isCompressed = (flags & CompressionFlag) != 0;
         var linkToFileDefinitions = (flags & FileDefinitionLikedFlag) != 0;
         
-        Span<byte> fileHashBytesShort = stackalloc byte[8];
         Span<byte> fileHashBytesLong = stackalloc byte[32];
         
         // Temporary lookups
@@ -907,6 +897,194 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             recipePayloads,
             contentHashes,
             tokenTable);
+        package.PackageFormatVersion = 4;
+
+        return Task.FromResult(package);
+    }
+
+    private static Task<ReleasePackage> DeserializeV5Async(BinaryReader reader, Stream stream, CancellationToken cancellationToken)
+    {
+        var flags = reader.ReadByte();
+        var isCompressed = (flags & CompressionFlag) != 0;
+
+        // V5: §0x02 contains storageKey values (BLAKE3(FileDefinitionRecord blob))
+        // instead of fileHash values (BLAKE3(file bytes)).
+        var storageKeys = new List<Hash32>();
+        var tokenTable = new List<string>();
+        var customProperties = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        var outputArtifactTemps = new List<V4OutputArtifactTemp>();
+        var opaqueBackings = new List<V3OpaqueBackingTemp>();
+        var reconstructedBackings = new List<V3ReconstructedBackingTemp>();
+        var memberTemps = new List<V4ContainerMemberTemp>();
+        var recipePayloads = new List<byte[]>();
+
+        var package = new ReleasePackage();
+
+        while (stream.Position < stream.Length)
+        {
+            var sectionId = reader.ReadByte();
+            _ = reader.ReadByte(); // sectionFlags: Reserved for future usage
+            var sectionSize = VarIntUtils.ReadVarInt<uint>(reader);
+
+            using var s = GetSectionStream(sectionId, stream, sectionSize, isCompressed);
+            using var r = new BinaryReader(s);
+
+            switch (sectionId)
+            {
+                case 0x01: // metadata
+                    ReadPackageMetadata(r, package);
+                    break;
+
+                case 0x02: // storageKey table (V5: BLAKE3(FileDefinitionRecord blob) per unique file)
+                    storageKeys = ChecksumCompressor.TransposeDecompressHashes(s).ToList();
+                    break;
+
+                case 0x03: // token table
+                    tokenTable = ReadStringTable(r);
+                    package.StringTable = tokenTable;
+                    break;
+
+                case 0x04: // custom properties
+                {
+                    var propCount = VarIntUtils.ReadVarInt<uint>(r);
+                    customProperties = new Dictionary<string, string>(checked((int)propCount), StringComparer.Ordinal);
+                    for (var i = 0; i < propCount; i++)
+                    {
+                        var keyIndex = VarIntUtils.ReadVarInt<uint>(r);
+                        var valueIndex = VarIntUtils.ReadVarInt<uint>(r);
+                        customProperties[tokenTable[checked((int)keyIndex)]] = tokenTable[checked((int)valueIndex)];
+                    }
+                    break;
+                }
+
+                case 0x05: // output artifacts
+                {
+                    var count = VarIntUtils.ReadVarInt<uint>(r);
+                    outputArtifactTemps = new List<V4OutputArtifactTemp>(checked((int)count));
+
+                    int opaqueCount = 0, reconstructedCount = 0;
+                    for (var i = 0; i < count; i++)
+                    {
+                        var tokenCount = checked((int)VarIntUtils.ReadVarInt<uint>(r));
+                        var pathTokenIndices = new int[tokenCount];
+                        for (var k = 0; k < tokenCount; k++)
+                            pathTokenIndices[k] = checked((int)VarIntUtils.ReadVarInt<uint>(r));
+
+                        var kind = (OutputArtifactKind)r.ReadByte();
+                        var bytePerfect = r.ReadByte() != 0;
+                        var backingType = (BackingType)r.ReadByte();
+
+                        var backingIndex = backingType == BackingType.OpaqueBlob
+                            ? opaqueCount++
+                            : reconstructedCount++;
+
+                        outputArtifactTemps.Add(new V4OutputArtifactTemp
+                        {
+                            PathTokenIndices = pathTokenIndices,
+                            Kind = kind,
+                            RequiresBytePerfectReconstruction = bytePerfect,
+                            BackingType = backingType,
+                            BackingIndex = backingIndex
+                        });
+                    }
+
+                    break;
+                }
+
+                case 0x06: // opaque backings
+                {
+                    var count = VarIntUtils.ReadVarInt<uint>(r);
+                    opaqueBackings = new List<V3OpaqueBackingTemp>(checked((int)count));
+
+                    for (var i = 0; i < count; i++)
+                    {
+                        opaqueBackings.Add(new V3OpaqueBackingTemp
+                        {
+                            ContentHashIndex = checked((int)VarIntUtils.ReadVarInt<uint>(r)),
+                            Length = checked((long)VarIntUtils.ReadVarInt<ulong>(r))
+                        });
+                    }
+
+                    break;
+                }
+
+                case 0x07: // reconstructed backings
+                {
+                    var count = VarIntUtils.ReadVarInt<uint>(r);
+                    reconstructedBackings = new List<V3ReconstructedBackingTemp>(checked((int)count));
+
+                    for (var i = 0; i < count; i++)
+                    {
+                        reconstructedBackings.Add(new V3ReconstructedBackingTemp
+                        {
+                            FormatIdIndex = checked((int)VarIntUtils.ReadVarInt<uint>(r)),
+                            ReconstructionKind = (ReconstructionKind)r.ReadByte(),
+                            MemberStart = checked((int)VarIntUtils.ReadVarInt<uint>(r)),
+                            MemberCount = checked((int)VarIntUtils.ReadVarInt<uint>(r)),
+                            RecipePayloadIndex = checked((int)VarIntUtils.ReadVarInt<uint>(r))
+                        });
+                    }
+
+                    break;
+                }
+
+                case 0x08: // container members
+                {
+                    var count = VarIntUtils.ReadVarInt<uint>(r);
+                    memberTemps = new List<V4ContainerMemberTemp>(checked((int)count));
+
+                    for (var i = 0; i < count; i++)
+                    {
+                        var tokenCount = checked((int)VarIntUtils.ReadVarInt<uint>(r));
+                        var entryPathTokenIndices = new int[tokenCount];
+                        for (var k = 0; k < tokenCount; k++)
+                            entryPathTokenIndices[k] = checked((int)VarIntUtils.ReadVarInt<uint>(r));
+
+                        memberTemps.Add(new V4ContainerMemberTemp
+                        {
+                            EntryPathTokenIndices = entryPathTokenIndices,
+                            ContentHashIndex = checked((int)VarIntUtils.ReadVarInt<uint>(r)),
+                            Length = checked((long)VarIntUtils.ReadVarInt<ulong>(r))
+                        });
+                    }
+
+                    break;
+                }
+
+                case 0x09: // recipe payloads
+                {
+                    var count = VarIntUtils.ReadVarInt<uint>(r);
+                    recipePayloads = new List<byte[]>(checked((int)count));
+
+                    for (var i = 0; i < count; i++)
+                    {
+                        var len = checked((int)VarIntUtils.ReadVarInt<uint>(r));
+                        recipePayloads.Add(r.ReadBytes(len));
+                    }
+
+                    break;
+                }
+
+                case 0x0A: // stats
+                    ReadPackageStats(r, package);
+                    break;
+
+                default:
+                    throw new InvalidDataException($"Unknown section ID: {sectionId:X2}");
+            }
+        }
+
+        package.CustomProperties = customProperties;
+        package.OutputArtifacts = BuildOutputArtifactsV5(
+            outputArtifactTemps,
+            opaqueBackings,
+            reconstructedBackings,
+            memberTemps,
+            recipePayloads,
+            storageKeys,
+            tokenTable);
+        package.PackageFormatVersion = 5;
 
         return Task.FromResult(package);
     }
@@ -1020,38 +1198,6 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             return normalizedComponent;
 
         return $"{normalizedComponent}/{normalizedFile}";
-    }
-    
-    private static List<Hash32> CollectContentHashes(ReleasePackage package)
-    {
-        var hashes = new HashSet<Hash32>();
-
-        foreach (var artifact in package.OutputArtifacts)
-        {
-            switch (artifact.Backing)
-            {
-                case OpaqueBlobBacking opaque:
-                    if (opaque.ContentHash == null)
-                        throw new InvalidDataException($"Output artifact '{artifact.Path}' is missing opaque content hash.");
-                    hashes.Add(opaque.ContentHash.Value);
-                    break;
-
-                case ReconstructedContainerBacking reconstructed:
-                    foreach (var member in reconstructed.Members)
-                    {
-                        if (member.ContentHash == null)
-                            throw new InvalidDataException($"Output artifact '{artifact.Path}' has member '{member.EntryPath}' without a content hash.");
-                        hashes.Add(member.ContentHash.Value);
-                    }
-
-                    break;
-
-                default:
-                    throw new NotSupportedException($"Unsupported artifact backing type: {artifact.Backing.GetType().FullName}");
-            }
-        }
-
-        return hashes.OrderBy(x => x).ToList();
     }
     
     private static void WriteStringTable(BinaryWriter w, List<string> stringTable)
@@ -1234,6 +1380,110 @@ public abstract class ReleasePackageSerializer : ReleasePackageSerializerBase
             .ToDictionary(x => x.s, x => x.i, StringComparer.Ordinal);
 
         return (table, index);
+    }
+
+    private static List<Hash32> CollectStorageKeys(ReleasePackage package)
+    {
+        var hashes = new HashSet<Hash32>();
+
+        foreach (var artifact in package.OutputArtifacts)
+        {
+            switch (artifact.Backing)
+            {
+                case OpaqueBlobBacking opaque:
+                    if (opaque.StorageKey == null)
+                        throw new InvalidDataException($"Output artifact '{artifact.Path}' is missing opaque StorageKey.");
+                    hashes.Add(opaque.StorageKey.Value);
+                    break;
+                case ReconstructedContainerBacking reconstructed:
+                    foreach (var member in reconstructed.Members)
+                    {
+                        if (member.StorageKey == null)
+                            throw new InvalidDataException($"Output artifact '{artifact.Path}' has member '{member.EntryPath}' without a StorageKey.");
+                        hashes.Add(member.StorageKey.Value);
+                    }
+                    break;
+                default:
+                    throw new NotSupportedException($"Unsupported artifact backing type: {artifact.Backing.GetType().FullName}");
+            }
+        }
+
+        return hashes.OrderBy(x => x).ToList();
+    }
+
+    private static List<OutputArtifact> BuildOutputArtifactsV5(
+        List<V4OutputArtifactTemp> outputArtifactTemps,
+        List<V3OpaqueBackingTemp> opaqueBackings,
+        List<V3ReconstructedBackingTemp> reconstructedBackings,
+        List<V4ContainerMemberTemp> memberTemps,
+        List<byte[]> recipePayloads,
+        List<Hash32> storageKeys,
+        List<string> tokenTable)
+    {
+        var result = new List<OutputArtifact>(outputArtifactTemps.Count);
+
+        foreach (var artifactTemp in outputArtifactTemps)
+        {
+            var path = JoinTokensToPath(artifactTemp.PathTokenIndices, tokenTable);
+            var componentName = artifactTemp.PathTokenIndices.Length > 0
+                ? tokenTable[artifactTemp.PathTokenIndices[0]]
+                : "";
+
+            ArtifactBacking backing = artifactTemp.BackingType switch
+            {
+                BackingType.OpaqueBlob => new OpaqueBlobBacking
+                {
+                    StorageKey = storageKeys[opaqueBackings[artifactTemp.BackingIndex].ContentHashIndex],
+                    Length = opaqueBackings[artifactTemp.BackingIndex].Length
+                },
+                BackingType.ReconstructedContainer => BuildReconstructedBackingV5(
+                    reconstructedBackings[artifactTemp.BackingIndex],
+                    memberTemps,
+                    recipePayloads,
+                    storageKeys,
+                    tokenTable),
+                _ => throw new InvalidDataException($"Unknown backing type: {artifactTemp.BackingType}")
+            };
+
+            result.Add(new OutputArtifact
+            {
+                Path = path,
+                ComponentName = componentName,
+                Kind = artifactTemp.Kind,
+                RequiresBytePerfectReconstruction = artifactTemp.RequiresBytePerfectReconstruction,
+                Backing = backing
+            });
+        }
+
+        return result;
+    }
+
+    private static ReconstructedContainerBacking BuildReconstructedBackingV5(
+        V3ReconstructedBackingTemp temp,
+        List<V4ContainerMemberTemp> memberTemps,
+        List<byte[]> recipePayloads,
+        List<Hash32> storageKeys,
+        List<string> tokenTable)
+    {
+        var members = new List<ContainerMemberBinding>(temp.MemberCount);
+        for (var i = 0; i < temp.MemberCount; i++)
+        {
+            var m = memberTemps[temp.MemberStart + i];
+            members.Add(new ContainerMemberBinding
+            {
+                EntryPath = JoinTokensToPath(m.EntryPathTokenIndices, tokenTable),
+                StorageKey = storageKeys[m.ContentHashIndex],
+                Length = m.Length
+            });
+        }
+
+        return new ReconstructedContainerBacking
+        {
+            FormatId = tokenTable[temp.FormatIdIndex],
+            ReconstructionKind = temp.ReconstructionKind,
+            Members = members,
+            RecipePayload = recipePayloads[temp.RecipePayloadIndex]
+        };
     }
 
     private static List<OutputArtifact> BuildOutputArtifacts(

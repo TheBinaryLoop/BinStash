@@ -26,26 +26,26 @@ public static class UpgradeJobEndpoints
 {
     public static RouteGroupBuilder MapUpgradeJobEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/upgrade-jobs")!
-            .WithTags("UpgradeJobs")
+        var group = app.MapGroup("/api/background-jobs")
+            .WithTags("BackgroundJobs")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .RequireInstancePermission(InstancePermission.Admin);
 
-        group.MapGet("/{id:guid}", GetUpgradeJobAsync)!
+        group.MapGet("/{id:guid}", GetUpgradeJobAsync)
             .WithDescription("Gets the current status of an upgrade job.")
             .WithSummary("Get Upgrade Job")
             .Produces<UpgradeJobDto>()
             .ProducesProblem(StatusCodes.Status404NotFound);
 
-        group.MapPost("/{id:guid}/cancel", CancelUpgradeJobAsync)!
+        group.MapPost("/{id:guid}/cancel", CancelUpgradeJobAsync)
             .WithDescription("Requests cancellation of a running upgrade job. The job will stop at the next batch boundary.")
             .WithSummary("Cancel Upgrade Job")
             .Produces(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
-        group.MapGet("/", ListUpgradeJobsAsync)!
+        group.MapGet("/", ListUpgradeJobsAsync)
             .WithDescription("Lists all upgrade jobs, optionally filtered by chunk store.")
             .WithSummary("List Upgrade Jobs")
             .Produces<List<UpgradeJobDto>>();
@@ -81,17 +81,19 @@ public static class UpgradeJobEndpoints
 
     private static async Task<IResult> ListUpgradeJobsAsync(BinStashDbContext db, Guid? chunkStoreId = null)
     {
-        var query = db.BackgroundJobs
-            .Where(j => j.JobType == BackgroundJobTypes.ReleaseUpgrade);
-
-        if (chunkStoreId.HasValue)
-            query = query.Where(j => j.JobData != null && j.JobData.Contains(chunkStoreId.Value.ToString()));
-
-        var jobs = await query
+        var jobs = await db.BackgroundJobs
+            .Where(j => j.JobType == BackgroundJobTypes.ReleaseUpgrade)
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
 
-        return Results.Ok(jobs.Select(MapToDto).ToList());
+        var dtos = jobs.Select(MapToDto).ToList();
+
+        // Filter by ChunkStoreId after materialization because JobData is a jsonb
+        // column and EF Core cannot translate string Contains/LIKE against jsonb.
+        if (chunkStoreId.HasValue)
+            dtos = dtos.Where(d => d.ChunkStoreId == chunkStoreId.Value).ToList();
+
+        return Results.Ok(dtos);
     }
 
     /// <summary>
