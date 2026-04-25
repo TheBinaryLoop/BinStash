@@ -43,4 +43,15 @@ public sealed class Mutation
     
     public Task DeleteServiceAccount(Guid accountId, [Service] ServiceAccountMutationService service, CancellationToken cancellationToken)
         => service.DeleteServiceAccountAsync(accountId, cancellationToken);
+    
+    public Task<ChunkStoreGql> CreateChunkStore(CreateChunkStoreInput input, [Service] ChunkStoreMutationService service, CancellationToken cancellationToken)
+        => service.CreateChunkStoreAsync(input, cancellationToken);
+    
+    public Task<BackgroundJobGql> RebuildChunkStore(Guid chunkStoreId, [Service] ChunkStoreMutationService service, CancellationToken cancellationToken)
+        => service.RebuildChunkStoreAsync(chunkStoreId, cancellationToken);
+    
+    public Task<BackgroundJobGql> UpgradeChunkStore(Guid chunkStoreId, [Service] ChunkStoreMutationService service, CancellationToken cancellationToken)
+        => service.UpgradeChunkStoreAsync(chunkStoreId, cancellationToken);
+    public Task<BackgroundJobGql> CancelBackgroundJob(Guid jobId, [Service] BackgroundJobService service, CancellationToken cancellationToken)
+        => service.CancelBackgroundJobAsync(jobId, cancellationToken);
 }

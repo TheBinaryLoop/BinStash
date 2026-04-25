@@ -22,10 +22,12 @@ namespace BinStash.Server.HostedServices;
 public sealed class ChunkStoreStatsHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<ChunkStoreStatsHostedService> _logger;
 
-    public ChunkStoreStatsHostedService(IServiceScopeFactory scopeFactory)
+    public ChunkStoreStatsHostedService(IServiceScopeFactory scopeFactory, ILogger<ChunkStoreStatsHostedService> logger)
     {
         _scopeFactory = scopeFactory;
+        _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -38,9 +40,9 @@ public sealed class ChunkStoreStatsHostedService : BackgroundService
             {
                 await RunOnceAsync(stoppingToken);
             }
-            catch
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // TODO: inject logger
+                _logger.LogError(ex, "Unhandled error in ChunkStoreStatsHostedService");
             }
 
             await timer.WaitForNextTickAsync(stoppingToken);

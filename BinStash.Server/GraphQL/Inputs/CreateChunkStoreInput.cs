@@ -13,9 +13,20 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-namespace BinStash.Core.Ingestion.Formats.Zip;
+namespace BinStash.Server.GraphQL.Inputs;
 
-public class ZipFormatDetector
+public sealed class CreateChunkStoreInput
 {
-    
+    public required string Name { get; init; }
+    public required string Type { get; init; }
+    public string? LocalPath { get; init; }
+    public ChunkStoreChunkerInput? Chunker { get; init; }
+}
+
+public sealed class ChunkStoreChunkerInput
+{
+    public string? Type { get; init; }
+    public int? MinChunkSize { get; init; }
+    public int? AvgChunkSize { get; init; }
+    public int? MaxChunkSize { get; init; }
 }

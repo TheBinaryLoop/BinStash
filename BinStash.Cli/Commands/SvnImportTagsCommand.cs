@@ -16,6 +16,7 @@
 using BinStash.Cli.Infrastructure;
 using BinStash.Cli.Infrastructure.Svn;
 using BinStash.Cli.Services.Releases;
+using BinStash.Contracts.Repo;
 using BinStash.Core.Chunking;
 using BinStash.Core.Entities;
 using BinStash.Core.Ingestion.Abstractions;
@@ -80,14 +81,14 @@ public sealed partial class SvnImportTagsCommand : TenantCommandBase
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
         var api = new BinStashApiClient(GetUrl(), AuthTokenFactory, console);
-        var ingestClient = new BinStashGrpcClient(GetUrl(), AuthTokenFactory);
+        var ingestClient = new BinStashGrpcClient(GetGrpcUrl(), AuthTokenFactory);
 
-        var repositories = await api.GetRepositoriesAsync();
+        var repositories = await api.GetRepositoriesAsync(GetTenantId());
         var repository = repositories?.FirstOrDefault(r => r.Name.Equals(RepositoryName, StringComparison.OrdinalIgnoreCase));
         if (repository == null)
             throw new CommandException($"Repository '{RepositoryName}' not found.");
 
-        repository = await api.GetRepositoryAsync(repository.Id);
+        repository = await api.GetRepositoryAsync(GetTenantId(), repository.Id);
         if (repository == null)
             throw new CommandException($"Repository '{RepositoryName}' could not be loaded.");
 
@@ -111,6 +112,6 @@ public sealed partial class SvnImportTagsCommand : TenantCommandBase
 
         var engine = new SvnImportEngine(svn, api, ingestClient, state, repository, chunker, console, Concurrency, componentMapper, Includes, Excludes, _releaseIngestionEngine, _contentProcessor, _serverUploadPlanner, _releasePackageBuilder);
 
-        await engine.RunAsync(svnRoot: SvnRoot, tenantSlug: TenantSlug!, dryRun: DryRun, resume: Resume, limit: Limit);
+        await engine.RunAsync(svnRoot: SvnRoot, tenantSlug: TenantSlug!, tenantId: GetTenantId(), dryRun: DryRun, resume: Resume, limit: Limit);
     }
 }

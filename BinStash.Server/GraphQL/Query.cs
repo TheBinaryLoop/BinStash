@@ -34,6 +34,9 @@ public class Query
     public Task<RepositoryGql?> GetRepository(Guid id, [Service] RepositoryQueryService service, CancellationToken cancellationToken)
         => service.GetRepositoryByIdAsync(id, cancellationToken);
     
+    public Task<RepositoryGql?> GetRepositoryByName(string name, [Service] RepositoryQueryService service, CancellationToken cancellationToken)
+        => service.GetRepositoryByNameAsync(name, cancellationToken);
+    
     public Task<ReleaseGql?> GetRelease(Guid id, [Service] ReleaseQueryService service, CancellationToken cancellationToken)
         => service.GetReleaseByIdAsync(id, cancellationToken);
     
@@ -48,4 +51,14 @@ public class Query
     
     public async Task<IQueryable<UserGql>> GetUsers([Service] UserQueryService service, CancellationToken cancellationToken)
         => await service.GetUsersAsync(cancellationToken);
+    
+    public Task<IQueryable<BackgroundJobGql>> GetBackgroundJobs(
+        [Service] BackgroundJobService service,
+        CancellationToken cancellationToken,
+        string? jobType = null,
+        Guid? chunkStoreId = null)
+        => service.GetBackgroundJobsAsync(jobType, chunkStoreId, cancellationToken);
+    
+    public Task<BackgroundJobGql?> GetBackgroundJob(Guid id, [Service] BackgroundJobService service, CancellationToken cancellationToken)
+        => service.GetBackgroundJobAsync(id, cancellationToken);
 }

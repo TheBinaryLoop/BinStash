@@ -2,6 +2,37 @@
 
 ## Current work focus
 
+As of 2026-04-24, a **server codebase cleanup** pass was completed: dead code removed, REST/GraphQL/gRPC communication boundaries clarified, build errors fixed, and a logger added to `ChunkStoreStatsHostedService`. **Build succeeds with 0 errors.**
+
+### Server cleanup (completed 2026-04-24)
+
+**Deleted/removed:**
+- Empty `BinStash.Core/ChunkStreaming/` directory.
+- `BinStash.Core/Ingestion/Formats/Zip/ZipFormatDetector.cs` (empty body).
+- `BinStash.Server/HostedServices/SingleTenantBootstrapper.cs` (entire body was commented out).
+- Stale `<Compile Remove="Ingestion\Models\StorageStrategy.cs" />` entry from `BinStash.Core.csproj`.
+- Commented-out `GetReleaseStreamAsync` registration block and stale `// TODO: DELETE` comment from `ReleaseEndpoints.cs`.
+- Commented-out duplicate `ChunkStoreShowCommand` block from `ReleaseCommands.cs`.
+- Commented-out dead `ChunkStoreTestCommand` block from `ChunkStoreCommands.cs`.
+- Commented-out `//builder.Services.AddHostedService<SingleTenantBootstrapper>();` from `Program.cs`.
+- `//builder.Services.AddHostedService<ChunkStoreStatsHostedService>();` note remains — service was never registered; left as-is.
+
+**REST/GraphQL boundary cleanup:**
+- `TenantEndpoints`: Removed `POST /api/tenants` (create), `GET /api/tenants/{id}`, `PUT /api/tenants/{tenantId}` (update), `GET /api/tenants/current` — covered by GraphQL. Removed `CreateTenant`, `UpdateTenant`, `GetTenant`, `GetCurrentTenant` private handler methods. Fixed typo: `/current/invatations` → `/current/invitations`. Accidentally renamed `ListTenantsForMember` → `InviteMemberAsync` was corrected.
+- `RepositoryEndpoints`: Removed entire tenant-prefixed `/api/tenants/{tenantId}/repositories/...` duplicate group. Fixed bug: `Name = chunkStore.Name` → `Name = repo.Name` in `CreateRepositoryAsync`.
+- `ReleaseEndpoints`: Removed `GET /{id:guid}` (GraphQL handles reads); restored hardcoded download password with `// TEMPORARY:` comment.
+- `ServiceAccountEndpoints`: Removed commented-out CRUD registrations and three dead private handler methods (`GetServiceAccountsAsync`, `CreateServiceAccountAsync`, `DeleteServiceAccountAsync`). Restored `using Microsoft.EntityFrameworkCore` (was accidentally removed, causing CS1061/CS1929 build errors).
+- `TenantQueryService`: Removed duplicate `GetReleasesForRepository` method (identical logic in `RepositoryQueryService`).
+
+**Other fixes:**
+- `SetupGateMiddleware`: Now returns `application/problem+json` with `setup_required` error code instead of a plain string.
+- `ReleasePackageSerializerBase.cs`: Removed commented-out local dict path.
+- `ChunkStoreStatsHostedService`: Added `ILogger<ChunkStoreStatsHostedService>` injection; replaced silent `catch {}` with `catch (Exception ex) when (ex is not OperationCanceledException)` and `_logger.LogError(...)`.
+
+**Build result:** 0 errors, 3 pre-existing warnings (CS8618 on `ChunkStore.cs`, CA2014 on `FastCdcChunker.cs`).
+
+---
+
 As of 2026-04-15, **BinStash.ChunkStoreExplorer** TUI utility has been **fully redesigned** as a file-explorer-style split-pane TUI (replacing the sequential CLI-style menu). New "Rebuild bloom filter" and "Rebuild segment file" write operations added. **Builds with 0 errors, 0 warnings.**
 
 ### BinStash.ChunkStoreExplorer — split-pane TUI redesign (completed 2026-04-15)
@@ -337,7 +368,7 @@ Previously completed: BINST-91 (polymorphic ChunkStore backend settings) and BIN
 - **CliFx 3.0.0 migration incomplete:** CLI project has LSP errors from CliFx 3.0 API changes (`CliFx.Binding` namespace, `CommandLineApplicationBuilder`, `UseTypeInstantiator`, `ScalarInputConverter`/`SequenceInputConverter` renames). Code may not compile until migration is finished.
 - **`StorageStrategy.cs` excluded from compilation:** `BinStash.Core/Ingestion/Models/StorageStrategy.cs` excluded via `<Compile Remove=...>`. Do not reference it.
 - **S3 chunk store not implemented:** Referenced in docs and CLI help text but no `IChunkStoreStorage` implementation exists. Only `LocalFolderChunkStoreStorage` is available. The polymorphic `BackendSettings` pattern is now ready to support future S3/Azure backends.
-- **`SingleTenantBootstrapper` commented out:** Registered but commented out in `Program.cs`. Single-tenant init relies solely on `SetupBootstrapper`.
+- **`SingleTenantBootstrapper` removed:** Dead hosted service (`SingleTenantBootstrapper.cs`) and its commented-out registration in `Program.cs` have been deleted. Single-tenant init relies solely on `SetupBootstrapper`.
 - **Stale documentation:** `docs/faq.md` references ".NET 9"; `docs/file-format.md` documents only V2/V3 (V4 has 10 sections); `docs/architecture.md` is a 3-line placeholder; `docs/cli-reference.md` is missing auth/analyze/svn/test commands.
 - **`chunk-store delete` and `release delete` commands:** Present but throw `NotImplementedException`.
 - **`appsettings.Development.json`** uses `Email2` section (not `Email`), effectively disabling email in dev.

@@ -130,3 +130,42 @@ public sealed class ChunkStoreBackendSettingsGql
     /// </summary>
     public string? LocalPath { get; init; }
 }
+
+/// <summary>
+/// GraphQL representation of a background job (rebuild or upgrade).
+/// </summary>
+public sealed class BackgroundJobGql
+{
+    public required Guid Id { get; init; }
+    public required string JobType { get; init; }
+    public required string Status { get; init; }
+    public Guid ChunkStoreId { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset? StartedAt { get; init; }
+    public DateTimeOffset? CompletedAt { get; init; }
+    public string? ErrorDetails { get; init; }
+
+    /// <summary>Progress data for <c>ChunkStoreRebuild</c> jobs.</summary>
+    public RebuildJobProgressGql? RebuildProgress { get; init; }
+
+    /// <summary>Progress data for <c>ReleaseUpgrade</c> jobs.</summary>
+    public UpgradeJobProgressGql? UpgradeProgress { get; init; }
+}
+
+public sealed class RebuildJobProgressGql
+{
+    public int TotalBuckets { get; init; }
+    public int ProcessedBuckets { get; init; }
+    public int FailedBuckets { get; init; }
+}
+
+public sealed class UpgradeJobProgressGql
+{
+    public byte TargetSerializerVersion { get; init; }
+    public int TotalReleases { get; init; }
+    public int ProcessedReleases { get; init; }
+    public int FailedReleases { get; init; }
+    public int SkippedReleases { get; init; }
+    public long BytesSaved { get; init; }
+    public long BytesGrown { get; init; }
+}

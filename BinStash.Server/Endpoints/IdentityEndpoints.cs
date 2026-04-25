@@ -22,6 +22,7 @@ using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Auth.Tenant;
+using BinStash.Server.Configuration;
 using BinStash.Server.Configuration.Auth;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -46,6 +47,7 @@ public static class IdentityEndpoints
         //var bearerTokenOptions = app.ServiceProvider.GetRequiredService<IOptionsMonitor<BearerTokenOptions>>();
         var emailSender = app.ServiceProvider.GetRequiredService<IEmailSender<BinStashUser>>();
         var linkGenerator = app.ServiceProvider.GetRequiredService<LinkGenerator>();
+        var domainSettings = app.ServiceProvider.GetRequiredService<IOptions<DomainSettings>>().Value;
         
         // We'll figure out a unique endpoint name based on the final route pattern during endpoint generation.
         string? confirmEmailEndpointName = null;
@@ -568,7 +570,8 @@ public static class IdentityEndpoints
                 routeValues.Add("changedEmail", email);
             }
 
-            var confirmEmailUrl = $"http://localhost:5173/verify-email?userId={Uri.EscapeDataString(userId)}&code={Uri.EscapeDataString(code)}";
+            var confirmEmailUrl = BuildFrontendUrl(domainSettings, context,
+                $"/verify-email?userId={Uri.EscapeDataString(userId)}&code={Uri.EscapeDataString(code)}");
             /*var confirmEmailUrl = linkGenerator.GetUriByName(context, confirmEmailEndpointName, routeValues)
                 ?? throw new NotSupportedException($"Could not find the endpoint named '{confirmEmailEndpointName}'.");*/
 
@@ -608,6 +611,18 @@ public static class IdentityEndpoints
         }
 
         return TypedResults.ValidationProblem(errorDictionary);
+    }
+
+    /// <summary>
+    /// Builds a frontend URL for email links using <see cref="DomainSettings.BaseUrl"/> when configured,
+    /// falling back to the origin of the current HTTP request.
+    /// </summary>
+    internal static string BuildFrontendUrl(DomainSettings domainSettings, HttpContext context, string path)
+    {
+        var baseUrl = !string.IsNullOrWhiteSpace(domainSettings.BaseUrl)
+            ? domainSettings.BaseUrl.TrimEnd('/')
+            : $"{context.Request.Scheme}://{context.Request.Host}";
+        return $"{baseUrl}{path}";
     }
 
     private static async Task<InfoResponse> CreateInfoResponseAsync(BinStashUser user, UserManager<BinStashUser> userManager)

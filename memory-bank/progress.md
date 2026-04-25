@@ -4,6 +4,15 @@
 
 Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC ingest, REST endpoints, multi-tenancy, and auth are implemented. No automated deployment pipeline exists. CliFx 3.0.0 upgrade is partially complete (API migration has outstanding LSP errors).
 
+**Completed 2026-04-24:** Server codebase cleanup pass. Build: 0 errors.
+- Deleted empty directories/files: `BinStash.Core/ChunkStreaming/`, `ZipFormatDetector.cs`, `SingleTenantBootstrapper.cs`. Removed stale `.csproj` `<Compile Remove>` entry.
+- Removed commented-out dead code: `GetReleaseStreamAsync`, `ChunkStoreShowCommand` duplicate, `ChunkStoreTestCommand`, `SingleTenantBootstrapper` registration.
+- REST/GraphQL boundary: removed duplicate or GraphQL-covered REST endpoints from `TenantEndpoints`, `RepositoryEndpoints`, `ReleaseEndpoints`, `ServiceAccountEndpoints`. Fixed `Name = chunkStore.Name` → `Name = repo.Name` bug in `RepositoryEndpoints`.
+- Removed duplicate `GetReleasesForRepository` from `TenantQueryService`.
+- `SetupGateMiddleware` now returns `application/problem+json` with `setup_required` error code.
+- `ChunkStoreStatsHostedService`: added `ILogger` injection, replaced silent `catch {}` with proper error logging.
+- Fixed build errors introduced by cleanup: restored `using Microsoft.EntityFrameworkCore` in `ServiceAccountEndpoints`, corrected accidental `ListTenantsForMember` → `InviteMemberAsync` rename in `TenantEndpoints`.
+
 **Completed 2026-04-15:** `BinStash.ChunkStoreExplorer` redesigned as a file-explorer-style split-pane TUI. Builds with 0 errors, 0 warnings.
 - Replaced sequential CLI menu with keyboard-driven split-pane: left panel = navigable tree (Store → Category → PrefixGroup1 → PrefixGroup2 → Bucket → Files), right panel = node stats/detail.
 - New write operations: **Rebuild segment from packs** (scan packs → decompress → BLAKE3 hash → sort+dedup → write `seg-000.idx`), **Rebuild bloom filter** (single segment or all segments in a bucket).
@@ -101,7 +110,7 @@ Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC 
 | **CliFx 3.0 migration incomplete** | CLI project has LSP/compile errors from CliFx 3.0 API renames (namespaces, class names). Must be resolved before CLI builds. |
 | **S3 chunk store not implemented** | Docs and CLI help reference S3 but no `IChunkStoreStorage` implementation exists. Only `LocalFolderChunkStoreStorage` is available. `ChunkStoreStorageFactory` throws `NotSupportedException` for non-Local types. |
 | **`StorageStrategy.cs` excluded** | `BinStash.Core/Ingestion/Models/StorageStrategy.cs` excluded via `<Compile Remove=...>`. Role unclear. |
-| **`SingleTenantBootstrapper` commented out** | In `Program.cs`. Single-tenant init relies solely on `SetupBootstrapper`. |
+| **`SingleTenantBootstrapper` removed** | `SingleTenantBootstrapper.cs` deleted and its `Program.cs` registration removed. `SetupBootstrapper` handles single-tenant init. |
 | **`chunk-store delete` / `release delete` stubs** | Present but throw `NotImplementedException`. |
 | **Stale documentation** | `docs/faq.md` says ".NET 9". `docs/file-format.md` covers V2/V3 only (V4 has 10 sections). `docs/architecture.md` is a 3-line placeholder. `docs/cli-reference.md` missing auth/analyze/svn/test commands. |
 | **No automated deployment** | Deployment is manual; no pipeline for container publishing or environment promotion. |

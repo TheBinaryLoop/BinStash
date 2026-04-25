@@ -58,5 +58,25 @@ public sealed class MutationType : ObjectType<Mutation>
             .Field(x => x.DeleteServiceAccount(Guid.Empty, null!, CancellationToken.None))
             .Type<BooleanType>()
             .Authorize();
+        
+        descriptor
+            .Field(x => x.CreateChunkStore(null!, null!, CancellationToken.None))
+            .Type<ObjectType<ChunkStoreGql>>()
+            .Authorize();
+        
+        descriptor
+            .Field(x => x.RebuildChunkStore(Guid.Empty, null!, CancellationToken.None))
+            .Type<ObjectType<BackgroundJobGql>>()
+            .Authorize();
+        
+        descriptor
+            .Field(x => x.UpgradeChunkStore(Guid.Empty, null!, CancellationToken.None))
+            .Type<ObjectType<BackgroundJobGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.CancelBackgroundJob(Guid.Empty, null!, CancellationToken.None))
+            .Type<ObjectType<BackgroundJobGql>>()
+            .Authorize();
     }
 }

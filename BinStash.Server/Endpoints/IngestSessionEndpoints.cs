@@ -173,7 +173,7 @@ public static class IngestSessionEndpoints
 
             // Query StorageKey for every known content hash in this chunk store.
             var pairs = await db.FileDefinitions
-                .Where(fd => fd.ChunkStoreId == store.Id && contentHashes.Contains(fd.Checksum))
+                .Where(fd => fd.ChunkStoreId == store.Id && contentHashes.Contains(fd.StorageKey))
                 .Select(fd => new { fd.Checksum, fd.StorageKey })
                 .ToListAsync();
 

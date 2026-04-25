@@ -62,6 +62,12 @@ public sealed class QueryType : ObjectType<Query>
             .UseProjection();
         
         descriptor
+            .Field(x => x.GetRepositoryByName(string.Empty, null!, CancellationToken.None))
+            .Type<RepositoryType>()
+            .Authorize()
+            .UseProjection();
+        
+        descriptor
             .Field(x => x.GetRelease(Guid.Empty, null!, CancellationToken.None))
             .Type<ReleaseType>()
             .Authorize()
@@ -105,5 +111,19 @@ public sealed class QueryType : ObjectType<Query>
             .UseProjection()
             .UseFiltering()
             .UseSorting();
+
+        descriptor
+            .Field(x => x.GetBackgroundJobs(null!, CancellationToken.None, null, null))
+            .Authorize()
+            .UsePaging(options: new PagingOptions
+            {
+                IncludeTotalCount = true
+            })
+            .UseSorting();
+
+        descriptor
+            .Field(x => x.GetBackgroundJob(Guid.Empty, null!, CancellationToken.None))
+            .Type<ObjectType<BackgroundJobGql>>()
+            .Authorize();
     }
 }

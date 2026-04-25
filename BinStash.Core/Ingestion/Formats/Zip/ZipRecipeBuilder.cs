@@ -20,7 +20,7 @@ namespace BinStash.Core.Ingestion.Formats.Zip;
 
 public sealed partial class ZipRecipeBuilder
 {
-    public byte[] BuildSemanticRecipe(IReadOnlyList<ZipArchiveEntryInfo> allEntries)
+    public static byte[] BuildSemanticRecipe(IReadOnlyList<ZipArchiveEntryInfo> allEntries)
     {
         var dto = new ZipRecipeDto
         {
@@ -36,7 +36,7 @@ public sealed partial class ZipRecipeBuilder
 
     private sealed class ZipRecipeDto
     {
-        public List<ZipRecipeEntryDto> Entries { get; set; } = new();
+        public List<ZipRecipeEntryDto> Entries { get; set; } = [];
     }
 
     private sealed class ZipRecipeEntryDto

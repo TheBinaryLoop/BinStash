@@ -45,12 +45,8 @@ public static class ReleaseEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .RequireAuthorization();
         
-        group.MapGet("/{id:guid}", GetReleaseByIdAsync)
-            .WithDescription("Get a release by ID.")
-            .WithSummary("Get Release")
-            .Produces<ReleaseSummaryDto>()
-            .Produces(StatusCodes.Status404NotFound)
-            .RequireRepoPermission(RepositoryPermission.Read);
+        // Release reads (get by id, list) are served by GraphQL (query { release(id) }, query { repository { releases } }).
+        // REST is kept only for operations GraphQL cannot serve: binary download and raw custom properties.
 
         group.MapGet("/{id:guid}/properties", GetReleaseCustomPropertiesAsync)
             .WithDescription("Get custom properties of a release.")
@@ -67,39 +63,7 @@ public static class ReleaseEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .RequireRepoPermission(RepositoryPermission.Read);
         
-        /*group.MapGet("/{id:guid}/stream", GetReleaseStreamAsync)!
-            .WithDescription("Stream a release package.")
-            .WithSummary("Stream Release")
-            .Produces(StatusCodes.Status200OK)
-            .Produces(StatusCodes.Status404NotFound)
-            .Produces(StatusCodes.Status400BadRequest)
-            .RequireRepoPermission(RepositoryPermission.Read);*/
-        
-        // TODO: DELETE /api/releases/{id:guid}
-
         return group;
-    }
-    
-    private static async Task<IResult> GetReleaseByIdAsync(Guid id, BinStashDbContext db)
-    {
-        var release = await db.Releases.AsNoTracking().Include(r => r.Repository).FirstOrDefaultAsync(r => r.Id == id);
-        if (release == null)
-            return Results.NotFound();
-
-        return Results.Ok(new ReleaseSummaryDto
-        {
-            Id = release.Id,
-            Version = release.Version,
-            CreatedAt = release.CreatedAt,
-            Notes = release.Notes,
-            Repository = new RepositorySummaryDto
-            {
-                Id = release.Repository.Id,
-                Name = release.Repository.Name,
-                Description = release.Repository.Description,
-                StorageClass = release.Repository.StorageClass,
-            }
-        });
     }
     
     private static async Task<IResult> GetReleaseCustomPropertiesAsync(Guid id, BinStashDbContext db)
@@ -110,6 +74,7 @@ public static class ReleaseEndpoints
     
     private static async Task<IResult> GetReleaseDownloadAsync(Guid id, string downloadPassword, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService)
     {
+        // TEMPORARY: hardcoded password gate — remove once proper download auth is in place
         if (string.IsNullOrEmpty(downloadPassword) || downloadPassword != "D9BvHVpGlpaa9C8w230kQ8w8PIKUoc3k")
             return Results.Unauthorized();
 

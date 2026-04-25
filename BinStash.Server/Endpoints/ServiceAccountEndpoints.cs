@@ -14,7 +14,6 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.Auth;
-using BinStash.Contracts.ServiceAccount;
 using BinStash.Core.Auth;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Auth.Tokens;
@@ -52,22 +51,9 @@ public static class ServiceAccountEndpoints
 
     private static void MapGroup(RouteGroupBuilder group)
     {
-        /*group.MapGet("/", GetServiceAccountsAsync)!
-            .WithDescription("Get all service accounts for the tenant.")
-            .WithSummary("Get Service Accounts")
-            .Produces<List<ServiceAccountInfoDto>>();
-
-        group.MapPost("/", CreateServiceAccountAsync)!
-            .WithDescription("Create a new service account.")
-            .WithSummary("Create Service Account")
-            .Produces<ServiceAccountInfoDto>(StatusCodes.Status201Created)
-            .ProducesProblem(StatusCodes.Status409Conflict);
-        
-        group.MapDelete("/{serviceAccountId:guid}", DeleteServiceAccountAsync)!
-            .WithDescription("Delete a service account.")
-            .WithSummary("Delete Service Account")
-            .Produces(StatusCodes.Status204NoContent)
-            .ProducesProblem(StatusCodes.Status404NotFound);*/
+        // Service account CRUD (list, create, update, delete) is served by GraphQL mutations/queries.
+        // Only API key management remains here — key creation returns a one-time raw secret
+        // that cannot be returned through a GraphQL response safely.
 
         group.MapPost("/{serviceAccountId:guid}/api-keys", CreateApiKeyForServiceAccountAsync)!
             .WithDescription("Create a new API key for the service account.")
@@ -86,60 +72,6 @@ public static class ServiceAccountEndpoints
             .WithSummary("Delete API Key for Service Account")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status404NotFound);
-    }
-    
-    private static async Task<IResult> GetServiceAccountsAsync(BinStashDbContext db, HttpContext context, TenantContext tenantContext)
-    {
-        var tenantId = tenantContext.TenantId;
-        var serviceAccounts = await db.ServiceAccounts
-            .Where(sa => sa.TenantId == tenantId)
-            .Select(sa => new ServiceAccountInfoDto(sa.Id, sa.Name, sa.CreatedAt))
-            .ToListAsync(context.RequestAborted);
-        return Results.Ok(serviceAccounts);
-    }
-    
-    private static async Task<IResult> CreateServiceAccountAsync(CreateServiceAccountDto request, BinStashDbContext db, HttpContext context, TenantContext tenantContext)
-    {
-        if (string.IsNullOrWhiteSpace(request.Name))
-            return Results.BadRequest("Service account name is required.");
-        
-        var tenantId = tenantContext.TenantId;
-        
-        if (await db.ServiceAccounts.AnyAsync(sa => sa.TenantId == tenantId && sa.Name == request.Name, context.RequestAborted))
-            return Results.Conflict($"A service account with the name '{request.Name}' already exists.");
-        
-        var serviceAccount = new ServiceAccount
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
-            Name = request.Name,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
-        db.ServiceAccounts.Add(serviceAccount);
-        await db.SaveChangesAsync(context.RequestAborted);
-        var dto = new ServiceAccountInfoDto(serviceAccount.Id, serviceAccount.Name, serviceAccount.CreatedAt);
-        return Results.Created($"/api/service-accounts/{serviceAccount.Id}", dto);
-    }
-    
-    private static async Task<IResult> DeleteServiceAccountAsync(Guid serviceAccountId, BinStashDbContext db, HttpContext context, TenantContext tenantContext)
-    {
-        var tenantId = tenantContext.TenantId;
-        var serviceAccount = await db.ServiceAccounts.FindAsync(serviceAccountId);
-        if (serviceAccount == null || serviceAccount.TenantId != tenantId)
-            return Results.NotFound();
-        
-        var apiKeys = await db.ApiKeys.Where(x => x.SubjectType == SubjectType.ServiceAccount && x.SubjectId == serviceAccountId).ToListAsync(context.RequestAborted);
-        db.ApiKeys.RemoveRange(apiKeys);
-        
-        var roleAssignments = await db.RepositoryRoleAssignments
-            .Where(x => x.SubjectType == SubjectType.ServiceAccount && x.SubjectId == serviceAccountId)
-            .ToListAsync(context.RequestAborted);
-        db.RepositoryRoleAssignments.RemoveRange(roleAssignments);
-        
-        db.ServiceAccounts.Remove(serviceAccount);
-        
-        await db.SaveChangesAsync(context.RequestAborted);
-        return Results.NoContent();
     }
     
     private static async Task<IResult> CreateApiKeyForServiceAccountAsync(Guid serviceAccountId, CreateApiKeyRequest request, BinStashDbContext db, HttpContext context, TenantContext tenantContext, ITokenService tokenService)

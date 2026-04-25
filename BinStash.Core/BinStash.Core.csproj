@@ -21,7 +21,5 @@
       <ProjectReference Include="..\BinStash.Contracts\BinStash.Contracts.csproj" />
     </ItemGroup>
 
-    <ItemGroup>
-      <Compile Remove="Ingestion\Models\StorageStrategy.cs" />
-    </ItemGroup>
+
 </Project>

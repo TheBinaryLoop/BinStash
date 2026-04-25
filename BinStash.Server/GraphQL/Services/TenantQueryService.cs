@@ -132,21 +132,5 @@ public class TenantQueryService
             .FirstOrDefaultAsync(ct);
     }
 
-    public IQueryable<ReleaseGql> GetReleasesForRepository(Guid repoId)
-    {
-        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
-
-        return _db.Releases
-            .AsNoTracking()
-            .Where(r => r.RepoId == repoId && r.Repository.TenantId == tenantContext.TenantId)
-            .Select(r => new ReleaseGql
-            {
-                Id = r.Id,
-                Version = r.Version,
-                CreatedAt = r.CreatedAt,
-                Notes = r.Notes,
-                RepoId = r.RepoId,
-                CustomProperties = null // resolved separately
-            });
-    }
+    // GetReleasesForRepository lives in RepositoryQueryService — use that one.
 }

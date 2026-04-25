@@ -16,6 +16,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BinStash.Cli.Auth;
+using BinStash.Cli.Infrastructure.GraphQl;
 using BinStash.Cli.Infrastructure.Svn;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Ingest;
@@ -58,5 +59,20 @@ namespace BinStash.Cli;
 [JsonSerializable(typeof(CachedChunkMap))]
 [JsonSerializable(typeof(List<ChunkMapCacheEntry>))]
 [JsonSerializable(typeof(ChunkMapCacheEntry))]
+// GraphQL — request bodies
+[JsonSerializable(typeof(GqlRequest), TypeInfoPropertyName = "GqlRequestBody")]
+[JsonSerializable(typeof(GqlRequestById), TypeInfoPropertyName = "GqlRequestByIdBody")]
+[JsonSerializable(typeof(GqlPagedRequest), TypeInfoPropertyName = "GqlPagedRequestBody")]
+[JsonSerializable(typeof(GqlRequestByIdPaged), TypeInfoPropertyName = "GqlRequestByIdPagedBody")]
+[JsonSerializable(typeof(GqlCreateRepositoryRequest), TypeInfoPropertyName = "GqlCreateRepositoryRequestBody")]
+[JsonSerializable(typeof(GqlCreateChunkStoreRequest), TypeInfoPropertyName = "GqlCreateChunkStoreRequestBody")]
+// GraphQL — response envelopes
+[JsonSerializable(typeof(GqlResponse<GqlRepositoriesData>))]
+[JsonSerializable(typeof(GqlResponse<GqlRepositoryData>))]
+[JsonSerializable(typeof(GqlResponse<GqlCreateRepositoryData>))]
+[JsonSerializable(typeof(GqlResponse<GqlRepositoryWithReleasesData>))]
+[JsonSerializable(typeof(GqlResponse<GqlChunkStoresData>))]
+[JsonSerializable(typeof(GqlResponse<GqlChunkStoreData>))]
+[JsonSerializable(typeof(GqlResponse<GqlCreateChunkStoreData>))]
 internal partial class SourceGenerationContext : JsonSerializerContext { }
 

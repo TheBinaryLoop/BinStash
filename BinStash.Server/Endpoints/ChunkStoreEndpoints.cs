@@ -25,6 +25,8 @@ using BinStash.Core.Storage;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Configuration;
 using BinStash.Server.Extensions;
+using BinStash.Server.GraphQL;
+using BinStash.Server.GraphQL.Services;
 using BinStash.Server.HostedServices;
 using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
@@ -73,12 +75,12 @@ public static class ChunkStoreEndpoints
             .WithDescription(
                 "Starts an asynchronous background job to rebuild the chunk store index by scanning all pack-file buckets. Returns 202 Accepted with the job ID. Subscribe via GraphQL subscription 'backgroundJobProgress(jobId)' for real-time progress, or poll GET /api/background-jobs/{jobId}.")
             .WithSummary("Start Chunk Store Rebuild Job")
-            .Produces<RebuildJobDto>(StatusCodes.Status202Accepted)
+            .Produces<BackgroundJobGql>(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status409Conflict);
         group.MapPost("/{id:guid}/upgrade", StartUpgradeReleasesAsync)!
-            .WithDescription("Starts an asynchronous background job to upgrade all releases in the chunk store to the latest serializer version. Returns 202 Accepted with the job ID. Subscribe via GraphQL subscription 'backgroundJobProgress(jobId)' for real-time progress, or poll GET /api/upgrade-jobs/{jobId}.")
+            .WithDescription("Starts an asynchronous background job to upgrade all releases in the chunk store to the latest serializer version. Returns 202 Accepted with the job ID. Subscribe via GraphQL subscription 'backgroundJobProgress(jobId)' for real-time progress, or query GraphQL 'backgroundJob(id)'.")
             .WithSummary("Start Release Upgrade Job")
-            .Produces<UpgradeJobDto>(StatusCodes.Status202Accepted)
+            .Produces<BackgroundJobGql>(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status409Conflict);
         /*group.MapDelete("/{id:guid}", DeleteChunkStoreAsync)
             .WithDescription("Deletes a chunk store by its ID.")
@@ -296,7 +298,7 @@ public static class ChunkStoreEndpoints
         // Enqueue the job for the background service
         await rebuildJobChannel.Channel.Writer.WriteAsync(job.Id);
 
-        return Results.Accepted($"/api/background-jobs/{job.Id}", RebuildJobEndpoints.MapToDto(job));
+        return Results.Accepted($"/api/background-jobs/{job.Id}", BackgroundJobService.MapToGql(job));
     }
     
     private static async Task<IResult> StartUpgradeReleasesAsync(Guid id, BinStashDbContext db, Channel<Guid> jobChannel)
@@ -338,7 +340,7 @@ public static class ChunkStoreEndpoints
         // Enqueue the job for the background service
         await jobChannel.Writer.WriteAsync(job.Id);
 
-        return Results.Accepted($"/api/upgrade-jobs/{job.Id}", UpgradeJobEndpoints.MapToDto(job));
+        return Results.Accepted($"/api/upgrade-jobs/{job.Id}", BackgroundJobService.MapToGql(job));
     }
 
     private static async Task<IResult> DeleteChunkStoreAsync(Guid id, BinStashDbContext db)
