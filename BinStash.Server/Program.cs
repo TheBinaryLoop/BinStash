@@ -241,7 +241,7 @@ public static class Program
         // Hosted services
         builder.Services.AddHostedService<SetupBootstrapper>();
         builder.Services.AddHostedService<ChunkStoreProbeService>();
-        //builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
+        builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
         
         // Release upgrade pipeline: Channel queue → BackgroundService → ReleaseUpgradeService
         builder.Services.AddSingleton(Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions

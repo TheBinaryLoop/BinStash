@@ -25,19 +25,19 @@ public interface IChunkStoreStorage
 
     /// <summary>
     /// Stores a serialised <c>FileDefinitionRecord</c> blob in the pack store.
-    /// The index key is <c>BLAKE3(blob)</c> (self-keyed).
+    /// The index key is the <c>FileHash</c> embedded in the record (BLAKE3 of the original file bytes).
     /// </summary>
     /// <returns>
-    /// Success flag, storage key (<c>BLAKE3(blob)</c>), and the number of
+    /// Success flag, file hash (<c>BLAKE3(file bytes)</c>), and the number of
     /// compressed bytes physically written (0 = already existed / deduplicated).
     /// </returns>
-    Task<(bool Success, Hash32 StorageKey, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob);
+    Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob);
 
     /// <summary>
-    /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its storage key
-    /// as persisted in <c>FileDefinition.StorageKey</c>.
+    /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its file hash
+    /// (<c>BLAKE3(file bytes)</c>).
     /// </summary>
-    Task<byte[]?> RetrieveFileDefinitionAsync(string storageKeyHex);
+    Task<byte[]?> RetrieveFileDefinitionAsync(string fileHashHex);
 
     Task<bool> StoreReleasePackageAsync(ReadOnlyMemory<byte> packageData);
     Task<byte[]?> RetrieveReleasePackageAsync(string key);
@@ -45,9 +45,9 @@ public interface IChunkStoreStorage
 
     /// <summary>
     /// Retrieves multiple file definition blobs in parallel, keyed by
-    /// their storage-key hex strings.
+    /// their file-hash hex strings.
     /// </summary>
-    Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> storageKeyHexes);
+    Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> fileHashHexes);
     Task<Dictionary<string, byte[]>> RetrieveReleasePackagesAsync(IReadOnlyCollection<string> packageIds);
     Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync();
 

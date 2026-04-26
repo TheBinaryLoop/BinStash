@@ -190,43 +190,7 @@ public sealed class IngestionExecutionContext
             }
         }
     }
-
-    /// <summary>
-    /// Binds a pre-computed <c>StorageKey</c> (= <c>BLAKE3(FileDefinitionRecord blob)</c>)
-    /// onto every output artifact whose <see cref="OpaqueBlobBacking.ContentHash"/> or
-    /// <see cref="ContainerMemberBinding.ContentHash"/> matches a key in
-    /// <paramref name="contentHashToStorageKey"/>.
-    /// </summary>
-    /// <param name="contentHashToStorageKey">
-    /// Map from file content hash (<c>BLAKE3(file bytes)</c>) to its storage key
-    /// (<c>BLAKE3(FileDefinitionRecord blob)</c>).
-    /// </param>
-    public void BindStorageKeys(IReadOnlyDictionary<Hash32, Hash32> contentHashToStorageKey)
-    {
-        foreach (var artifact in _result.OutputArtifacts)
-        {
-            switch (artifact.Backing)
-            {
-                case OpaqueBlobBacking opaque
-                    when opaque.ContentHash.HasValue
-                         && contentHashToStorageKey.TryGetValue(opaque.ContentHash.Value, out var sk):
-                    opaque.StorageKey = sk;
-                    break;
-
-                case ReconstructedContainerBacking reconstructed:
-                    foreach (var member in reconstructed.Members)
-                    {
-                        if (member.ContentHash.HasValue
-                            && contentHashToStorageKey.TryGetValue(member.ContentHash.Value, out var msk))
-                        {
-                            member.StorageKey = msk;
-                        }
-                    }
-                    break;
-            }
-        }
-    }
-
+    
     public void BindChunkMap(Hash32 hash, List<ChunkMapEntry> chunkMap)
     {
         if (_result.StoredContents.TryGetValue(hash, out var content))

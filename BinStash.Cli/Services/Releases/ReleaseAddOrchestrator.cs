@@ -67,19 +67,6 @@ public sealed class ReleaseAddOrchestrator
                 if (repository == null)
                     throw new InvalidOperationException($"Repository '{request.RepositoryName}' not found.");
 
-                ctx.Status("Checking release name duplicate...");
-                var releases = await restClient.GetReleasesForRepoAsync(request.TenantId, repository.Id);
-                if (releases != null && releases.Any(r =>
-                        r.Version.Equals(request.Version, StringComparison.OrdinalIgnoreCase)))
-                {
-                    throw new InvalidOperationException(
-                        $"Release with version '{request.Version}' already exists in repository '{repository.Name}'.");
-                }
-
-                ctx.Status($"Fetching chunker settings for repository '{repository.Name}'...");
-                repository = await restClient.GetRepositoryAsync(request.TenantId, repository.Id)
-                             ?? throw new InvalidOperationException("Repository disappeared while fetching details.");
-
                 if (repository.Chunker == null)
                     throw new InvalidOperationException($"Repository '{repository.Name}' does not have a chunker configured.");
 
@@ -162,41 +149,6 @@ public sealed class ReleaseAddOrchestrator
 
                 log?.Invoke($"Generated chunk maps for {chunkMapResult.FileChunkMaps.Count} stored contents");
 
-                // Compute StorageKey = BLAKE3(FileDefinitionRecord blob) for file definitions
-                // that we are uploading now (i.e., those in chunkMapResult.FileChunkMaps).
-                var storageKeyMap = new Dictionary<Hash32, Hash32>(chunkMapResult.FileChunkMaps.Count + (hashingResult.ContentHashes.Count - missingFileChecksums.Count));
-                foreach (var (contentHash, chunkMapEntries) in chunkMapResult.FileChunkMaps)
-                {
-                    storageKeyMap[contentHash] = FileDefinitionStorageKeyComputer.Compute(
-                        contentHash,
-                        hashingResult.ContentSizes[contentHash],
-                        chunkMapEntries.Select(cme => cme.Checksum).ToList());
-                }
-
-                // For file definitions already on the server we do not have chunk maps locally,
-                // so fetch their StorageKeys from the server.
-                var alreadyStoredHashes = hashingResult.ContentHashes.Keys
-                    .Except(new HashSet<Hash32>(missingFileChecksums))
-                    .ToList();
-
-                if (alreadyStoredHashes.Count > 0)
-                {
-                    ctx.Status("Fetching storage keys for already-stored file definitions...");
-                    var serverStorageKeys = await restClient.GetFileDefinitionStorageKeysAsync(
-                        request.TenantId,
-                        repository.Id,
-                        ingestSessionId,
-                        alreadyStoredHashes,
-                        ct);
-
-                    foreach (var (contentHash, storageKey) in serverStorageKeys)
-                        storageKeyMap[contentHash] = storageKey;
-
-                    log?.Invoke($"Fetched {serverStorageKeys.Count} storage keys from server for already-stored file definitions");
-                }
-
-                bindContext.BindStorageKeys(storageKeyMap);
-
                 ctx.Status("Planning upload...");
                 var uploadPlan = await _serverUploadPlanner.CreateAsync(
                     restClient,
@@ -247,7 +199,7 @@ public sealed class ReleaseAddOrchestrator
                     repository.Id);
 
                 ctx.Status("Creating release...");
-                await restClient.CreateReleaseAsync(request.TenantId, ingestSessionId, repository.Id.ToString(), releasePackage);
+                _ = await restClient.CreateReleaseAsync(request.TenantId, ingestSessionId, repository.Id.ToString(), releasePackage);
 
                 console.MarkupLine("[green]Release created successfully![/]");
             });

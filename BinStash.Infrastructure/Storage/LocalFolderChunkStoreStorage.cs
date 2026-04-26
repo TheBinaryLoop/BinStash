@@ -57,15 +57,15 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage, IDisposable, IAs
         return _objectStore.ReadChunkAsync(key)!;
     }
 
-    public async Task<(bool Success, Hash32 StorageKey, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob)
+    public async Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob)
     {
-        var (storageKey, bytesWritten) = await _objectStore.WriteFileDefinitionAsync(recordBlob);
-        return (true, storageKey, bytesWritten);
+        var (fileHash, bytesWritten) = await _objectStore.WriteFileDefinitionAsync(recordBlob);
+        return (true, fileHash, bytesWritten);
     }
 
-    public Task<byte[]?> RetrieveFileDefinitionAsync(string storageKeyHex)
+    public Task<byte[]?> RetrieveFileDefinitionAsync(string fileHashHex)
     {
-        return _objectStore.ReadFileDefinitionBlobAsync(storageKeyHex)!;
+        return _objectStore.ReadFileDefinitionBlobAsync(fileHashHex)!;
     }
 
     public async Task<bool> StoreReleasePackageAsync(ReadOnlyMemory<byte> packageData)
@@ -84,12 +84,12 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage, IDisposable, IAs
         return await _objectStore.DeleteReleasePackageAsync(packageId);
     }
 
-    public async Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> storageKeyHexes)
+    public async Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(IReadOnlyCollection<string> fileHashHexes)
     {
         var result = new ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
         using var throttler = new SemaphoreSlim(16);
 
-        await Task.WhenAll(storageKeyHexes.Select(async hex =>
+        await Task.WhenAll(fileHashHexes.Select(async hex =>
         {
             await throttler.WaitAsync();
             try

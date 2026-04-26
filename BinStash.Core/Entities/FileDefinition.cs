@@ -22,11 +22,4 @@ public class FileDefinition
     public required Hash32 Checksum { get; set; }
     public required Guid ChunkStoreId { get; set; }
     public required long Length { get; set; }
-
-    /// <summary>
-    /// BLAKE3 hash of the serialised <c>FileDefinitionRecord</c> blob stored in
-    /// the object-store pack file.  This is the pack-index lookup key and is
-    /// separate from <see cref="Checksum"/> (= BLAKE3 of the original file content).
-    /// </summary>
-    public required Hash32 StorageKey { get; set; }
 }

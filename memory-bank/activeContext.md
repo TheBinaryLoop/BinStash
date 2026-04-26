@@ -2,7 +2,99 @@
 
 ## Current work focus
 
-As of 2026-04-24, a **server codebase cleanup** pass was completed: dead code removed, REST/GraphQL/gRPC communication boundaries clarified, build errors fixed, and a logger added to `ChunkStoreStatsHostedService`. **Build succeeds with 0 errors.**
+As of 2026-04-25, a **major CLI-server release flow optimization and V6 rdef migration** was completed.
+
+### Release flow optimization and V6 migration (completed 2026-04-25)
+
+**Overview:** All CLI-server release creation flow bottlenecks identified and fixed. The StorageKey/ContentHash system was migrated to use FileHash directly as the pack store key (V6 rdef format).
+
+**V6 rdef format:**
+- `ReleasePackageSerializer.Version = 6`
+- `§0x02` stores **FileHash** (BLAKE3 of file bytes), same semantics as V4
+- V5 (StorageKey-based) was erased from codebase history; V5 deserializer retained for upgrade path only
+- Pack store for file definitions keyed by **FileHash** instead of `BLAKE3(FileDefinitionRecord blob)`
+- `FileDefinition.StorageKey` DB column dropped (EF migration `DropFileDefinitionStorageKey`)
+- `FileDefinitionStorageKeyComputer` class deleted
+- `FileDefinitionRecord.ComputeStorageKey()` removed
+- `IndexedPackFileHandler` for fileDefs bucket: `_computeHash = data => FileDefinitionRecord.Deserialize(data).FileHash`
+- Stats section (§0x0A) was not being written — fixed
+
+**Network round trip reductions:**
+- Removed redundant `GetRepositoryAsync` call (call #3) from `ReleaseAddOrchestrator` — chunker data already in `GetRepositoriesAsync` result
+- Removed full release list scan (call #2) from `ReleaseAddOrchestrator` — server already enforces uniqueness at finalize (409 Conflict)
+- Removed `GetFileDefinitionStorageKeysAsync` dependency from orchestrator — V6 uses ContentHash directly
+
+**Performance fixes:**
+- `IngestGrpcService.UploadChunks`: Per-chunk `AnyAsync` replaced with batched `WHERE Checksum IN (...)` query (batch size 64)
+- `FastCdcChunker.ChunkUsingBuffer`: Replaced `ReadByte()` loop with 64KB block reads and a `MemoryStream` accumulator — eliminates per-byte syscalls and double-reads
+- `BinStashGrpcClient.UploadChunksAsync`: Producer-consumer pipeline via `Channel<T>` (depth 4) overlaps disk I/O with gRPC stream writes
+- `BinStashApiClient.CreateReleaseAsync`: .rdef serialization via `Pipe` — no intermediate `MemoryStream` buffer; serialize and send concurrently
+
+**IngestSession improvements:**
+- Added `IntendedRelease string?` field to `IngestSession` entity
+- Server `CreateIngestSessionAsync` now accepts `CreateIngestSessionRequest` body and stores `IntendedRelease`
+- EF migration `AddIngestSessionIntendedRelease` added
+
+**Test results:** 337 tests pass (283 Core + 44 Serializers + 10 Server). Serializer tests updated: all `StorageKey` → `ContentHash`, version check `5 → 6`.
+
+---
+
+As of 2026-04-24, a **server codebase cleanup** pass was completed.
+
+### Server cleanup (completed 2026-04-24)
+
+**Build result:** 0 errors, 3 pre-existing warnings (CS8618 on `ChunkStore.cs`, CA2014 on `FastCdcChunker.cs`).
+
+---
+
+As of 2026-04-15, **BinStash.ChunkStoreExplorer** TUI utility has been **fully redesigned** as a file-explorer-style split-pane TUI. **Builds with 0 errors, 0 warnings.**
+
+---
+
+**Previously completed (2026-04-14):**
+- BinStash.RepackFileDefs — cross-bucket FileDef repack tool
+- BinStash.StoreMigration — one-shot migration tool for LSM-tree + self-keying format changes
+- BINST-100 — chunk store rebuild as async background job
+- BINST-99 — LSM-tree segmented pack-file index
+- AOT fix — CredentialStore rewritten with Windows DPAPI / AES-256-GCM
+- Release upgrade V1/V2 Length fix
+- Frontend upgrade pipeline integration (graphql-ws, Apollo split link, ChunkStoreDetail.vue)
+- BINST-93 — release upgrade pipeline rewrite
+
+## Known discrepancies / items requiring attention
+
+- **CliFx 3.0.0 migration incomplete:** CLI has LSP errors from API renames.
+- **S3 chunk store not implemented.**
+- **`chunk-store delete` and `release delete` commands throw `NotImplementedException`.**
+- **Stale documentation:** `docs/faq.md` references ".NET 9"; `docs/file-format.md` covers V2/V3 only; `docs/architecture.md` is a placeholder.
+- **`appsettings.Development.json`** uses `Email2` section, effectively disabling email in dev.
+- **CLI `chunk-store show`** should display `BackendSettings` instead of `LocalPath`.
+- **ChunkStoreExplorer** still references `StorageKey` on `OpaqueBlobBacking` (V5 compatibility path) — will display `(V5)` for old packs.
+
+## Active decisions and preferences
+
+- Deduplication scope is intentionally per-chunk-store.
+- Auto-migration at startup; no manual `dotnet ef database update` in production.
+- JWT key fallback must never reach production.
+- **V6 `.rdef` is the current write format**; V1–V5 deserialization retained. V5 deserializer retained for upgrade path only.
+- Artifacts sorted by path before V6 serialization — consumers must not assume positional stability.
+- ChunkStore backend settings use JSON polymorphism (`$type` discriminator in `jsonb` column).
+- Background jobs use polymorphic `BackgroundJob` entity with JSON payload columns.
+- No SignalR — real-time updates use HotChocolate GraphQL subscriptions over WebSockets.
+- Each background job pipeline uses a typed channel wrapper to avoid DI collision.
+- **Pack store for file definitions is keyed by FileHash** (BLAKE3 of file bytes), not StorageKey (BLAKE3 of record blob).
+
+## Important patterns observed
+
+- All source files carry the AGPLv3 copyright header with author `Lukas Eßmann`.
+- Authorization policies consistently named `Permission:<Scope>:<Level>`.
+- `DbConfigurationSource` inserted at index 0 (lowest priority).
+- CLI uses constructor DI via `ServiceCollection` in `Program.cs` `UseTypeInstantiator`.
+- Ingestion pipeline supports plain directory and ZIP archive input.
+- `ReleaseAddOrchestrator`, `ServerUploadPlanner`, `ComponentMapLoader` are CLI-side orchestration services.
+- `BinStashApiClient` (REST) and `BinStashGrpcClient` (gRPC) are server communication wrappers.
+- SVN import subsystem (8 files) fully implemented with SQLite-backed resumable state.
+
 
 ### Server cleanup (completed 2026-04-24)
 

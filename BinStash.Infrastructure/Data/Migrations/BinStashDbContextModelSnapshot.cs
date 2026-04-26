@@ -368,15 +368,7 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.Property<long>("Length")
                         .HasColumnType("bigint");
 
-                    b.Property<byte[]>("StorageKey")
-                        .IsRequired()
-                        .HasColumnType("bytea");
-
                     b.HasKey("ChunkStoreId", "Checksum");
-
-                    b.HasIndex("ChunkStoreId", "StorageKey")
-                        .IsUnique()
-                        .HasFilter("\"StorageKey\" != '\\x'::bytea");
 
                     b.ToTable("FileDefinitions", null, t =>
                         {
@@ -415,6 +407,9 @@ namespace BinStash.Infrastructure.Data.Migrations
 
                     b.Property<long>("FilesSeenUnique")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("IntendedRelease")
+                        .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("LastUpdatedAt")
                         .ValueGeneratedOnAdd()

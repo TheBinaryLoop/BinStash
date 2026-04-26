@@ -58,7 +58,7 @@ public sealed class ChunkStoreService : IChunkStoreService
         return await storage.RetrieveChunkAsync(chunkId);
     }
 
-    public Task<(bool Success, Hash32 StorageKey, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob)
+    public Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob)
     {
         if (recordBlob.IsEmpty)
             throw new ArgumentException("Record blob cannot be empty.", nameof(recordBlob));
@@ -67,13 +67,13 @@ public sealed class ChunkStoreService : IChunkStoreService
         return storage.StoreFileDefinitionAsync(recordBlob);
     }
 
-    public Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string storageKeyHex)
+    public Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string fileHashHex)
     {
-        if (string.IsNullOrWhiteSpace(storageKeyHex))
-            throw new ArgumentException("Storage key cannot be null or empty.", nameof(storageKeyHex));
+        if (string.IsNullOrWhiteSpace(fileHashHex))
+            throw new ArgumentException("File hash cannot be null or empty.", nameof(fileHashHex));
 
         var storage = _storageFactory.Create(store);
-        return storage.RetrieveFileDefinitionAsync(storageKeyHex);
+        return storage.RetrieveFileDefinitionAsync(fileHashHex);
     }
 
     public Task<bool> StoreReleasePackageAsync(ChunkStore store, ReadOnlyMemory<byte> packageData)

@@ -63,7 +63,7 @@ Console.WriteLine("[1/4] Deserializing .rdef file...");
 ReleasePackage releasePackage;
 await using (var fs = File.OpenRead(rdefPath))
 {
-    releasePackage = await ReleasePackageSerializer.DeserializeAsync(fs);
+    releasePackage = (await ReleasePackageSerializer.DeserializeAsync(fs)).Package;
 }
 
 var opaqueArtifacts = releasePackage.OutputArtifacts

@@ -25,6 +25,7 @@ using BinStash.Core.Chunking;
 using BinStash.Core.Ingestion.Abstractions;
 using BinStash.Core.Ingestion.Execution;
 using BinStash.Core.Ingestion.Models;
+using BinStash.Core.Serialization;
 using CliFx.Infrastructure;
 using Spectre.Console;
 
@@ -465,8 +466,11 @@ public sealed class SvnImportEngine
             ingestionResult,
             _repository.Id);
 
+        ReleaseDefinitionMetrics? rdefMetrics = null;
         await _progress.RunStatusAsync($"Finalizing release {version} ...",
-            async _ => { await _api.CreateReleaseAsync(_tenantId, ingestSessionId, _repository.Id.ToString(), releasePackage); });
+            async _ => { rdefMetrics = await _api.CreateReleaseAsync(_tenantId, ingestSessionId, _repository.Id.ToString(), releasePackage); });
+        if (rdefMetrics != null)
+            _progress.Info($".rdef metrics: {rdefMetrics}");
 
         await _state.SetTagImportedAsync(tagId, version);
         _progress.Success($"{tagName} imported as {version}");

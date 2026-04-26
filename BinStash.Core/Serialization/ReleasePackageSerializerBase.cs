@@ -31,7 +31,6 @@ public abstract class ReleasePackageSerializerBase
     
     protected static async Task WriteSectionAsync(Stream baseStream, byte id, Action<BinaryWriter> write, bool enableCompression, int compressionLevel, CancellationToken ct)
     {
-        var streamPosition = baseStream.Position;
         await using var ms = RecyclableMemoryStreamManager.GetStream();
         var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
         write(w);

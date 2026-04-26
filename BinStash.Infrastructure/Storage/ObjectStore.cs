@@ -15,7 +15,9 @@
 
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Storage.Stats;
+using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Infrastructure.Storage.Indexing;
+using BinStash.Infrastructure.Storage.Packing;
 using BinStash.Infrastructure.Storage.Stats;
 using Blake3;
 
@@ -46,19 +48,9 @@ public class ObjectStore : IDisposable, IAsyncDisposable
     {
         return key.Category switch
         {
-            "chunks" => new IndexedPackFileHandler(
-                Path.Combine(_basePath, "Chunks", key.Prefix[..2]),
-                "chunks",
-                key.Prefix,
-                MaxPackSize,
-                ComputeHash),
+            "chunks" => new IndexedPackFileHandler(Path.Combine(_basePath, "Chunks", key.Prefix[..2]), "chunks", key.Prefix, MaxPackSize, ComputeHash),
 
-            "fileDefs" => new IndexedPackFileHandler(
-                Path.Combine(_basePath, "FileDefs", key.Prefix[..2]),
-                "fileDefs",
-                key.Prefix,
-                MaxPackSize,
-                ComputeHash),
+            "fileDefs" => new IndexedPackFileHandler(Path.Combine(_basePath, "FileDefs", key.Prefix[..2]), "fileDefs", key.Prefix, MaxPackSize, ComputeFileDefHash),
 
             _ => throw new NotSupportedException($"Unknown handler category '{key.Category}'.")
         };
@@ -72,6 +64,10 @@ public class ObjectStore : IDisposable, IAsyncDisposable
     
     public async Task<bool> RebuildStorageAsync()
     {
+        // Phase 1: relocate any file-def entries that are in the wrong prefix bucket
+        // (can happen when upgrading from the old StorageKey-keyed store to FileHash-keyed).
+        await RepackFileDefsAsync(CancellationToken.None).ConfigureAwait(false);
+
         using var throttler = new SemaphoreSlim(Environment.ProcessorCount);
         var tasks = new List<Task<bool>>(8192);
 
@@ -85,10 +81,13 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         var results = await Task.WhenAll(tasks).ConfigureAwait(false);
         return results.All(static x => x);
     }
-
-    /// <inheritdoc/>
+    
     public async Task<bool> RebuildStorageWithProgressAsync(IProgress<bool> progress, CancellationToken cancellationToken)
     {
+        // Phase 1: relocate any file-def entries that are in the wrong prefix bucket.
+        // Progress is not reported for this phase (it is a prerequisite scan, not a per-bucket step).
+        await RepackFileDefsAsync(cancellationToken).ConfigureAwait(false);
+
         using var throttler = new SemaphoreSlim(Environment.ProcessorCount);
         var allSucceeded = true;
 
@@ -111,6 +110,144 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         }
 
         return allSucceeded;
+    }
+
+    /// <summary>
+    /// Scans every FileDef prefix bucket for entries that are stored under the wrong prefix
+    /// (i.e. keyed by the old <c>StorageKey = BLAKE3(record blob)</c> instead of the current
+    /// <c>FileHash = BLAKE3(file bytes)</c>) and migrates them to the correct bucket.
+    ///
+    /// <para>
+    /// For each misrouted entry the method:
+    /// <list type="number">
+    ///   <item>Writes the blob into the correct bucket (using <see cref="WriteFileDefinitionAsync"/>,
+    ///         which is idempotent — a no-op if already present).</item>
+    ///   <item>Rewrites the source bucket's pack files, dropping the now-relocated entry.</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// This is safe to run against a live store because:
+    /// <list type="bullet">
+    ///   <item>Every entry is written to the target bucket <em>before</em> it is removed
+    ///         from the source bucket, so no data is ever lost.</item>
+    ///   <item>The method is idempotent: re-running it on an already-migrated store is a no-op.</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    private async Task RepackFileDefsAsync(CancellationToken cancellationToken)
+    {
+        var fileDefsRoot = Path.Combine(_basePath, "FileDefs");
+        if (!Directory.Exists(fileDefsRoot))
+            return;
+
+        using var throttler = new SemaphoreSlim(Math.Max(1, Environment.ProcessorCount / 2));
+
+        // Pass 1 — for each bucket, identify misrouted entries and write them to the correct bucket.
+        // Collect the set of source prefixes that had at least one misrouted entry (need pack rewrite).
+        var dirtyPrefixes = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+        var scanTasks = new List<Task>(4096);
+        for (var i = 0; i < 4096; i++)
+        {
+            var prefix = i.ToString("x3");
+            scanTasks.Add(ScanAndRelocateAsync(prefix));
+        }
+
+        await Task.WhenAll(scanTasks).ConfigureAwait(false);
+
+        // Pass 2 — for each dirty source bucket, rewrite its pack files, filtering out
+        // entries that now belong to a different prefix.
+        var rewriteTasks = dirtyPrefixes
+            .Distinct(StringComparer.Ordinal)
+            .Select(RewriteBucketAsync)
+            .ToList();
+
+        await Task.WhenAll(rewriteTasks).ConfigureAwait(false);
+
+        return;
+
+        async Task ScanAndRelocateAsync(string sourcePrefx)
+        {
+            await throttler.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var bucketDir = Path.Combine(fileDefsRoot, sourcePrefx[..2]);
+                var pattern = $"fileDefs{sourcePrefx}-*.pack";
+
+                if (!Directory.Exists(bucketDir))
+                    return;
+
+                var packFiles = Directory.EnumerateFiles(bucketDir, pattern).ToArray();
+                if (packFiles.Length == 0)
+                    return;
+
+                foreach (var packFile in packFiles)
+                {
+                    await using var fs = new FileStream(
+                        packFile,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read,
+                        bufferSize: 128 * 1024,
+                        options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+                    await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(fs, ignoreChecks: true, cancellationToken).ConfigureAwait(false))
+                    {
+                        Hash32 fileHash;
+                        try
+                        {
+                            fileHash = FileDefinitionRecord.Deserialize(entry.Data).FileHash;
+                        }
+                        catch
+                        {
+                            // Corrupt or unreadable entry — leave it for RebuildIndexFile to handle.
+                            continue;
+                        }
+
+                        var correctPrefix = fileHash.ToHexString()[..3];
+                        if (string.Equals(correctPrefix, sourcePrefx, StringComparison.Ordinal))
+                            continue; // Already in the right bucket.
+
+                        // Write to the correct bucket (idempotent).
+                        await WriteFileDefinitionAsync(entry.Data.AsMemory()).ConfigureAwait(false);
+                        dirtyPrefixes.Add(sourcePrefx);
+                    }
+                }
+            }
+            finally
+            {
+                throttler.Release();
+            }
+        }
+
+        async Task RewriteBucketAsync(string sourcePrefx)
+        {
+            await throttler.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                using var lease = await _handlerCache
+                    .AcquireAsync(new HandlerCacheKey("fileDefs", sourcePrefx), cancellationToken)
+                    .ConfigureAwait(false);
+
+                // Drop any entry whose FileHash prefix no longer matches this bucket.
+                await lease.Handler.RebuildPackFilesAsync(blob =>
+                {
+                    try
+                    {
+                        var fh = FileDefinitionRecord.Deserialize(blob).FileHash;
+                        return string.Equals(fh.ToHexString()[..3], sourcePrefx, StringComparison.Ordinal);
+                    }
+                    catch
+                    {
+                        return true; // Keep corrupt entries for RebuildIndexFile to surface.
+                    }
+                }).ConfigureAwait(false);
+            }
+            finally
+            {
+                throttler.Release();
+            }
+        }
     }
 
     private async Task<bool> RunRebuildAsync(string category, string prefix, SemaphoreSlim throttler)
@@ -146,41 +283,41 @@ public class ObjectStore : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// Stores a serialised <see cref="FileDefinition.FileDefinitionRecord"/> blob in the
-    /// file-definition pack store.  The index key is <c>BLAKE3(blob)</c> — the same
-    /// self-keying scheme used for chunks — so <see cref="RebuildStorageAsync"/> works
-    /// correctly without any special treatment.
+    /// file-definition pack store.  The index key is the <c>FileHash</c> embedded inside
+    /// the record (BLAKE3 of the original file bytes), enabling direct content-addressed
+    /// lookup without a DB round-trip to translate ContentHash → StorageKey.
     /// </summary>
     /// <param name="blob">
     /// Pre-serialised <c>FileDefinitionRecord</c> bytes (produced by
     /// <c>FileDefinitionRecord.Serialize()</c>).
     /// </param>
     /// <returns>
-    /// The storage key (<c>BLAKE3(blob)</c>) and the number of compressed bytes
+    /// The file hash (BLAKE3 of original file content) and the number of compressed bytes
     /// physically written (0 if the entry already existed).
     /// </returns>
-    public async Task<(Hash32 StorageKey, int BytesWritten)> WriteFileDefinitionAsync(ReadOnlyMemory<byte> blob)
+    public async Task<(Hash32 FileHash, int BytesWritten)> WriteFileDefinitionAsync(ReadOnlyMemory<byte> blob)
     {
-        var storageKey = ComputeHash(blob.Span);
-        var prefix     = storageKey.ToHexString()[..3];
+        var fileHash = FileDefinitionRecord.Deserialize(blob.Span).FileHash;
+        var prefix   = fileHash.ToHexString()[..3];
         using var lease = await AcquireFileDefHandlerAsync(prefix).ConfigureAwait(false);
-        var written = await lease.Handler.WriteIndexedDataAsync(storageKey, blob).ConfigureAwait(false);
-        return (storageKey, written);
+        var written = await lease.Handler.WriteIndexedDataAsync(fileHash, blob).ConfigureAwait(false);
+        return (fileHash, written);
     }
 
     /// <summary>
-    /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its storage key
-    /// (<c>BLAKE3(blob)</c> as persisted in <c>FileDefinition.StorageKey</c>).
+    /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its file-content hash
+    /// (BLAKE3 of the original file bytes).
     /// </summary>
-    public async Task<byte[]> ReadFileDefinitionBlobAsync(Hash32 storageKey)
+    public async Task<byte[]> ReadFileDefinitionBlobAsync(Hash32 fileHash)
     {
-        var prefix = storageKey.ToHexString()[..3];
+        var prefix = fileHash.ToHexString()[..3];
         using var lease = await AcquireFileDefHandlerAsync(prefix).ConfigureAwait(false);
-        return await lease.Handler.ReadIndexedDataAsync(storageKey).ConfigureAwait(false);
+        return await lease.Handler.ReadIndexedDataAsync(fileHash).ConfigureAwait(false);
     }
 
     // Keep the string-key overload for convenience (used by LocalFolderChunkStoreStorage).
-    public Task<byte[]> ReadFileDefinitionBlobAsync(string storageKeyHex)
-        => ReadFileDefinitionBlobAsync(Hash32.FromHexString(storageKeyHex));
+    public Task<byte[]> ReadFileDefinitionBlobAsync(string fileHashHex)
+        => ReadFileDefinitionBlobAsync(Hash32.FromHexString(fileHashHex));
 
     public async Task WriteReleasePackageAsync(ReadOnlyMemory<byte> releasePackageData)
     {
@@ -219,6 +356,14 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         var hash = Hasher.Hash(data);
         return new Hash32(hash.AsSpan());
     }
+
+    /// <summary>
+    /// Hash function used for the file-definition category index.
+    /// Extracts the <c>FileHash</c> field from the embedded <see cref="FileDefinitionRecord"/>
+    /// so that the pack-store index is keyed by file-content identity.
+    /// </summary>
+    private static Hash32 ComputeFileDefHash(ReadOnlySpan<byte> data)
+        => FileDefinitionRecord.Deserialize(data).FileHash;
     
     public Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync()
     {
@@ -240,7 +385,11 @@ public class ObjectStore : IDisposable, IAsyncDisposable
                 var fileName = fileInfo.Name;
                 var normalizedPath = filePath.Replace('\\', '/');
 
-                if (fileName.EndsWith(".idx", StringComparison.OrdinalIgnoreCase))
+                // LSM-tree index files: sorted segment indexes (.seg-NNN.idx),
+                // bloom filter sidecars (.seg-NNN.bloom), and Tier-0 append logs (.log).
+                if (fileName.EndsWith(".idx", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.EndsWith(".bloom", StringComparison.OrdinalIgnoreCase) ||
+                    fileName.EndsWith(".log", StringComparison.OrdinalIgnoreCase))
                 {
                     indexBytes += fileInfo.Length;
                     indexFileCount++;

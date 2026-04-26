@@ -23,7 +23,7 @@ public class ReleaseSerializerSnapshots
     {
         var package = await TestData.GetSampleReleasePackageAsync();
 
-        var bytes = await ReleasePackageSerializer.SerializeAsync(package);
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(package);
 
         bytes[0].Should().Be((byte)'B');
         bytes[1].Should().Be((byte)'P');
@@ -44,7 +44,7 @@ internal static class TestData
         using var ms = new MemoryStream();
         await stream.CopyToAsync(ms);
         var bytes = ms.ToArray();
-        var releasePackage = await ReleasePackageSerializer.DeserializeAsync(bytes);
+        var releasePackage = (await ReleasePackageSerializer.DeserializeAsync(bytes)).Package;
         foreach (var outputArtifact in releasePackage.OutputArtifacts.Where(x => x.Backing is OpaqueBlobBacking { Length: null }).Select(x => (OpaqueBlobBacking)x.Backing))
         {
             outputArtifact.Length = 0;

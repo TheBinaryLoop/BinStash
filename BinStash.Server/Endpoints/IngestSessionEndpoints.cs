@@ -69,14 +69,6 @@ public static class IngestSessionEndpoints
             .Produces<byte[]>(contentType: "application/octet-stream")
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status400BadRequest);
-        session.MapPost("/files/storage-keys", GetFileDefinitionStorageKeysAsync)
-            .WithDescription("Returns the StorageKey for each known file definition ContentHash. " +
-                             "Request and response bodies are raw binary: request is a TransposeCompressed list of 32-byte content hashes; " +
-                             "response is N×64 bytes (32-byte ContentHash + 32-byte StorageKey per entry) for all hashes that are known to the server.")
-            .WithSummary("Get File Definition Storage Keys")
-            .Produces<byte[]>(contentType: "application/octet-stream")
-            .Produces(StatusCodes.Status404NotFound)
-            .Produces(StatusCodes.Status400BadRequest);
         session.MapPost("/files/batch", UploadFileDefinitionsBatchAsync)
             .WithDescription("Uploads a batch of file definitions to the chunk store.")
             .WithSummary("Upload File Definitions Batch")
@@ -116,14 +108,20 @@ public static class IngestSessionEndpoints
         return group;
     }
 
-    private static async Task<IResult> CreateIngestSessionAsync(Guid repoId, BinStashDbContext db)
+    private static async Task<IResult> CreateIngestSessionAsync(Guid repoId, CreateIngestSessionRequest? body, BinStashDbContext db)
     {
         // If we have authentication, we can link the session to a user. We could also enforce per-user limits.
         // For now, we just create a session with a random ID and 30-minute expiry.
 
+        if (body is null)
+            return Results.BadRequest("Request body is required.");
+        
         var repo = await db.Repositories.FindAsync(repoId);
         if (repo is null)
-            return Results.Json(new { error = "No repo found" }, statusCode: 404);
+            return Results.Problem("No repo found", statusCode: 404);
+        
+        if (db.Releases.Any(r => r.RepoId == repoId && r.Version == body.IntendedRelease))
+            return Results.Problem("A release with the intended version already exists for this repository.", statusCode: 400);
         
         var session = new IngestSession
         {
@@ -132,7 +130,8 @@ public static class IngestSessionEndpoints
             StartedAt = DateTimeOffset.UtcNow,
             LastUpdatedAt = DateTimeOffset.UtcNow,
             ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
-            State = IngestSessionState.Created
+            State = IngestSessionState.Created,
+            IntendedRelease = body.IntendedRelease
         };
         
         db.IngestSessions.Add(session);
@@ -153,47 +152,6 @@ public static class IngestSessionEndpoints
         return Results.Json(stats);
     }
     
-    private static async Task<IResult> GetFileDefinitionStorageKeysAsync(Guid repoId, Guid sessionId, HttpRequest request, BinStashDbContext db)
-    {
-        try
-        {
-            var contentHashes = await ChecksumCompressor.TransposeDecompressHashesAsync(request.Body);
-
-            var ingestSession = await db.IngestSessions.FindAsync(sessionId);
-            var repo = await db.Repositories.FindAsync(repoId);
-            if (repo == null || ingestSession == null)
-                return Results.NotFound();
-
-            var store = await db.ChunkStores.FindAsync(repo.ChunkStoreId);
-            if (store == null)
-                return Results.NotFound();
-
-            if (!contentHashes.Any())
-                return Results.Bytes([], "application/octet-stream");
-
-            // Query StorageKey for every known content hash in this chunk store.
-            var pairs = await db.FileDefinitions
-                .Where(fd => fd.ChunkStoreId == store.Id && contentHashes.Contains(fd.StorageKey))
-                .Select(fd => new { fd.Checksum, fd.StorageKey })
-                .ToListAsync();
-
-            // Response: N × 64 bytes (32-byte ContentHash || 32-byte StorageKey)
-            var buf = new byte[pairs.Count * 64];
-            var span = buf.AsSpan();
-            for (var i = 0; i < pairs.Count; i++)
-            {
-                pairs[i].Checksum.WriteBytes(span[(i * 64)..(i * 64 + 32)]);
-                pairs[i].StorageKey.WriteBytes(span[(i * 64 + 32)..(i * 64 + 64)]);
-            }
-
-            return Results.Bytes(buf, "application/octet-stream");
-        }
-        catch (Exception)
-        {
-            return Results.BadRequest("Invalid request body.");
-        }
-    }
-
     private static async Task<IResult> GetMissingFileDefinitionsAsync(Guid repoId, Guid sessionId, HttpRequest request, BinStashDbContext db)
     {
         try
@@ -309,7 +267,6 @@ public static class IngestSessionEndpoints
                 Checksum     = fileDefinition.Key,
                 ChunkStoreId = storeMeta.Id,
                 Length       = fileDefinition.Value.Length,
-                StorageKey   = storeFileDefinitionResult.StorageKey
             };
             
             db.FileDefinitions.Add(entry);
@@ -562,8 +519,11 @@ public static class IngestSessionEndpoints
         var releaseId = Guid.CreateVersion7();
 
         await using var stream = file.OpenReadStream();
-        var releasePackage = await ReleasePackageSerializer.DeserializeAsync(stream);
+        var (releasePackage, _) = await ReleasePackageSerializer.DeserializeAsync(stream);
 
+        if (ingestSession.IntendedRelease != null && !string.Equals(ingestSession.IntendedRelease, releasePackage.Version, StringComparison.OrdinalIgnoreCase))
+            return Results.BadRequest($"Release version '{releasePackage.Version}' does not match the intended version '{ingestSession.IntendedRelease}' for this ingest session.");
+        
         if (await db.Releases.AnyAsync(r => r.RepoId == repo.Id && r.Version == releasePackage.Version))
             return Results.Conflict($"A release with version '{releasePackage.Version}' already exists for this repository.");
 
@@ -574,7 +534,7 @@ public static class IngestSessionEndpoints
         releasePackage.RepoId = repo.Id.ToString();
 
         await using var releasePackageStream = new MemoryStream();
-        await ReleasePackageSerializer.SerializeAsync(releasePackageStream, releasePackage);
+        _ = await ReleasePackageSerializer.SerializeAsync(releasePackageStream, releasePackage);
         var releasePackageData = releasePackageStream.ToArray();
         var releasePackageHash = new Hash32(Blake3.Hasher.Hash(releasePackageData).AsSpan());
 
@@ -605,8 +565,8 @@ public static class IngestSessionEndpoints
 
         var outputArtifacts = releasePackage.OutputArtifacts;
 
-        var allReferencedStorageKeys = CollectReferencedStorageKeys(outputArtifacts);
-        var distinctStorageKeys = allReferencedStorageKeys.Distinct().ToList();
+        var allReferencedFileHashes = CollectReferencedFileHashes(outputArtifacts);
+        var distinctFileHashes = allReferencedFileHashes.Distinct().ToList();
 
         ulong totalLogicalBytes = 0;
         foreach (var artifact in outputArtifacts)
@@ -616,14 +576,14 @@ public static class IngestSessionEndpoints
 
         ingestSession.TotalLogicalBytes = (long)totalLogicalBytes;
 
-        var fileDefinitionBytesByStorageKey = distinctStorageKeys.Count == 0
+        var fileDefinitionBytesByChecksum = distinctFileHashes.Count == 0
             ? new Dictionary<string, byte[]>()
             : await chunkStoreService.RetrieveFileDefinitionsAsync(
                 store,
-                distinctStorageKeys.Select(k => k.ToHexString()).ToArray());
+                distinctFileHashes.Select(k => k.ToHexString()).ToArray());
 
         var releaseUniqueChunks = new HashSet<Hash32>();
-        foreach (var (_, blob) in fileDefinitionBytesByStorageKey)
+        foreach (var (_, blob) in fileDefinitionBytesByChecksum)
         {
             foreach (var chunkHash in FileDefinitionRecord.Deserialize(blob).ChunkHashes)
                 releaseUniqueChunks.Add(chunkHash);
@@ -687,30 +647,30 @@ public static class IngestSessionEndpoints
         return Results.Created($"/api/releases/{releaseId}", null);
     }
     
-    private static List<Hash32> CollectReferencedStorageKeys(IEnumerable<OutputArtifact> outputArtifacts)
+    private static List<Hash32> CollectReferencedFileHashes(IEnumerable<OutputArtifact> outputArtifacts)
     {
-        var keys = new List<Hash32>();
+        var hashes = new List<Hash32>();
 
         foreach (var artifact in outputArtifacts)
         {
             switch (artifact.Backing)
             {
                 case OpaqueBlobBacking opaque:
-                    if (opaque.StorageKey != null)
-                        keys.Add(opaque.StorageKey.Value);
+                    if (opaque.ContentHash != null)
+                        hashes.Add(opaque.ContentHash.Value);
                     break;
 
                 case ReconstructedContainerBacking reconstructed:
                     foreach (var member in reconstructed.Members)
                     {
-                        if (member.StorageKey != null)
-                            keys.Add(member.StorageKey.Value);
+                        if (member.ContentHash != null)
+                            hashes.Add(member.ContentHash.Value);
                     }
                     break;
             }
         }
 
-        return keys;
+        return hashes;
     }
 
     private static ulong CalculateLogicalArtifactSize(OutputArtifact artifact)

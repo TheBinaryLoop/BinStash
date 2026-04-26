@@ -47,7 +47,7 @@ public partial class TestSerializationCommand : ICommand
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            deserialized = await ReleasePackageSerializer.DeserializeAsync(fileBytes);
+            deserialized = (await ReleasePackageSerializer.DeserializeAsync(fileBytes)).Package;
             await console.Output.WriteLineAsync($"Deserialization successful. Time taken: {sw.ElapsedMilliseconds} ms");
         }
         catch (Exception e)
@@ -60,7 +60,7 @@ public partial class TestSerializationCommand : ICommand
         sw.Restart();
         try
         {
-            reserialized = await ReleasePackageSerializer.SerializeAsync(deserialized);
+            reserialized = (await ReleasePackageSerializer.SerializeAsync(deserialized)).Data;
             await console.Output.WriteLineAsync($"Serialization successful. Time taken: {sw.ElapsedMilliseconds} ms");
         }
         catch (Exception e)

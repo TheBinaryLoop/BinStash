@@ -13,7 +13,9 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.IO.Pipelines;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Web;
@@ -300,12 +302,24 @@ public class BinStashApiClient
         }).ToList();
     }
     
-    public async Task CreateReleaseAsync(Guid tenantId, Guid ingestSessionId, string repositoryId, ReleasePackage release, ReleasePackageSerializerOptions? options = null)
+    public async Task<ReleaseDefinitionMetrics> CreateReleaseAsync(Guid tenantId, Guid ingestSessionId, string repositoryId, ReleasePackage release, ReleasePackageSerializerOptions? options = null)
     {
-        using var uploadStream = new MemoryStream();
-        await ReleasePackageSerializer.SerializeAsync(uploadStream, release, options);
-        
-        uploadStream.Position = 0;
+        // Serialize .rdef into a pipe: the write end is filled by the serializer and
+        // the read end is consumed by HttpClient, avoiding a full in-memory buffer.
+        var pipe = new Pipe();
+        ReleaseDefinitionMetrics? serializerMetrics = null;
+
+        var serializeTask = Task.Run(async () =>
+        {
+            try
+            {
+                serializerMetrics = await ReleasePackageSerializer.SerializeAsync(pipe.Writer.AsStream(), release, options);
+            }
+            finally
+            {
+                await pipe.Writer.CompleteAsync();
+            }
+        });
 
         // Create multipart form data
         using var form = new MultipartFormDataContent();
@@ -315,13 +329,16 @@ public class BinStashApiClient
         form.Add(new StringContent(repositoryId), "repositoryId");
 
         // Add the releaseDefinition file
-        var fileContent = new StreamContent(uploadStream);
-        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-bs-rdef");
+        var fileContent = new StreamContent(pipe.Reader.AsStream());
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/x-bs-rdef");
 
         // This name MUST match what the server expects: "releaseDefinition"
         form.Add(fileContent, "releaseDefinition", "release.rdef");
 
         var response = await _httpClient.PostAsync($"tenants/{tenantId}/repositories/{repositoryId}/ingest/sessions/{ingestSessionId}/finalize", form);
+        
+        await serializeTask; // propagate any serializer exception
+        
         response.EnsureSuccessStatusCode();
         
         if (response.StatusCode != HttpStatusCode.Created)
@@ -329,6 +346,8 @@ public class BinStashApiClient
             var body = await response.Content.ReadAsStringAsync();
             throw new InvalidOperationException($"Failed to create release: {response.StatusCode} - {body}");
         }
+
+        return serializerMetrics!;
     }
 
     
@@ -535,49 +554,6 @@ public class BinStashApiClient
         await EnsureCompatibleAsync(response);
         var respStream = await response.Content.ReadAsStreamAsync();
         return await ChecksumCompressor.TransposeDecompressHashesAsync(respStream);
-    }
-
-    #endregion
-
-    #region File Definition Storage Keys
-
-    /// <summary>
-    /// Fetches the <c>StorageKey</c> for each content hash that is already known to the
-    /// server (i.e., was previously uploaded to the chunk store for this repository).
-    /// Content hashes that the server does not recognise are silently omitted from the result.
-    /// </summary>
-    public async Task<Dictionary<Hash32, Hash32>> GetFileDefinitionStorageKeysAsync(
-        Guid tenantId,
-        Guid repositoryId,
-        Guid ingestSessionId,
-        IReadOnlyList<Hash32> contentHashes,
-        CancellationToken cancellationToken = default)
-    {
-        if (contentHashes.Count == 0)
-            return new Dictionary<Hash32, Hash32>();
-
-        var compressedBody = ChecksumCompressor.TransposeCompress(
-            contentHashes.Select(h => h.GetBytes()).ToList());
-
-        var response = await _httpClient.PostAsync(
-            $"tenants/{tenantId}/repositories/{repositoryId}/ingest/sessions/{ingestSessionId}/files/storage-keys",
-            new ByteArrayContent(compressedBody),
-            cancellationToken);
-
-        await EnsureCompatibleAsync(response);
-
-        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-
-        // Response: N × 64 bytes (32-byte ContentHash || 32-byte StorageKey)
-        var result = new Dictionary<Hash32, Hash32>(bytes.Length / 64);
-        for (var i = 0; i + 64 <= bytes.Length; i += 64)
-        {
-            var contentHash = new Hash32(bytes.AsSpan(i, 32));
-            var storageKey  = new Hash32(bytes.AsSpan(i + 32, 32));
-            result[contentHash] = storageKey;
-        }
-
-        return result;
     }
 
     #endregion

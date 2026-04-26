@@ -22,8 +22,16 @@ namespace BinStash.Server.Middlewares;
 
 public sealed class SetupGateMiddleware(RequestDelegate next)
 {
+    private static bool _setupComplete;
+    
     public async Task InvokeAsync(HttpContext ctx, BinStashDbContext db, IOptions<TenancySettings> tenancyOpts)
     {
+        if (_setupComplete)
+        {
+            await next(ctx);
+            return;
+        }
+        
         var path = ctx.Request.Path;
         
         // Allow setup + tooling endpoints
@@ -52,6 +60,8 @@ public sealed class SetupGateMiddleware(RequestDelegate next)
             });
             return;
         }
+        
+        _setupComplete = true;
 
         await next(ctx);
     }

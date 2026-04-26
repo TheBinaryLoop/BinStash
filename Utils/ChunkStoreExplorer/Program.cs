@@ -1202,7 +1202,7 @@ static async Task<ExplorerLevel?> BuildRdefArtifactListLevelAsync(RdefFileTag ta
     catch { return null; }
 
     ReleasePackage pkg;
-    try { pkg = await ReleasePackageSerializer.DeserializeAsync(data); }
+    try { pkg = (await ReleasePackageSerializer.DeserializeAsync(data)).Package; }
     catch { return null; }
 
     if (pkg.OutputArtifacts.Count == 0)

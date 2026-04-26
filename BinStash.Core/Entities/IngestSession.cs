@@ -54,4 +54,7 @@ public class IngestSession
     
     // Metadata stats
     public int MetadataSize { get; set; }
+    
+    // Intended release version (stored for observability; authoritative check is at finalize time)
+    public string? IntendedRelease { get; set; }
 }

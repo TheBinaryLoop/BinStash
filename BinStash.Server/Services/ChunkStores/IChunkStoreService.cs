@@ -26,15 +26,15 @@ public interface IChunkStoreService
     Task<byte[]?> RetrieveChunkAsync(ChunkStore store, string chunkId);
     /// <summary>
     /// Stores a serialised <c>FileDefinitionRecord</c> blob in the pack store.
-    /// The index key is <c>BLAKE3(blob)</c> (self-keyed).
+    /// The index key is the <c>FileHash</c> embedded in the record (BLAKE3 of the original file bytes).
     /// </summary>
-    Task<(bool Success, Hash32 StorageKey, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob);
+    Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob);
 
     /// <summary>
-    /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its storage key
-    /// (as persisted in <c>FileDefinition.StorageKey</c>).
+    /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its file hash
+    /// (<c>BLAKE3(file bytes)</c>).
     /// </summary>
-    Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string storageKeyHex);
+    Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string fileHashHex);
     Task<bool> StoreReleasePackageAsync(ChunkStore store, ReadOnlyMemory<byte> packageData);
     Task<byte[]?> RetrieveReleasePackageAsync(ChunkStore store, string packageId);
     Task<bool> DeleteReleasePackageAsync(ChunkStore store, string packageId);

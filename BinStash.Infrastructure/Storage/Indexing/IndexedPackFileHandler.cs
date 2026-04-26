@@ -127,19 +127,25 @@ internal sealed class IndexedPackFileHandler : IDisposable
     // -----------------------------------------------------------------------
     // LRU cache integration
 
-    private int _activeLeaseCount;
-    private int _disposeRequested;
+    // Combined state field: encodes both the active-lease count and the
+    // dispose-requested flag in a single int so that TryMarkForDispose and
+    // TryAcquireLease are mutually exclusive without a separate lock.
+    //
+    // Layout:
+    //   int.MinValue  (0x80000000) = dispose sentinel; no leases may be acquired
+    //   0 .. int.MaxValue           = number of active leases (dispose not requested)
+    //
+    // TryAcquireLease: spins until it can CAS _state from N → N+1 where N >= 0.
+    // TryMarkForDispose: CAS _state from exactly 0 → int.MinValue (idle → disposed).
+    // ReleaseLease: Interlocked.Decrement.
+    // IsIdle: _state == 0.
+    private int _state; // 0 = idle; >0 = active leases; int.MinValue = dispose requested
     private bool _disposed;
 
     // -----------------------------------------------------------------------
     // Constructor
 
-    public IndexedPackFileHandler(
-        string directoryPath,
-        string dataFileName,
-        string prefix,
-        long maxPackFileSize,
-        Func<ReadOnlySpan<byte>, Hash32> computeHash)
+    public IndexedPackFileHandler(string directoryPath, string dataFileName, string prefix, long maxPackFileSize, Func<ReadOnlySpan<byte>, Hash32> computeHash)
     {
         _maxPackFileSize = maxPackFileSize;
         _computeHash     = computeHash ?? throw new ArgumentNullException(nameof(computeHash));
@@ -607,7 +613,16 @@ internal sealed class IndexedPackFileHandler : IDisposable
     /// Rewrites all pack files to remove orphaned / corrupt entries, then
     /// calls <see cref="RebuildIndexFile"/>.
     /// </summary>
-    public async Task<bool> RebuildPackFilesAsync()
+    public Task<bool> RebuildPackFilesAsync()
+        => RebuildPackFilesAsync(shouldKeep: null);
+
+    /// <summary>
+    /// Rewrites all pack files, optionally filtering entries via <paramref name="shouldKeep"/>,
+    /// then calls <see cref="RebuildIndexFile"/>.
+    /// Entries for which <paramref name="shouldKeep"/> returns <c>false</c> are silently dropped.
+    /// Pass <c>null</c> to keep all entries (equivalent to <see cref="RebuildPackFilesAsync()"/>).
+    /// </summary>
+    public async Task<bool> RebuildPackFilesAsync(Func<byte[], bool>? shouldKeep)
     {
         await EnsureIndexLoadedAsync().ConfigureAwait(false);
         await _writeLock.WaitAsync().ConfigureAwait(false);
@@ -640,7 +655,10 @@ internal sealed class IndexedPackFileHandler : IDisposable
                     options: FileOptions.Asynchronous);
 
                 await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(fs, ignoreChecks: true).ConfigureAwait(false))
-                    await PackFileEntry.WriteAsync(tmpFs, entry.Data).ConfigureAwait(false);
+                {
+                    if (shouldKeep is null || shouldKeep(entry.Data))
+                        await PackFileEntry.WriteAsync(tmpFs, entry.Data).ConfigureAwait(false);
+                }
 
                 await tmpFs.FlushAsync().ConfigureAwait(false);
                 tmpFs.Flush(flushToDisk: true);
@@ -720,27 +738,32 @@ internal sealed class IndexedPackFileHandler : IDisposable
 
     internal bool TryAcquireLease()
     {
+        // Atomically increment the lease count only when the handler has not
+        // been marked for dispose (state >= 0).  Spins on contention.
         while (true)
         {
-            if (Volatile.Read(ref _disposeRequested) != 0)
+            var current = Volatile.Read(ref _state);
+            if (current < 0) // int.MinValue sentinel — dispose requested
                 return false;
 
-            Interlocked.Increment(ref _activeLeaseCount);
-
-            if (Volatile.Read(ref _disposeRequested) == 0)
+            if (Interlocked.CompareExchange(ref _state, current + 1, current) == current)
                 return true;
-
-            Interlocked.Decrement(ref _activeLeaseCount);
         }
     }
 
     internal void ReleaseLease()
-        => Interlocked.Decrement(ref _activeLeaseCount);
+        => Interlocked.Decrement(ref _state);
 
-    internal bool IsIdle => Volatile.Read(ref _activeLeaseCount) == 0;
+    internal bool IsIdle => Volatile.Read(ref _state) == 0;
 
+    /// <summary>
+    /// Atomically transitions the handler from idle (state == 0) to the
+    /// dispose-requested sentinel (int.MinValue).  Returns true only when
+    /// the CAS succeeds, guaranteeing that no lease is active and no new
+    /// lease can be acquired afterwards.
+    /// </summary>
     internal bool TryMarkForDispose()
-        => Interlocked.CompareExchange(ref _disposeRequested, 1, 0) == 0;
+        => Interlocked.CompareExchange(ref _state, int.MinValue, 0) == 0;
 
     // -----------------------------------------------------------------------
     // Pack file management

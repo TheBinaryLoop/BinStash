@@ -21,6 +21,7 @@ using BinStash.Grpc;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
+using System.Threading.Channels;
 using ZstdNet;
 
 namespace BinStash.Cli.Infrastructure;
@@ -93,16 +94,37 @@ public sealed class BinStashGrpcClient
 
         using var call = _ingestClient.UploadChunks(headers: headers, cancellationToken: cancellationToken);
 
-        foreach (var chunk in chunkList)
+        // Pipeline: a producer loads chunk data from disk into a bounded channel while
+        // the consumer writes loaded messages to the gRPC stream concurrently,
+        // hiding I/O latency behind network writes.
+        const int pipelineDepth = 4;
+        var channel = Channel.CreateBounded<(ChunkMapEntry Entry, byte[] Data)>(
+            new BoundedChannelOptions(pipelineDepth) { SingleReader = true, SingleWriter = true });
+
+        // Producer: load chunks from disk and push into the channel.
+        var producer = Task.Run(async () =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                foreach (var chunk in chunkList)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var data = (await chunker.LoadChunkDataAsync(chunk, cancellationToken)).Data;
+                    await channel.Writer.WriteAsync((chunk, data), cancellationToken);
+                }
+            }
+            finally
+            {
+                channel.Writer.Complete();
+            }
+        }, cancellationToken);
 
-            var data = (await chunker.LoadChunkDataAsync(chunk, cancellationToken)).Data;
-
+        // Consumer: read from channel and send via gRPC.
+        await foreach (var (chunk, data) in channel.Reader.ReadAllAsync(cancellationToken))
+        {
             await call.RequestStream.WriteAsync(new UploadChunkRequest
             {
                 Checksum = ByteString.CopyFrom(chunk.Checksum.GetBytes()),
-                // bytes: May contain any arbitrary sequence of bytes no longer than 2^32.
                 Data = ByteString.CopyFrom(data)
             }, cancellationToken);
 
@@ -112,16 +134,11 @@ public sealed class BinStashGrpcClient
                 await progressCallback(uploaded, total);
         }
 
+        await producer; // propagate any producer exception
+
         await call.RequestStream.CompleteAsync();
 
         var reply = await call.ResponseAsync.ConfigureAwait(false);
-
-        /*_console?.WriteLine(
-            $"gRPC upload complete: seen_total={reply.ChunksSeenTotal}, " +
-            $"seen_unique={reply.ChunksSeenUnique}, " +
-            $"written_new={reply.ChunksWrittenNew}, " +
-            $"logical_bytes={reply.NewUniqueLogicalBytes}, " +
-            $"compressed_bytes={reply.NewCompressedBytes}");*/
 
         if (completedCallback != null)
             await completedCallback(reply);

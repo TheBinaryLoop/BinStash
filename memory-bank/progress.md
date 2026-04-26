@@ -2,9 +2,59 @@
 
 ## Current status
 
-Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC ingest, REST endpoints, multi-tenancy, and auth are implemented. No automated deployment pipeline exists. CliFx 3.0.0 upgrade is partially complete (API migration has outstanding LSP errors).
+Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC ingest, REST endpoints, multi-tenancy, and auth are implemented. No automated deployment pipeline exists. CliFx 3.0.0 upgrade is partially complete.
+
+**Completed 2026-04-25:** Release flow optimization and V6 rdef migration. Build: 0 errors. 337 tests pass.
+- **V6 rdef format:** `§0x02` stores FileHash (same as V4). V5 (StorageKey-based) erased. V5 deserializer retained for upgrade path.
+- **Pack store keyed by FileHash:** `ObjectStore.WriteFileDefinitionAsync` now uses `FileDefinitionRecord.Deserialize(blob).FileHash` as the pack index key. `IndexedPackFileHandler` for fileDefs uses `FileHash` extractor.
+- **`FileDefinition.StorageKey` DB column dropped** (EF migration `DropFileDefinitionStorageKey`).
+- **`FileDefinitionStorageKeyComputer` deleted.**
+- **Stats section (§0x0A)** now written by the serializer (was previously missing).
+- **Round trip reductions:** Removed redundant `GetRepositoryAsync` (call #3) and full release list scan (call #2) from `ReleaseAddOrchestrator`. Minimum round trips: 4 (was 6).
+- **gRPC batch dedup:** `UploadChunks` now checks existence in batches of 64 instead of per-chunk.
+- **FastCDC block reads:** `ChunkUsingBuffer` uses 64KB block reads instead of `ReadByte()`.
+- **gRPC pipeline:** `BinStashGrpcClient.UploadChunksAsync` uses producer-consumer `Channel<T>` (depth 4).
+- **Streaming .rdef upload:** `BinStashApiClient.CreateReleaseAsync` uses `Pipe` instead of `MemoryStream`.
+- **`IngestSession.IntendedRelease`** nullable string field added; stored from `CreateIngestSessionRequest` body.
+- EF migration `AddIngestSessionIntendedRelease` added.
 
 **Completed 2026-04-24:** Server codebase cleanup pass. Build: 0 errors.
+
+**Completed 2026-04-15:** `BinStash.ChunkStoreExplorer` redesigned as a file-explorer-style split-pane TUI. Builds with 0 errors, 0 warnings.
+
+**Completed 2026-04-14:** `BinStash.RepackFileDefs`, `BinStash.StoreMigration`, BINST-100, BINST-99, AOT fix, V1/V2 Length fix, frontend upgrade pipeline integration, BINST-93.
+
+## What works
+
+- Full ingestion pipeline (CLI → chunking → dedup → gRPC upload → REST finalize)
+- V6 `.rdef` format (read V1–V6); V5 retained for upgrade path
+- Pack-file storage with three-tier LSM-tree index (fileDefs keyed by FileHash)
+- GraphQL management API (HotChocolate 15), REST endpoints, gRPC streaming ingest
+- "Smart" composite auth (JWT Bearer / ApiKey / Cookie)
+- Multi-tenancy (Single/Multi mode), RBAC
+- Background services: SetupBootstrapper, ChunkStoreProbeService, ChunkStoreStatsHostedService, ReleaseUpgradeBackgroundService, ChunkStoreRebuildBackgroundService
+- 24 CLI commands; SVN import subsystem (SQLite-backed resumable state)
+- 32 EF Core migrations (auto-applied at startup)
+
+## Test suite
+
+| Project | Count |
+|---|---|
+| `BinStash.Core.Tests` | 283 |
+| `BinStash.Serializers.Tests` | 44 |
+| `BinStash.Server.Tests` | 10 |
+| **Total** | **337** |
+
+## Known gaps
+
+- CliFx 3.0 migration incomplete
+- S3 storage backend not implemented
+- `chunk-store delete` / `release delete` throw `NotImplementedException`
+- Stale docs (V2/V3 format, .NET 9 references)
+- No integration/E2E tests
+- No automated deployment pipeline
+
+
 - Deleted empty directories/files: `BinStash.Core/ChunkStreaming/`, `ZipFormatDetector.cs`, `SingleTenantBootstrapper.cs`. Removed stale `.csproj` `<Compile Remove>` entry.
 - Removed commented-out dead code: `GetReleaseStreamAsync`, `ChunkStoreShowCommand` duplicate, `ChunkStoreTestCommand`, `SingleTenantBootstrapper` registration.
 - REST/GraphQL boundary: removed duplicate or GraphQL-covered REST endpoints from `TenantEndpoints`, `RepositoryEndpoints`, `ReleaseEndpoints`, `ServiceAccountEndpoints`. Fixed `Name = chunkStore.Name` → `Name = repo.Name` bug in `RepositoryEndpoints`.

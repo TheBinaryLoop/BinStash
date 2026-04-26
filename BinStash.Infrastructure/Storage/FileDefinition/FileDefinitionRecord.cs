@@ -16,7 +16,7 @@
 using System.Buffers.Binary;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Compression;
-using Blake3;
+using BinStash.Infrastructure.Storage.Indexing;
 
 namespace BinStash.Infrastructure.Storage.FileDefinition;
 
@@ -39,17 +39,11 @@ namespace BinStash.Infrastructure.Storage.FileDefinition;
 /// </para>
 ///
 /// <para>
-/// The pack-entry index key is <c>BLAKE3(entire record blob)</c>, making the
-/// file-definition category fully self-keyed — identical to how chunk entries
-/// work.  <see cref="IndexedPackFileHandler.RebuildIndexFile"/> therefore
-/// needs no special treatment for file definitions.
-/// </para>
-///
-/// <para>
-/// To look up a file definition by its <em>file content hash</em> the caller
-/// must know the <see cref="StorageKey"/> (= <c>BLAKE3(record blob)</c>).
-/// This is persisted as <c>FileDefinition.StorageKey</c> in the database when
-/// the record is first written.
+/// The pack-entry index key is the <see cref="FileHash"/> embedded in the record
+/// (BLAKE3 of the original file bytes). This means the object store is keyed by
+/// file content identity, matching the <c>FileDefinition.Checksum</c> DB column.
+/// <see cref="IndexedPackFileHandler.RebuildIndexFile"/> extracts the FileHash from
+/// each deserialized record when rebuilding the index.
 /// </para>
 /// </summary>
 public sealed class FileDefinitionRecord
@@ -57,9 +51,9 @@ public sealed class FileDefinitionRecord
     // -----------------------------------------------------------------------
     // Format constants
 
-    public  const uint   Magic         = 0x44465342; // "BSFD" LE
-    public  const byte   CurrentVersion = 1;
-    private const int    FixedHeaderSize = 4 + 1 + 32 + 8 + 4; // 49 bytes
+    private const uint Magic = 0x44465342; // "BSFD" LE
+    private const byte CurrentVersion = 1;
+    private const int FixedHeaderSize = 4 + 1 + 32 + 8 + 4; // 49 bytes
 
     // -----------------------------------------------------------------------
     // Fields
@@ -77,7 +71,7 @@ public sealed class FileDefinitionRecord
     // Serialisation
 
     /// <summary>
-    /// Serialises this record to a byte array ready to be passed to
+    /// Serializes this record to a byte array ready to be passed to
     /// <see cref="ObjectStore.WriteFileDefinitionAsync"/>.
     /// </summary>
     public byte[] Serialize()
@@ -99,21 +93,11 @@ public sealed class FileDefinitionRecord
         return buf;
     }
 
-    /// <summary>
-    /// Computes <c>BLAKE3(Serialize())</c> — the pack-store index key for
-    /// this record.  Must be persisted as <c>FileDefinition.StorageKey</c>.
-    /// </summary>
-    public Hash32 ComputeStorageKey()
-    {
-        var blob = Serialize();
-        return new Hash32(Hasher.Hash(blob).AsSpan());
-    }
-
     // -----------------------------------------------------------------------
     // Deserialisation
 
     /// <summary>
-    /// Deserialises a <see cref="FileDefinitionRecord"/> from the raw bytes
+    /// Deserializes a <see cref="FileDefinitionRecord"/> from the raw bytes
     /// returned by <see cref="ObjectStore.ReadFileDefinitionBlobAsync"/>.
     /// </summary>
     /// <exception cref="InvalidDataException">Blob is too short, magic mismatch, or unsupported version.</exception>
@@ -177,7 +161,7 @@ public sealed class FileDefinitionRecord
         await stream.CopyToAsync(remainder, ct).ConfigureAwait(false);
         remainder.Position = 0;
 
-        var chunkHashes = ChecksumCompressor.TransposeDecompressHashes(remainder);
+        var chunkHashes = await ChecksumCompressor.TransposeDecompressHashesAsync(remainder, ct);
 
         if (chunkHashes.Count != chunkCount)
             throw new InvalidDataException(
