@@ -36,6 +36,12 @@ public interface IChunker
     /// Loads the actual chunk data for one or more chunk map entries from a stream.
     /// </summary>
     Task<ChunkData> LoadChunkDataAsync(Stream stream, ChunkMapEntry chunkInfo, CancellationToken cancellationToken = default);
+    
+    /// <summary>
+    /// Creates a new instance of a streaming chunker that can process data in a streaming fashion, suitable for large files or streams where memory usage needs to be optimized.
+    /// </summary>
+    /// <returns></returns>
+    IStreamingChunker CreateStreamingChunker();
 
     /// <summary>
     /// Recommends chunker settings based on the target folder's content.

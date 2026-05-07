@@ -16,15 +16,18 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Web;
+using BinStash.Cli.Auth;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Ingest;
 using BinStash.Contracts.Release;
-using BinStash.Contracts.Repos;
+using BinStash.Contracts.Repo;
+using BinStash.Contracts.Tenant;
 using BinStash.Core.Chunking;
 using BinStash.Core.Compression;
 using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
+using CliFx.Infrastructure;
 using Microsoft.Extensions.Http;
 using Polly;
 using Polly.Extensions.Http;
@@ -36,9 +39,11 @@ public class BinStashApiClient
 {
     private readonly HttpClient _httpClient;
     private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy = HttpPolicyExtensions.HandleTransientHttpError().OrResult(msg => msg.StatusCode == HttpStatusCode.TooManyRequests).WaitAndRetryAsync(5, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
-
-    public BinStashApiClient(string rootUrl)
+    private readonly IConsole? _console;
+    
+    public BinStashApiClient(string rootUrl, Func<Task<string>>? authTokenFactory = null!, IConsole? console = null)
     {
+        authTokenFactory ??= () => Task.FromResult(string.Empty);
         // Wire it into the handler pipeline manually
         var sockets = new SocketsHttpHandler
         {
@@ -52,23 +57,42 @@ public class BinStashApiClient
             InnerHandler = sockets
         };
         
-        _httpClient = new HttpClient(policyHandler)
+        var authHandler = new AuthHeaderHandler(authTokenFactory)
         {
-            BaseAddress = new Uri(rootUrl)
+            InnerHandler = policyHandler
         };
+        
+        _httpClient = new HttpClient(authHandler)
+        {
+            BaseAddress = new Uri(rootUrl),
+            DefaultRequestHeaders =
+            {
+                { "Accept", "application/json" },
+                { "User-Agent", "BinStash.Cli/1.0" }
+            }
+        };
+        
+        _console = console;
     }
+
+    #region Tenant Info
+
+    public async Task<List<TenantInfoDto>?> GetTenantsAsync()
+        => await GetAsync<List<TenantInfoDto>>("tenants");
+
+    #endregion
     
     #region ChunkStore
     
     public async Task<List<ChunkStoreSummaryDto>?> GetChunkStoresAsync()
-        => await GetAsync<List<ChunkStoreSummaryDto>>("api/chunkstores");
+        => await GetAsync<List<ChunkStoreSummaryDto>>("chunkstores");
     
     public async Task<ChunkStoreDetailDto?> GetChunkStoreAsync(Guid id)
-        => await GetAsync<ChunkStoreDetailDto>($"api/chunkstores/{id}");
+        => await GetAsync<ChunkStoreDetailDto>($"chunkstores/{id}");
     
     public async Task<ChunkStoreDetailDto?> CreateChunkStoreAsync(CreateChunkStoreDto dto)
     {
-        var response = await _httpClient.PostAsJsonAsync("api/chunkstores", dto);
+        var response = await _httpClient.PostAsJsonAsync("chunkstores", dto);
         response.EnsureSuccessStatusCode();
         
         if (response.StatusCode != HttpStatusCode.Created) return null;
@@ -92,7 +116,7 @@ public class BinStashApiClient
     {
         await Task.Delay(0);
         /*using var client = new RestClient(_restClientOptions);
-        var request = new RestRequest($"api/chunkstores/{id}", Method.Delete);
+        var request = new RestRequest($"chunkstores/{id}", Method.Delete);
         
         var response = await client.ExecuteAsync(request);
         
@@ -103,112 +127,19 @@ public class BinStashApiClient
         throw new NotImplementedException("Chunk store deletion is not implemented yet.");
     }
     
-    public async Task<List<Hash32>> GetMissingChunkChecksumsAsync(Guid id,  List<Hash32> chunkChecksums)
-    {
-        var response = await _httpClient.PostAsync($"api/chunkstores/{id}/chunks/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(chunkChecksums.Select(x => x.GetBytes()).ToList())));
-        response.EnsureSuccessStatusCode();
-        var respStream = await response.Content.ReadAsStreamAsync();
-        var decompressedChecksums = await ChecksumCompressor.TransposeDecompressAsync(respStream);
-        return decompressedChecksums.Select(x => new Hash32(x)).ToList();
-    }
-    
-    public async Task<List<Hash32>> GetMissingFileChecksumsAsync(Guid chunkStoreId, List<Hash32> fileChecksums)
-    {
-        var response = await _httpClient.PostAsync($"api/chunkstores/{chunkStoreId}/files/missing", new ByteArrayContent(ChecksumCompressor.TransposeCompress(fileChecksums.Select(x => x.GetBytes()).ToList())));
-        response.EnsureSuccessStatusCode();
-        var respStream = await response.Content.ReadAsStreamAsync();
-        var decompressedChecksums = await ChecksumCompressor.TransposeDecompressAsync(respStream);
-        return decompressedChecksums.Select(x => new Hash32(x)).ToList();
-    }
-    
-    // TODO: Implement gRPC-based upload method to support smoother chunk uploads
-    public async Task UploadChunksAsync(Guid ingestSessionId, IChunker chunker, Guid chunkStoreId, IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
-    {
-        var allChunks = chunksToUpload.ToList();
-        var total = allChunks.Count;
-        var uploaded = 0;
-
-        foreach (var batch in allChunks.Chunk(batchSize))
-        {
-            var uploadDtos = new List<ChunkUploadDto>();
-            foreach (var entry in batch)
-            {
-                var data = (await chunker.LoadChunkDataAsync(entry, cancellationToken)).Data;
-                uploadDtos.Add(new ChunkUploadDto { Checksum = entry.Checksum.ToHexString(), Data = data });
-            }
-
-            var request = new HttpRequestMessage(HttpMethod.Post, $"api/chunkstores/{chunkStoreId}/chunks/batch");
-            request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
-            request.Content = JsonContent.Create(uploadDtos);
-            
-            var response = await _httpClient.SendAsync(request, cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            uploaded += batch.Length;
-            if (progressCallback != null)
-                await progressCallback(uploaded, total);
-        }
-    }
-    
-    public async Task UploadFileDefinitionsAsync(Guid ingestSessionId, Guid chunkStoreId, Dictionary<Hash32, (List<Hash32> Chunks, long Length)> fileDefinitionsToUpload, int batchSize = 1000, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
-    { 
-        var allChunks = fileDefinitionsToUpload.Values.SelectMany(x => x.Chunks).Distinct().ToList();
-        var total = allChunks.Count;
-        var uploaded = 0;
-
-        foreach (var batch in fileDefinitionsToUpload.Chunk(batchSize))
-        {
-            var hashesForBatch = batch.SelectMany(x => x.Value.Chunks).Distinct().ToList();
-            using var ms = new MemoryStream();
-            await using (var compressionStream = new CompressionStream(ms))
-            {
-                await compressionStream.WriteAsync(
-                    ChecksumCompressor.TransposeCompress(hashesForBatch.Select(x => x.GetBytes()).ToList()),
-                    cancellationToken);
-
-                VarIntUtils.WriteVarInt(compressionStream, batch.Length);
-
-                foreach (var (fileHash, (chunkList, fileLength)) in batch)
-                {
-                    await compressionStream.WriteAsync(fileHash.GetBytes(), cancellationToken);
-                    VarIntUtils.WriteVarInt(compressionStream, fileLength);
-                    VarIntUtils.WriteVarInt(compressionStream, chunkList.Count);
-
-                    var indexMap = new Dictionary<Hash32,int>(hashesForBatch.Count);
-                    for (var idx = 0; idx < hashesForBatch.Count; idx++)
-                        indexMap[hashesForBatch[idx]] = idx;
-
-                    foreach (var chunkHash in chunkList)
-                        VarIntUtils.WriteVarInt(compressionStream, indexMap[chunkHash]);
-                }
-            } // the scope ends here, so we're disposing the compression stream which ensures end-of-frame is written
-
-            var compressedData = ms.ToArray();
-        
-            var request = new HttpRequestMessage(HttpMethod.Post, $"api/chunkstores/{chunkStoreId}/files/batch");
-            request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
-            request.Content = new ByteArrayContent(compressedData);
-            
-            var response = await _httpClient.SendAsync(request, cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            uploaded += batch.Length;
-            if (progressCallback != null)
-                await progressCallback(uploaded, total);
-        }
-    }
-
-    
     #endregion
     
     #region Repository
     
     public async Task<List<RepositorySummaryDto>?> GetRepositoriesAsync()
-        => await GetAsync<List<RepositorySummaryDto>>("api/repositories");
+        => await GetAsync<List<RepositorySummaryDto>>("repositories");
+    
+    public async Task<RepositorySummaryDto?> GetRepositoryAsync(Guid repositoryId)
+        => await GetAsync<RepositorySummaryDto>($"repositories/{repositoryId}");
     
     public async Task<RepositorySummaryDto?> CreateRepositoryAsync(CreateRepositoryDto createDto)
     {
-        var response = await _httpClient.PostAsJsonAsync("api/repositories", createDto);
+        var response = await _httpClient.PostAsJsonAsync("repositories", createDto);
         response.EnsureSuccessStatusCode();
         
         if (response.StatusCode != HttpStatusCode.Created)
@@ -235,10 +166,10 @@ public class BinStashApiClient
     #region Release
     
     public async Task<List<ReleaseSummaryDto>?> GetReleasesAsync()
-        => await GetAsync<List<ReleaseSummaryDto>>("api/releases");
+        => await GetAsync<List<ReleaseSummaryDto>>("releases");
     
     public async Task<List<ReleaseSummaryDto>?> GetReleasesForRepoAsync(Guid repositoryId)
-        => await GetAsync<List<ReleaseSummaryDto>>($"api/repositories/{repositoryId}/releases");
+        => await GetAsync<List<ReleaseSummaryDto>>($"repositories/{repositoryId}/releases");
     
     public async Task CreateReleaseAsync(Guid ingestSessionId, string repositoryId, ReleasePackage release, ReleasePackageSerializerOptions? options = null)
     {
@@ -261,7 +192,7 @@ public class BinStashApiClient
         // This name MUST match what the server expects: "releaseDefinition"
         form.Add(fileContent, "releaseDefinition", "release.rdef");
 
-        var response = await _httpClient.PostAsync("api/releases", form);
+        var response = await _httpClient.PostAsync($"repositories/{repositoryId}/ingest/sessions/{ingestSessionId}/finalize", form);
         response.EnsureSuccessStatusCode();
         
         if (response.StatusCode != HttpStatusCode.Created)
@@ -272,9 +203,9 @@ public class BinStashApiClient
     }
 
     
-    public async Task<bool> DownloadReleaseAsync(Guid releaseId, string downloadPath, string? component = null)
+    public async Task<bool> DownloadReleaseAsync(Guid repoId, Guid releaseId, string downloadPath, string? component = null)
     {
-        var downloadUri = new Uri(_httpClient.BaseAddress!, $"api/releases/{releaseId}/download");
+        var downloadUri = new Uri(_httpClient.BaseAddress!, $"repositories/{repoId}/releases/{releaseId}/download");
         var uriBuilder = new UriBuilder(downloadUri);
         var query = HttpUtility.ParseQueryString(string.Empty);
         
@@ -283,6 +214,12 @@ public class BinStashApiClient
 
         var request = new HttpRequestMessage(HttpMethod.Get, uriBuilder.ToString());
         var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        if (response.StatusCode == HttpStatusCode.BadRequest)
+        {
+            _console?.WriteLine($"Bad request: {await response.Content.ReadAsStringAsync()}");
+            return false;
+        }
+        
         response.EnsureSuccessStatusCode();
         
         await using var fsOut = File.OpenWrite(downloadPath);
@@ -296,14 +233,96 @@ public class BinStashApiClient
     
     #region Ingestion Session
     
-    public async Task<Guid> CreateIngestSessionAsync(Guid repoId)
+    public async Task<Guid> CreateIngestSessionAsync(Guid repoId, string intendedRelease)
     { 
-        var response = await PostAsJsonAsync<CreateIngestSessionResponse>("api/ingest/sessions", new CreateIngestSessionRequest(repoId));
+        var response = await PostAsJsonAsync<CreateIngestSessionResponse>($"repositories/{repoId}/ingest/sessions", new CreateIngestSessionRequest($"BinStash.Cli/{Environment.Version}", intendedRelease));
         if (response == null)
             throw new InvalidOperationException("Failed to create ingest session: No response from server.");
         if (response.SessionId == Guid.Empty)
             throw new InvalidOperationException("Failed to create ingest session: Invalid session ID returned.");
         return response.SessionId;
+    }
+    
+    public async Task<List<Hash32>> GetMissingChunkChecksumsAsync(Guid repoId, Guid ingestSessionId,  List<Hash32> chunkChecksums)
+        => await PostAsTransposedCompressedByteArrayAsync($"repositories/{repoId}/ingest/sessions/{ingestSessionId}/chunks/missing", chunkChecksums);
+    
+    public async Task<List<Hash32>> GetMissingFileChecksumsAsync(Guid repoId, Guid ingestSessionId, List<Hash32> fileChecksums)
+        => await PostAsTransposedCompressedByteArrayAsync($"repositories/{repoId}/ingest/sessions/{ingestSessionId}/files/missing", fileChecksums);
+    
+    public async Task UploadChunksAsync(Guid repoId, Guid ingestSessionId, IChunker chunker, IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
+    {
+        var allChunks = chunksToUpload.ToList();
+        var total = allChunks.Count;
+        var uploaded = 0;
+
+        foreach (var batch in allChunks.Chunk(batchSize))
+        {
+            var uploadDtos = new List<ChunkUploadDto>();
+            foreach (var entry in batch)
+            {
+                var data = (await chunker.LoadChunkDataAsync(entry, cancellationToken)).Data;
+                uploadDtos.Add(new ChunkUploadDto { Checksum = entry.Checksum.ToHexString(), Data = data });
+            }
+
+            var request = new HttpRequestMessage(HttpMethod.Post, $"repositories/{repoId}/ingest/sessions/{ingestSessionId}/chunks/batch");
+            request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
+            request.Content = JsonContent.Create(uploadDtos);
+            
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            uploaded += batch.Length;
+            if (progressCallback != null)
+                await progressCallback(uploaded, total);
+        }
+    }
+    
+    public async Task UploadFileDefinitionsAsync(Guid repoId, Guid ingestSessionId, Dictionary<Hash32, (List<Hash32> Chunks, long Length)> fileDefinitionsToUpload, int batchSize = 1000, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
+    { 
+        var allChunks = fileDefinitionsToUpload.Values.SelectMany(x => x.Chunks).Distinct().ToList();
+        var total = allChunks.Count;
+        var uploaded = 0;
+
+        foreach (var batch in fileDefinitionsToUpload.Chunk(batchSize))
+        {
+            var hashesForBatch = batch.SelectMany(x => x.Value.Chunks).Distinct().ToList();
+            using var ms = new MemoryStream();
+            await using (var compressionStream = new CompressionStream(ms))
+            {
+                await compressionStream.WriteAsync(
+                    ChecksumCompressor.TransposeCompress(hashesForBatch.Select(x => x.GetBytes()).ToList()),
+                    cancellationToken);
+
+                await VarIntUtils.WriteVarIntAsync(compressionStream, batch.Length, cancellationToken);
+
+                foreach (var (fileHash, (chunkList, fileLength)) in batch)
+                {
+                    await compressionStream.WriteAsync(fileHash.GetBytes(), cancellationToken);
+                    await VarIntUtils.WriteVarIntAsync(compressionStream, fileLength, cancellationToken);
+                    await VarIntUtils.WriteVarIntAsync(compressionStream, chunkList.Count, cancellationToken);
+
+                    var indexMap = new Dictionary<Hash32,int>(hashesForBatch.Count);
+                    for (var idx = 0; idx < hashesForBatch.Count; idx++)
+                        indexMap[hashesForBatch[idx]] = idx;
+
+                    foreach (var chunkHash in chunkList)
+                        await VarIntUtils.WriteVarIntAsync(compressionStream, indexMap[chunkHash], cancellationToken);
+                }
+            } // the scope ends here, so we're disposing the compression stream which ensures end-of-frame is written
+
+            var compressedData = ms.ToArray();
+        
+            var request = new HttpRequestMessage(HttpMethod.Post, $"repositories/{repoId}/ingest/sessions/{ingestSessionId}/files/batch");
+            request.Headers.Add("X-Ingest-Session-Id", ingestSessionId.ToString());
+            request.Content = new ByteArrayContent(compressedData);
+            
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            uploaded += batch.Length;
+            if (progressCallback != null)
+                await progressCallback(uploaded, total);
+        }
     }
     
     #endregion
@@ -324,6 +343,15 @@ public class BinStashApiClient
         response.EnsureSuccessStatusCode();
         var content = await response.Content.ReadFromJsonAsync<T>();
         return content;
+    }
+    
+    private async Task<List<Hash32>> PostAsTransposedCompressedByteArrayAsync(string path, List<Hash32> checksums)
+    {
+        var compressedContent = ChecksumCompressor.TransposeCompress(checksums.Select(x => x.GetBytes()).ToList());
+        var response = await _httpClient.PostAsync(path, new ByteArrayContent(compressedContent));
+        response.EnsureSuccessStatusCode();
+        var respStream = await response.Content.ReadAsStreamAsync();
+        return await ChecksumCompressor.TransposeDecompressHashesAsync(respStream);
     }
 
     #endregion

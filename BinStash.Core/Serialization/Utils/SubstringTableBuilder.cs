@@ -15,62 +15,6 @@
 
 namespace BinStash.Core.Serialization.Utils;
 
-internal class SubstringTableBuilder
-{
-    private readonly Dictionary<string, int> _Index = new();
-    public readonly List<string> Table = new();
-
-    public List<(int id, Separator sep)> Tokenize(string input)
-    {
-        var tokens = new List<(int id, Separator sep)>();
-        var start = 0;
-
-        for (var i = 0; i < input.Length; i++)
-        {
-            var c = input[i];
-            if (ToSep(c) != Separator.None)
-            {
-                if (i > start)
-                {
-                    var part = input.Substring(start, i - start);
-                    var id = GetOrAdd(part);
-                    tokens.Add((id, ToSep(c)));
-                }
-                start = i + 1;
-            }
-        }
-
-        if (start < input.Length)
-        {
-            var part = input.Substring(start);
-            var id = GetOrAdd(part);
-            tokens.Add((id, Separator.None));
-        }
-
-        return tokens;
-    }
-
-    private int GetOrAdd(string str)
-    {
-        if (_Index.TryGetValue(str, out var id)) return id;
-        id = Table.Count;
-        Table.Add(str);
-        _Index[str] = id;
-        return id;
-    }
-
-    private static Separator ToSep(char s) => s switch
-    {
-        '.' => Separator.Dot,
-        '/' => Separator.Slash,
-        '\\' => Separator.Backslash,
-        ':' => Separator.Colon,
-        '-' => Separator.Dash,
-        '_' => Separator.Underscore,
-        _ => Separator.None
-    };
-}
-
 internal enum Separator : byte
 {
     None = 0,

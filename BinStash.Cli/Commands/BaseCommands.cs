@@ -13,8 +13,9 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Cli.Infrastructure;
 using CliFx;
-using CliFx.Attributes;
+using CliFx.Binding;
 using CliFx.Infrastructure;
 
 namespace BinStash.Cli.Commands;
@@ -40,38 +41,118 @@ public abstract class CommandBase : ICommand
 
 public abstract class UrlCommandBase : CommandBase
 {
-    [CommandOption("url", 'u', Description = "The URL to the BinStash server.", IsRequired = true)]
-    public string? Url { get; set; }
+    [CommandOption("url", 'u', Description = "The URL to the BinStash server.")]
+    public required string? Url { get; set; }
 
     protected string GetUrl()
     {
         if (string.IsNullOrWhiteSpace(Url))
             return string.Empty;
-        return Url.EndsWith('/') ? Url : $"{Url}/";
+        // make sure the url ends with api/
+        if (Url.EndsWith("/api/", StringComparison.OrdinalIgnoreCase))
+            return Url;
+        if (Url.EndsWith("/api", StringComparison.OrdinalIgnoreCase))
+            return $"{Url}/";
+        if (Url.EndsWith('/'))
+            return $"{Url}api/";
+        return $"{Url}/api/";
     }
     
     protected override ValueTask<bool> PreCheckAsync(IConsole console)
     {
         // Default checks that all commands inherit
+        if (string.IsNullOrWhiteSpace(Url)) 
+            return new(false);
         return new(true);
     }
 }   
 
 public abstract class AuthenticatedCommandBase : UrlCommandBase
 {
-    [CommandOption("token", 't', Description = "Authentication token for the BinStash server.")]
+    [CommandOption("token", Description = "Authentication token for the BinStash server.")]
     public string? Token { get; set; }
+
+    [CommandOption("no-auth", Description = "Disable authentication.")]
+    public bool NoAuth { get; set; }
+
+    protected Func<Task<string>> AuthTokenFactory { get; private set; } = () => Task.FromResult(string.Empty);
+
+    protected override async ValueTask<bool> PreCheckAsync(IConsole console)
+    {
+        if (!await base.PreCheckAsync(console))
+            return false;
+        
+        if (NoAuth) return true;
+
+        var http = new HttpClient { BaseAddress = new Uri(GetUrl()) };
+        var auth = new Auth.AuthService(http);
+
+        try
+        {
+            var accessToken = await auth.GetValidAccessTokenAsync();
+            if (!string.IsNullOrWhiteSpace(accessToken))
+            {
+                await console.Output.WriteLineAsync("Using stored authentication token.");
+                Token = accessToken;
+                AuthTokenFactory = auth.GetValidAccessTokenAsync;
+            }
+        }
+        catch (Exception ex)
+        {
+            await console.Error.WriteLineAsync($"Authentication failed: {ex.Message}");
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(Token))
+        {
+            await console.Error.WriteLineAsync("The authentication token must be provided.");
+            return false;
+        }
+
+        return true;
+    }
+}
+
+public abstract class TenantCommandBase : AuthenticatedCommandBase
+{
+    [CommandOption("tenant", 't', Description = "The tenant slug to operate on.")]
+    public required string? TenantSlug { get; set; }
+
+    private Guid TenantId { get; set; }
+    
+    protected new string GetUrl()
+    {
+        var url = base.GetUrl();
+        return $"{url}tenants/{TenantId}/";
+    }
 
     protected override async ValueTask<bool> PreCheckAsync(IConsole console)
     {
         if (!await base.PreCheckAsync(console))
             return false;
 
-        /*if (string.IsNullOrWhiteSpace(Token))
+        if (string.IsNullOrWhiteSpace(TenantSlug))
         {
-            await console.Error.WriteLineAsync("The authentication token must be provided.");
+            await console.Error.WriteLineAsync("The tenant slug must be provided.");
             return false;
-        }*/
+        }
+
+        var apiClient = new BinStashApiClient(base.GetUrl(), AuthTokenFactory);
+        var tenants = await apiClient.GetTenantsAsync();
+        if (tenants is null)
+        {
+            await console.Error.WriteLineAsync("Failed to retrieve tenants from the server.");
+            return false;
+        }
+        
+        var tenant = tenants.FirstOrDefault(t => t.Slug.Equals(TenantSlug, StringComparison.OrdinalIgnoreCase));
+        if (tenant is null)
+        {
+            await console.Error.WriteLineAsync($"The tenant '{TenantSlug}' does not exist or is not accessible with the provided token.");
+            return false;
+        }
+        
+        TenantId = tenant.TenantId;
 
         return true;
     }

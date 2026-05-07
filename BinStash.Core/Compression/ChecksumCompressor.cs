@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Hashing;
 using BinStash.Core.Serialization.Utils;
 using ZstdNet;
 
@@ -22,7 +23,8 @@ public static class ChecksumCompressor
 {
     public static byte[] TransposeCompress(List<byte[]> hashes)
     {
-        if (hashes.Count == 0) return "\0\0"u8.ToArray(); // varint 0
+        if (hashes.Count == 0)
+            return "\0\0"u8.ToArray(); // varint 0
 
         const int hashSize = 32;
         var count = hashes.Count;
@@ -34,6 +36,9 @@ public static class ChecksumCompressor
         for (var row = 0; row < count; row++)
         {
             var hash = hashes[row];
+            if (hash.Length != hashSize)
+                throw new InvalidDataException($"Expected {hashSize}-byte hash, got {hash.Length}.");
+
             for (var col = 0; col < hashSize; col++)
                 columns[col][row] = hash[col];
         }
@@ -54,82 +59,98 @@ public static class ChecksumCompressor
         return ms.ToArray();
     }
 
-    public static async Task<List<byte[]>> TransposeDecompressAsync(Stream inputStream, CancellationToken ct = default)
+    public static async Task<List<Hash32>> TransposeDecompressHashesAsync(Stream inputStream, CancellationToken ct = default)
     {
-        // count (signed varint)
-        var count = await VarIntUtils.ReadVarIntAsync<int>(inputStream);
-        
-        if (count == 0) 
-            return new List<byte[]>(0);
+        var count = await VarIntUtils.ReadVarIntAsync<int>(inputStream).ConfigureAwait(false);
+
+        if (count == 0)
+            return new List<Hash32>(0);
 
         const int hashSize = 32;
-
         var columns = new byte[hashSize][];
         using var zstd = new Decompressor();
 
         for (var i = 0; i < hashSize; i++)
         {
-            // column length (signed varint)
             var len = await VarIntUtils.ReadVarIntAsync<int>(inputStream).ConfigureAwait(false);
-            if (len < 0) throw new InvalidDataException("Negative column length.");
+            if (len < 0)
+                throw new InvalidDataException("Negative column length.");
 
-            // read the compressed column payload
             var compressed = GC.AllocateUninitializedArray<byte>(len);
             await ReadExactlyAsync(inputStream, compressed, ct).ConfigureAwait(false);
 
-            // decompress to column-major buffer (length = count)
             columns[i] = zstd.Unwrap(compressed, count);
         }
 
-        // transpose to row-major hashes
-        var result = new List<byte[]>(count);
+        var result = new List<Hash32>(count);
+        Span<byte> hashBuffer = stackalloc byte[hashSize];
+
         for (var row = 0; row < count; row++)
         {
-            var hash = new byte[hashSize];
             for (var col = 0; col < hashSize; col++)
-                hash[col] = columns[col][row];
-            result.Add(hash);
+                hashBuffer[col] = columns[col][row];
+
+            result.Add(new Hash32(hashBuffer));
         }
 
         return result;
     }
 
-    public static List<byte[]> TransposeDecompress(Stream inputStream)
+    public static List<Hash32> TransposeDecompressHashes(Stream inputStream)
     {
         using var reader = new BinaryReader(inputStream);
         using var zstd = new Decompressor();
 
         var count = VarIntUtils.ReadVarInt<int>(reader);
-        
-        if (count == 0) 
-            return new List<byte[]>(0);
-        
-        const int hashSize = 32;
 
+        if (count == 0)
+            return new List<Hash32>(0);
+
+        const int hashSize = 32;
         var columns = new byte[hashSize][];
+
         for (var i = 0; i < hashSize; i++)
         {
             var len = VarIntUtils.ReadVarInt<int>(reader);
+            if (len < 0)
+                throw new InvalidDataException("Negative column length.");
+
             var compressed = reader.ReadBytes(len);
+            if (compressed.Length != len)
+                throw new EndOfStreamException();
+
             columns[i] = zstd.Unwrap(compressed, count);
         }
 
-        var result = new List<byte[]>(count);
+        var result = new List<Hash32>(count);
+        Span<byte> hashBuffer = stackalloc byte[hashSize];
+
         for (var row = 0; row < count; row++)
         {
-            var hash = new byte[hashSize];
             for (var col = 0; col < hashSize; col++)
-                hash[col] = columns[col][row];
-            result.Add(hash);
+                hashBuffer[col] = columns[col][row];
+
+            result.Add(new Hash32(hashBuffer));
         }
 
         return result;
     }
-    
-    public static List<byte[]> TransposeDecompress(byte[] input)
+
+    public static List<Hash32> TransposeDecompressHashes(byte[] input)
     {
         using var ms = new MemoryStream(input, writable: false);
-        return TransposeDecompress(ms);
+        return TransposeDecompressHashes(ms);
+    }
+
+    // Backward-compatible wrappers; remove usage over time
+    
+    public static List<byte[]> TransposeDecompress(Stream inputStream)
+    {
+        var hashes = TransposeDecompressHashes(inputStream);
+        var result = new List<byte[]>(hashes.Count);
+        foreach (var hash in hashes)
+            result.Add(hash.GetBytes());
+        return result;
     }
     
     // -------- helpers (async, no sync IO) --------

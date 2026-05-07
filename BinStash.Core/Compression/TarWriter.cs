@@ -19,19 +19,21 @@ namespace BinStash.Core.Compression;
 
 public sealed class TarWriter : IDisposable, IAsyncDisposable
 {
-    private readonly Stream _BaseStream;
-    private bool _Disposed;
+    private static readonly byte[] ZeroBlock512 = new byte[512];
+    private static readonly byte[] ZeroBlock1024 = new byte[1024];
+    private readonly Stream _baseStream;
+    private bool _disposed;
 
     public TarWriter(Stream baseStream)
     {
-        _BaseStream = baseStream;
+        _baseStream = baseStream;
     }
 
     public async Task WriteFileAsync(string name, byte[] data, DateTime? lastModifiedUtc = null)
     {
         var header = CreateTarHeader(name, data.Length, lastModifiedUtc ?? DateTime.UtcNow);
-        await _BaseStream.WriteAsync(header);
-        await _BaseStream.WriteAsync(data);
+        await _baseStream.WriteAsync(header);
+        await _baseStream.WriteAsync(data);
 
         await WritePaddingAsync(data.Length);
     }
@@ -39,8 +41,8 @@ public sealed class TarWriter : IDisposable, IAsyncDisposable
     public async Task WriteFileAsync(string name, Func<Stream, Task> writeCallback, long length, DateTime? lastModifiedUtc = null)
     {
         var header = CreateTarHeader(name, length, lastModifiedUtc ?? DateTime.UtcNow);
-        await _BaseStream.WriteAsync(header);
-        await writeCallback(_BaseStream);
+        await _baseStream.WriteAsync(header);
+        await writeCallback(_baseStream);
         await WritePaddingAsync(length);
     }
 
@@ -48,7 +50,7 @@ public sealed class TarWriter : IDisposable, IAsyncDisposable
     {
         var padding = 512 - (length % 512);
         if (padding != 512)
-            await _BaseStream.WriteAsync(new byte[padding]);
+            await _baseStream.WriteAsync(ZeroBlock512.AsMemory(0, (int)padding));
     }
 
     private static byte[] CreateTarHeader(string fullName, long size, DateTime lastModifiedUtc)
@@ -119,15 +121,15 @@ public sealed class TarWriter : IDisposable, IAsyncDisposable
 
     public void Dispose()
     {
-        if (_Disposed) return;
-        _Disposed = true;
-        _BaseStream.Write(new byte[1024]); // 2 empty 512-byte blocks
+        if (_disposed) return;
+        _disposed = true;
+        _baseStream.Write(ZeroBlock1024); // 2 empty 512-byte blocks
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (_Disposed) return;
-        _Disposed = true;
-        await _BaseStream.WriteAsync(new byte[1024]);
+        if (_disposed) return;
+        _disposed = true;
+        await _baseStream.WriteAsync(ZeroBlock1024);
     }
 }

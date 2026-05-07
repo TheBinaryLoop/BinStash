@@ -10,9 +10,10 @@
 
     <ItemGroup>
       <PackageReference Include="Blake3" Version="2.2.1" />
+      <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.5" />
       <PackageReference Include="Microsoft.IO.RecyclableMemoryStream" Version="3.0.1" />
       <PackageReference Include="SlidingWindow" Version="1.0.7.1" />
-      <PackageReference Include="System.IO.Hashing" Version="10.0.4" />
+      <PackageReference Include="System.IO.Hashing" Version="10.0.5" />
       <PackageReference Include="ZstdNetNGX" Version="1.0.0" />
     </ItemGroup>
 
@@ -20,4 +21,7 @@
       <ProjectReference Include="..\BinStash.Contracts\BinStash.Contracts.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Compile Remove="Ingestion\Models\StorageStrategy.cs" />
+    </ItemGroup>
 </Project>

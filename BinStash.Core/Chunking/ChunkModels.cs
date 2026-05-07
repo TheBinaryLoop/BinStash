@@ -17,12 +17,19 @@ using BinStash.Contracts.Hashing;
 
 namespace BinStash.Core.Chunking;
 
-public class ChunkMapEntry
+public sealed class ChunkMapEntry
 {
     public required string FilePath { get; init; }
     public required long Offset { get; init; }         // Start byte in file
     public required int Length { get; init; }          // Chunk size
     public required Hash32 Checksum { get; init; }     // SHA256 or content hash
+}
+
+public sealed class ChunkBoundary
+{
+    public required long  Offset { get; init; }
+    public required int Length { get; init; }
+    public required Hash32 Checksum { get; init; }
 }
 
 public class ChunkData
@@ -37,21 +44,6 @@ public enum ChunkAnalysisTarget
     Dedupe,
     Throughput,
     ChunkCount
-}
-
-public class AnalysisStats
-{
-    public string FilePath { get; set; } = null!;
-    public List<int> ChunkSizes { get; set; } = new();
-    public int TotalChunks { get; set; }
-    public int Min { get; set; }
-    public int Max { get; set; }
-    public int Avg { get; set; }
-
-    public double StdDev =>
-        ChunkSizes.Count == 0
-            ? 0
-            : Math.Sqrt(ChunkSizes.Average(x => Math.Pow(x - Avg, 2)));
 }
 
 /// <summary>

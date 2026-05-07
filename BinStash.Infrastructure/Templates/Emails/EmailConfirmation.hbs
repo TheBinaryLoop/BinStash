@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="x-apple-disable-message-reformatting">
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <title>Confirm your email</title>
+    <style>
+        /* Basic resets */
+        html, body { margin:0 !important; padding:0 !important; height:100% !important; width:100% !important; }
+        * { -ms-text-size-adjust:100%; -webkit-text-size-adjust:100%; }
+        table, td { mso-table-lspace:0pt !important; mso-table-rspace:0pt !important; }
+        img { -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; }
+        a { text-decoration:none; }
+
+        /* Client-specific */
+        .ExternalClass { width:100%; }
+        .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div { line-height:100%; }
+        a[x-apple-data-detectors], .unstyle-auto-detected-links a { color:inherit !important; text-decoration:none !important; }
+
+        /* Container */
+        .bg { background:#0b0f19; }
+        .card { background:#121a2b; border:1px solid #24304a; border-radius:14px; }
+        .text { color:#e7ecff; font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; }
+        .muted { color:#aab4d6; }
+        .hr { border-top:1px solid #24304a; }
+        .btn {
+            background:#4f7cff;
+            color:#ffffff !important;
+            display:inline-block;
+            padding:12px 18px;
+            border-radius:10px;
+            font-weight:600;
+            font-size:14px;
+        }
+        .code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            background:#0b1222;
+            border:1px solid #24304a;
+            border-radius:10px;
+            padding:12px 14px;
+            color:#e7ecff;
+            word-break:break-all;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .w-full { width:100% !important; }
+            .px { padding-left:16px !important; padding-right:16px !important; }
+        }
+
+        /* Light mode fallback */
+        @media (prefers-color-scheme: light) {
+            .bg { background:#f5f7ff !important; }
+            .card { background:#ffffff !important; border-color:#e6e8f2 !important; }
+            .text { color:#111827 !important; }
+            .muted { color:#4b5563 !important; }
+            .hr { border-top-color:#e6e8f2 !important; }
+            .code { background:#f8fafc !important; border-color:#e6e8f2 !important; color:#111827 !important; }
+        }
+    </style>
+</head>
+<body class="bg" style="margin:0; padding:0; background:#0b0f19;">
+<!-- Preheader (hidden) -->
+<div style="display:none; font-size:1px; line-height:1px; max-height:0px; max-width:0px; opacity:0; overflow:hidden;">
+    Confirm your email address to finish setting up your BinStash account.
+</div>
+
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#0b0f19;" class="bg">
+    <tr>
+        <td align="center" style="padding:28px 12px;">
+            <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" class="w-full" style="width:600px;">
+                <!-- Header -->
+                <tr>
+                    <td class="text px" style="padding:0 24px 16px 24px;">
+                        <div style="font-size:18px; font-weight:800; letter-spacing:0.2px;">BinStash</div>
+                        <div class="muted" style="margin-top:6px; font-size:13px;">Secure artifact storage & release distribution</div>
+                    </td>
+                </tr>
+
+                <!-- Card -->
+                <tr>
+                    <td class="card px" style="padding:24px; background:#121a2b; border:1px solid #24304a; border-radius:14px;">
+                        <div class="text" style="font-size:20px; font-weight:800; line-height:1.25;">Confirm your email</div>
+
+                        <div class="text muted" style="margin-top:10px; font-size:14px; line-height:1.6;">
+                            Hi {{UserName}},<br>
+                            Please confirm that <strong>{{Email}}</strong> belongs to you. This helps us keep your BinStash account secure.
+                        </div>
+
+                        <div style="margin-top:18px;">
+                            <a href="{{ActionUrl}}" class="btn" style="background:#4f7cff; color:#fff; display:inline-block; padding:12px 18px; border-radius:10px; font-weight:600; font-size:14px;">
+                                Confirm email
+                            </a>
+                        </div>
+
+                        <div class="text muted" style="margin-top:18px; font-size:13px; line-height:1.6;">
+                            If the button doesn’t work, paste this link into your browser:
+                        </div>
+                        <div class="code" style="margin-top:10px;">
+                            <a href="{{ActionUrl}}" style="color:inherit; text-decoration:none;">{{ActionUrl}}</a>
+                        </div>
+
+                        <div class="hr" style="margin-top:22px; border-top:1px solid #24304a;"></div>
+
+                        <div class="text muted" style="margin-top:16px; font-size:12px; line-height:1.6;">
+                            This link expires in <strong>{{LinkTtl}}</strong>. If you didn’t create a BinStash account, you can ignore this email.
+                        </div>
+                    </td>
+                </tr>
+
+                {{> _Footer }}
+
+                <tr><td style="height:24px;"></td></tr>
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>

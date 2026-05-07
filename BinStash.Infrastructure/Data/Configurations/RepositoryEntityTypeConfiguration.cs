@@ -30,10 +30,19 @@ public class RepositoryEntityTypeConfiguration : IEntityTypeConfiguration<Reposi
         builder.Property(r => r.Id).HasColumnName("Id").ValueGeneratedNever();
         builder.Property(r => r.Name).IsRequired().HasMaxLength(256);
         builder.Property(r => r.Description).HasMaxLength(1024);
+        builder.Property(r => r.CreatedAt).IsRequired().HasDefaultValueSql("now() at time zone 'utc'");
+        builder.Property(r => r.StorageClass).IsRequired().HasMaxLength(32).HasDefaultValue("default");
+        
+        builder.HasIndex(r => new { r.TenantId, r.Name }).IsUnique();
+        builder.HasIndex(r => r.TenantId);
+        builder.HasIndex(r => new { r.TenantId, r.StorageClass });
 
+        
         builder.HasOne(r => r.ChunkStore)
             .WithMany()
             .HasForeignKey(r => r.ChunkStoreId)
             .OnDelete(DeleteBehavior.Cascade);
+        
+        builder.HasOne(r => r.Tenant).WithMany(t => t.Repositories).HasForeignKey(r => r.TenantId).OnDelete(DeleteBehavior.Cascade);
     }
 }

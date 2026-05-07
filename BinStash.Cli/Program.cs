@@ -13,15 +13,56 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Cli.Services.Releases;
+using BinStash.Core.Ingestion.Abstractions;
+using BinStash.Core.Ingestion.Execution;
+using BinStash.Core.Ingestion.Formats.Plain;
+using BinStash.Core.Ingestion.Formats.Zip;
 using CliFx;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BinStash.Cli;
 
 public static class Program
 {
     public static async Task<int> Main() =>
-        await new CliApplicationBuilder()
+        await new CommandLineApplicationBuilder()
             .AddCommandsFromThisAssembly()
+            .UseTypeInstantiator(commands =>
+            {
+                var services = new ServiceCollection();
+                
+                // Register services
+                
+                // Core ingestion/execution services
+                services.AddSingleton<IInputDiscoveryService, InputDiscoveryService>();
+                services.AddSingleton<IContentProcessor, ContentProcessor>();
+
+                services.AddSingleton<IInputFormatDetector, DefaultInputFormatDetector>();
+                services.AddSingleton<IIngestionPlanner, DefaultIngestionPlanner>();
+
+                services.AddSingleton<ZipArchiveInspector>();
+                services.AddSingleton<ZipEntryStreamFactory>();
+                services.AddSingleton<ZipMemberSelectionPolicy>();
+                services.AddSingleton<ZipReconstructionPlanner>();
+                services.AddSingleton<ZipRecipeBuilder>();
+                
+                services.AddSingleton<IInputFormatHandler, PlainFileFormatHandler>();
+                services.AddSingleton<IInputFormatHandler, ZipFormatHandler>();
+                services.AddSingleton<ReleasePackageBuilder>();
+                services.AddSingleton<IReleaseIngestionEngine,  ReleaseIngestionEngine>();
+                
+                // CLI release services
+                services.AddSingleton<ComponentMapLoader>();
+                services.AddSingleton<ServerUploadPlanner>();
+                services.AddSingleton<ReleaseAddOrchestrator>();
+                
+                // Register commands
+                foreach (var command in commands)
+                    services.AddTransient(command.Type);
+
+                return services.BuildServiceProvider();
+            })
 #if DEBUG
             .AllowDebugMode()
 #endif

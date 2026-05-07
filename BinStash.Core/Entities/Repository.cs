@@ -20,7 +20,11 @@ public class Repository
     public Guid Id { get; private set; } = Guid.CreateVersion7();
     public required string Name { get; set; }
     public string? Description { get; set; }
+    public string StorageClass { get; set; } = "default";
     public Guid ChunkStoreId { get; set; }
     public virtual required ChunkStore ChunkStore { get; set; }
+    public Guid TenantId { get; set; }
+    public Tenant Tenant { get; set; } = null!;
+    public DateTimeOffset CreatedAt { get; set; }
     public virtual ICollection<Release> Releases { get; set; } = new List<Release>();
 }

@@ -13,13 +13,19 @@
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
-      <PackageReference Include="System.IO.Hashing" Version="10.0.4" />
+      <PackageReference Include="Handlebars.Net" Version="2.1.6" />
+      <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.5" />
+      <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
+      <PackageReference Include="System.IO.Hashing" Version="10.0.5" />
       <PackageReference Include="ZstdNetNGX" Version="1.0.0" />
     </ItemGroup>
 
     <ItemGroup>
       <Folder Include="Data\Migrations\" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <EmbeddedResource Include="Templates\**\*.hbs" />
     </ItemGroup>
 
 </Project>

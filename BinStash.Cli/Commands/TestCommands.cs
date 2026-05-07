@@ -16,14 +16,13 @@
 using BinStash.Contracts.Release;
 using BinStash.Core.Serialization;
 using CliFx;
-using CliFx.Attributes;
-using CliFx.Exceptions;
+using CliFx.Binding;
 using CliFx.Infrastructure;
 
 namespace BinStash.Cli.Commands;
 
 [Command("test", Description = "Provides tools to test parts of the program.")]
-public class TestBaseCommand : ICommand
+public partial class TestBaseCommand : ICommand
 {
     public ValueTask ExecuteAsync(IConsole console)
     {
@@ -33,10 +32,10 @@ public class TestBaseCommand : ICommand
 }
 
 [Command("test serialization", Description = "Tests the serialization and deserialization of a given file using RPack serialization.")]
-public class TestSerializationCommand : ICommand
+public partial class TestSerializationCommand : ICommand
 {
-    [CommandOption("target", 't', Description = "The target file to test serialization with/against.", IsRequired = true)]
-    public string TargetFile { get; set; } = string.Empty;
+    [CommandOption("target", 't', Description = "The target file to test serialization with/against.")]
+    public required string TargetFile { get; set; } = string.Empty;
     
     public async ValueTask ExecuteAsync(IConsole console)
     {

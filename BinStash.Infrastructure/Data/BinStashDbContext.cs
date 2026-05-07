@@ -14,24 +14,46 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Core.Entities;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Infrastructure.Data;
 
-public class BinStashDbContext : DbContext
+public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
+    : IdentityDbContext<BinStashUser, IdentityRole<Guid>, Guid>(options)
 {
-    public DbSet<IngestSession> IngestSessions { get; set; }
+    public DbSet<ApiKey> ApiKeys { get; set; }
+    public DbSet<Chunk> Chunks { get; set; }
     public DbSet<ChunkStore> ChunkStores { get; set; }
-    public DbSet<Repository> Repositories { get; set; }
+    public DbSet<ChunkStoreStatsSnapshot> ChunkStoreStatsSnapshots { get; set; }
+    public DbSet<FileDefinition> FileDefinitions { get; set; }
+    public DbSet<IngestSession> IngestSessions { get; set; }
     public DbSet<Release> Releases { get; set; }
     public DbSet<ReleaseMetrics> ReleaseMetrics { get; set; }
-    public DbSet<Chunk> Chunks { get; set; }
-    public DbSet<FileDefinition> FileDefinitions { get; set; }
-
-    public BinStashDbContext(DbContextOptions<BinStashDbContext> options) : base(options) {}
+    public DbSet<Repository> Repositories { get; set; }
+    public DbSet<RepositoryRoleAssignment> RepositoryRoleAssignments { get; set; }
+    public DbSet<ServiceAccount> ServiceAccounts { get; set; }
+    public DbSet<StorageClassDefaultMapping> StorageClassDefaultMappings { get; set; }
+    public DbSet<StorageClass> StorageClasses { get; set; }
+    public DbSet<StorageClassMapping> StorageClassMappings { get; set; }
+    public DbSet<Subscription> Subscriptions { get; set; }
+    public DbSet<Tenant> Tenants { get; set; }
+    public DbSet<TenantMember> TenantMembers { get; set; }
+    public DbSet<TenantMemberInvitation> TenantMemberInvitations { get; set; }
+    public DbSet<TenantRoleAssignment> TenantRoleAssignments { get; set; }
+    public DbSet<UserGroup> UserGroups { get; set; }
+    public DbSet<UserGroupMember> UserGroupMembers { get; set; }
+    public DbSet<UserRefreshToken> UserRefreshTokens { get; set; }
+    
+    public DbSet<InstanceSetting> InstanceSettings { get; set; }
+    public DbSet<SetupState> SetupStates { get; set; }
+    public DbSet<SetupCode> SetupCodes { get; set; }
+    public DbSet<BackgroundJob> BackgroundJobs { get; set; }
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(BinStashDbContext).Assembly);
     }
 }

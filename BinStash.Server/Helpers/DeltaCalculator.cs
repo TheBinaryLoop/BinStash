@@ -18,6 +18,7 @@ using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
 using BinStash.Core.Entities;
 using DeltaChunkRef = BinStash.Contracts.Delta.DeltaChunkRef;
+using Path = System.IO.Path;
 
 namespace BinStash.Server.Helpers;
 

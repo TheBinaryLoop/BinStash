@@ -21,12 +21,35 @@ public class ReleaseMetrics
     public Guid IngestSessionId { get; set; }
     public virtual IngestSession IngestSession { get; set; } = null!;
     public DateTimeOffset CreatedAt { get; set; }
+
     public int ChunksInRelease { get; set; }
     public int NewChunks { get; set; }
-    public ulong TotalUncompressedSize { get; set; }
+
+    // Full logical size of the release as users see it
+    public ulong TotalLogicalBytes { get; set; }
+
+    // Unique uncompressed bytes newly added by this release
+    public long NewUniqueLogicalBytes { get; set; }
+
+    // Unique compressed bytes newly added by this release
     public long NewCompressedBytes { get; set; }
+
+    // Total metadata bytes for full release package
     public int MetaBytesFull { get; set; }
+
+    // Reserved for later diff/patch metadata
     public int MetaBytesFullDiff { get; set; }
+
     public int ComponentsInRelease { get; set; }
     public int FilesInRelease { get; set; }
+
+    // Derived-but-stored metrics for easy querying/charting
+    public double IncrementalCompressionRatio { get; set; }
+    public double IncrementalDeduplicationRatio { get; set; }
+    public double IncrementalEffectiveRatio { get; set; }
+
+    public long CompressionSavedBytes { get; set; }
+    public long DeduplicationSavedBytes { get; set; }
+
+    public double NewDataPercent { get; set; }
 }
