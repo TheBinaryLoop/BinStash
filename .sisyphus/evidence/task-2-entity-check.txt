@@ -1,0 +1,4 @@
+Command: Select-String -Path "BinStash.Core","BinStash.Infrastructure","BinStash.Server" -Pattern "class Subscription\b" -Recurse
+Result: zero matches
+
+Additional verification: no `class Subscription` definitions remain under BinStash.Core / BinStash.Infrastructure / BinStash.Server.

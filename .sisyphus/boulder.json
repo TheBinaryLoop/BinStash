@@ -1,0 +1,22 @@
+{
+  "active_plan": "D:\\Projects\\BinStash\\.sisyphus\\plans\\saas-billing-plugin.md",
+  "started_at": "2026-05-08T20:11:14.715Z",
+  "session_ids": [
+    "ses_1f6f1fccfffeEonL5tuZPp1Nf2"
+  ],
+  "session_origins": {
+    "ses_1f6f1fccfffeEonL5tuZPp1Nf2": "direct"
+  },
+  "plan_name": "saas-billing-plugin",
+  "agent": "atlas",
+  "task_sessions": {
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "**Plan Compliance Audit** — `oracle`",
+      "session_id": "ses_1f69eda5cffeMv0CNB1VK82U7A",
+      "agent": "Sisyphus-Junior",
+      "updated_at": "2026-05-08T21:18:32.341Z"
+    }
+  }
+}

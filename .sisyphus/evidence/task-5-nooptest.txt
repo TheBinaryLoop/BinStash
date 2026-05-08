@@ -1,0 +1,5 @@
+dotnet build BinStash.slnx --configuration Release
+Result: succeeded (0 errors, 3 warnings).
+
+dotnet test BinStash.Core.Tests --filter "FullyQualifiedName~BillingDi"
+Result: passed (1 test, 0 failed).

@@ -1,0 +1,54 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  BinStash.Contracts -> D:\Projects\BinStash\BinStash.Contracts\bin\Debug\net10.0\BinStash.Contracts.dll
+  BinStash.Core -> D:\Projects\BinStash\BinStash.Core\bin\Debug\net10.0\BinStash.Core.dll
+  BinStash.Infrastructure -> D:\Projects\BinStash\BinStash.Infrastructure\bin\Debug\net10.0\BinStash.Infrastructure.dll
+  BinStash.Serializers.Tests -> D:\Projects\BinStash\BinStash.Serializers.Tests\bin\Debug\net10.0\BinStash.Serializers.Tests.dll
+  BinStash.Core.Tests -> D:\Projects\BinStash\BinStash.Core.Tests\bin\Debug\net10.0\BinStash.Core.Tests.dll
+Test run for D:\Projects\BinStash\BinStash.Serializers.Tests\bin\Debug\net10.0\BinStash.Serializers.Tests.dll (.NETCoreApp,Version=v10.0)
+Test run for D:\Projects\BinStash\BinStash.Core.Tests\bin\Debug\net10.0\BinStash.Core.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+D:\Projects\BinStash\BinStash.Serializers.Tests\bin\Debug\net10.0\BinStash.Serializers.Tests.dll
+A total of 1 test files matched the specified pattern.
+D:\Projects\BinStash\BinStash.Core.Tests\bin\Debug\net10.0\BinStash.Core.Tests.dll
+  BinStash.Server -> D:\Projects\BinStash\BinStash.Server\bin\Debug\net10.0\BinStash.Server.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.5+1b188a7b0a (64-bit .NET 10.0.7)
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.5+1b188a7b0a (64-bit .NET 10.0.7)
+[xUnit.net 00:00:00.11]   Discovering: BinStash.Core.Tests
+[xUnit.net 00:00:00.09]   Discovering: BinStash.Serializers.Tests
+[xUnit.net 00:00:00.15]   Discovered:  BinStash.Serializers.Tests
+No test matches the given testcase filter `FullyQualifiedName~EgressMeter` in D:\Projects\BinStash\BinStash.Serializers.Tests\bin\Debug\net10.0\BinStash.Serializers.Tests.dll
+  BinStash.Server.Tests -> D:\Projects\BinStash\BinStash.Server.Tests\bin\Debug\net10.0\BinStash.Server.Tests.dll
+[xUnit.net 00:00:00.21]   Discovered:  BinStash.Core.Tests
+No test matches the given testcase filter `FullyQualifiedName~EgressMeter` in D:\Projects\BinStash\BinStash.Core.Tests\bin\Debug\net10.0\BinStash.Core.Tests.dll
+Test run for D:\Projects\BinStash\BinStash.Server.Tests\bin\Debug\net10.0\BinStash.Server.Tests.dll (.NETCoreApp,Version=v10.0)
+
+
+A total of 1 test files matched the specified pattern.
+D:\Projects\BinStash\BinStash.Server.Tests\bin\Debug\net10.0\BinStash.Server.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.5+1b188a7b0a (64-bit .NET 10.0.7)
+[xUnit.net 00:00:00.09]   Discovering: BinStash.Server.Tests
+[xUnit.net 00:00:00.13]   Discovered:  BinStash.Server.Tests
+[xUnit.net 00:00:00.15]   Starting:    BinStash.Server.Tests
+     Warning:
+     The component "Fluent Assertions" is governed by the rules defined in the Xceed License Agreement and
+     the Xceed Fluent Assertions Community License. You may use Fluent Assertions free of charge for
+     non-commercial use only. An active subscription is required to use Fluent Assertions for commercial use.
+     Please contact Xceed Sales mailto:sales@xceed.com to acquire a subscription at a very low cost.
+     A paid commercial license supports the development and continued increasing support of
+     Fluent Assertions users under both commercial and community licenses. Help us
+     keep Fluent Assertions at the forefront of unit testing.
+     For more information, visit https://xceed.com/products/unit-testing/fluent-assertions/
+[xUnit.net 00:00:01.10]   Finished:    BinStash.Server.Tests
+  Passed BinStash.Server.Tests.Billing.EgressMeterTests.GetReleaseDownload_CallsRecordEgress_WithCorrectTenantIdAndByteCount [905 ms]
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+ Total time: 1.6161 Seconds
+
+--- 2026-05-08 follow-up session ---
+Root cause identified and fixed: `await using var` declaration-style disposes at END OF METHOD,
+not before RecordEgress. Fixed by using explicit `await using (...) { }` block.
+Also added Write(ReadOnlySpan<byte>) and WriteByte(byte) overrides to CountingStream.
+Final test run: PASSED [894 ms] — bytes > 0 confirmed.

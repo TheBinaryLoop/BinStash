@@ -1,0 +1,3 @@
+ReleaseEndpoints.MapReleaseEndpoints() already applies .RequireAuthorization() to the releases route group.
+The download handler no longer accepts or checks a hardcoded password; unauthenticated callers are challenged by the Smart auth scheme and should receive HTTP 401.
+Release build succeeded with `dotnet build BinStash.Server/BinStash.Server.csproj --configuration Release --ignore-failed-sources` (0 errors).

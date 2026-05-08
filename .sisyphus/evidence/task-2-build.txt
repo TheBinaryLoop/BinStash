@@ -1,0 +1,8 @@
+Command: dotnet build BinStash.slnx --configuration Release
+Result: Build succeeded.
+Warnings: 0
+Errors: 0
+
+Command: dotnet test BinStash.slnx --configuration Release
+Result: All tests passed.
+Totals: 341 passed, 0 failed, 0 skipped

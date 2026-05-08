@@ -1,0 +1,17 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  BinStash.Contracts -> D:\Projects\BinStash\BinStash.Contracts\bin\Release\net10.0\BinStash.Contracts.dll
+D:\Projects\BinStash\BinStash.Core\Entities\ChunkStore.cs(43,13): warning CS8618: Non-nullable property 'Name' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [D:\Projects\BinStash\BinStash.Core\BinStash.Core.csproj]
+D:\Projects\BinStash\BinStash.Core\Entities\ChunkStore.cs(43,13): warning CS8618: Non-nullable property 'BackendSettings' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [D:\Projects\BinStash\BinStash.Core\BinStash.Core.csproj]
+D:\Projects\BinStash\BinStash.Core\Chunking\FastCdcChunker.cs(34,33): warning CA2014: Potential stack overflow. Move the stackalloc out of the loop. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca2014) [D:\Projects\BinStash\BinStash.Core\BinStash.Core.csproj]
+  BinStash.Core -> D:\Projects\BinStash\BinStash.Core\bin\Release\net10.0\BinStash.Core.dll
+
+Build succeeded.
+
+D:\Projects\BinStash\BinStash.Core\Entities\ChunkStore.cs(43,13): warning CS8618: Non-nullable property 'Name' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [D:\Projects\BinStash\BinStash.Core\BinStash.Core.csproj]
+D:\Projects\BinStash\BinStash.Core\Entities\ChunkStore.cs(43,13): warning CS8618: Non-nullable property 'BackendSettings' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [D:\Projects\BinStash\BinStash.Core\BinStash.Core.csproj]
+D:\Projects\BinStash\BinStash.Core\Chunking\FastCdcChunker.cs(34,33): warning CA2014: Potential stack overflow. Move the stackalloc out of the loop. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca2014) [D:\Projects\BinStash\BinStash.Core\BinStash.Core.csproj]
+    3 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:01.86

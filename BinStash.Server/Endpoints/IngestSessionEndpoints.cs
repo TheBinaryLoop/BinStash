@@ -25,6 +25,7 @@ using BinStash.Core.Extensions;
 using BinStash.Core.Serialization;
 using BinStash.Core.Serialization.Utils;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Billing;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
 using BinStash.Server.Services.ChunkStores;
@@ -107,8 +108,13 @@ public static class IngestSessionEndpoints
         return group;
     }
 
-    private static async Task<IResult> CreateIngestSessionAsync(Guid repoId, BinStashDbContext db)
+    private static async Task<IResult> CreateIngestSessionAsync(Guid tenantId, Guid repoId, BinStashDbContext db, BillingLimitsCache billingLimitsCache, CancellationToken ct)
     {
+        // Enforce quota: check billing limits before creating the session.
+        var limits = await billingLimitsCache.GetCachedLimitsAsync(tenantId, ct);
+        if (!limits.IsIngestAllowed)
+            return Results.Problem(statusCode: 402, title: "Quota exceeded", detail: "Your plan does not allow further ingest.");
+
         // If we have authentication, we can link the session to a user. We could also enforce per-user limits.
         // For now, we just create a session with a random ID and 30-minute expiry.
 
