@@ -115,6 +115,7 @@ public static class Program
         builder.Services.AddScoped<TenantMutationService>();
         builder.Services.AddScoped<TenantQueryService>();
         builder.Services.AddScoped<UserQueryService>();
+        builder.Services.AddNoOpBilling();
         builder.Services.AddResponseCompression();
         builder.Services.AddProblemDetails();
 
@@ -239,6 +240,7 @@ public static class Program
         //builder.Services.AddHostedService<SingleTenantBootstrapper>();
         builder.Services.AddHostedService<ChunkStoreProbeService>();
         builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
+        builder.Services.AddHostedService<TenantStorageStatsHostedService>();
         
         // Release upgrade pipeline: Channel queue → BackgroundService → ReleaseUpgradeService
         builder.Services.AddSingleton(Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions

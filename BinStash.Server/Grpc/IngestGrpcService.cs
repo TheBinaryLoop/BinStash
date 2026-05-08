@@ -16,6 +16,7 @@
 using System.Text;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Auth.Repository;
+using BinStash.Core.Billing;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization.Utils;
@@ -26,6 +27,7 @@ using BinStash.Server.Services.ChunkStores;
 using Grpc.Core;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using ZstdNet;
 
@@ -36,12 +38,16 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
     private readonly BinStashDbContext _db;
     private readonly IChunkStoreService _chunkStoreService;
     private readonly IAuthorizationService _authorizationService;
+    private readonly IUsageMeteringService _meteringSvc;
+    private readonly ILogger<IngestGrpcService> _logger;
 
-    public IngestGrpcService(BinStashDbContext db, IChunkStoreService chunkStoreService, IAuthorizationService authorizationService)
+    public IngestGrpcService(BinStashDbContext db, IChunkStoreService chunkStoreService, IAuthorizationService authorizationService, IUsageMeteringService meteringSvc, ILogger<IngestGrpcService> logger)
     {
         _db = db;
         _chunkStoreService = chunkStoreService;
         _authorizationService = authorizationService;
+        _meteringSvc = meteringSvc;
+        _logger = logger;
     }
 
     [Authorize]
@@ -247,7 +253,11 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
         {
             var msg = requestStream.Current;
             chunksSeenTotal++;
-            
+
+            // Billing: meter fires for ALL chunks including duplicates (per pricing policy)
+            try { _meteringSvc.RecordIngest(repo.TenantId, msg.Data.Length); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Billing: failed to record ingest meter event"); }
+
             var hash = new Hash32(msg.Checksum.Span);
 
             if (!seenInRequest.Add(hash))
