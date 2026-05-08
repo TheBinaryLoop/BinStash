@@ -113,7 +113,9 @@ More: [`docs/file-format.md`](docs/file-format.md)
 
 BinStash is Copyright © 2025 Lukas Eßmann.
 
-This program is licensed under the terms of the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html).
+BinStash is dual-licensed:
+- For open-source use, it's licensed under the terms of the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html).
+- For commercial or SaaS use without AGPLv3 obligations, a commercial license is available. See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) or contact lukas.essmann@example.com for details.
 
 ---
 

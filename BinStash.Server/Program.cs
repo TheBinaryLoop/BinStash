@@ -257,7 +257,6 @@ public static class Program
             .AddAuthorization()
             .AddQueryType<QueryType>()
             .AddMutationType<MutationType>()
-            .AddSubscriptionType<SubscriptionType>()
             .AddInMemorySubscriptions()
             .BindRuntimeType<ulong, UnsignedLongType>()
             .BindRuntimeType<ulong?, UnsignedLongType>()
