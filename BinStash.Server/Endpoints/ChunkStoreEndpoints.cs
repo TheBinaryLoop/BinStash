@@ -27,6 +27,7 @@ using BinStash.Server.Extensions;
 using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
 using Path = System.IO.Path;
+using BinStash.Infrastructure.Storage.S3;
 
 namespace BinStash.Server.Endpoints;
 
@@ -127,6 +128,39 @@ public static class ChunkStoreEndpoints
                 }
 
                 backendSettings = new LocalFolderBackendSettings { Path = dto.LocalPath };
+                break;
+            }
+            case ChunkStoreType.S3:
+            {
+                if (string.IsNullOrWhiteSpace(dto.S3Bucket))
+                    return Results.BadRequest("S3 bucket name is required for S3 chunk store type.");
+                if (string.IsNullOrWhiteSpace(dto.S3Region) && string.IsNullOrWhiteSpace(dto.S3ServiceUrl))
+                    return Results.BadRequest("Either S3 region or S3 service URL is required for S3 chunk store type.");
+
+                // Validate optional local cache path is creatable.
+                if (!string.IsNullOrWhiteSpace(dto.S3LocalCachePath) && !Directory.Exists(dto.S3LocalCachePath))
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(dto.S3LocalCachePath);
+                    }
+                    catch (Exception e)
+                    {
+                        return Results.Problem($"Failed to create local cache path: {e.Message}", statusCode: 400);
+                    }
+                }
+
+                backendSettings = new S3BackendSettings
+                {
+                    BucketName = dto.S3Bucket,
+                    Prefix = dto.S3Prefix ?? string.Empty,
+                    Region = dto.S3Region,
+                    ServiceUrl = dto.S3ServiceUrl,
+                    AccessKeyId = dto.S3AccessKeyId,
+                    SecretAccessKey = dto.S3SecretAccessKey,
+                    ForcePathStyle = dto.S3ForcePathStyle ?? false,
+                    LocalCachePath = dto.S3LocalCachePath,
+                };
                 break;
             }
             default:
@@ -286,6 +320,18 @@ public static class ChunkStoreEndpoints
         {
             Type = store.Type.ToString(),
             LocalPath = local.Path
+        },
+        S3BackendSettings s3 => new ChunkStoreBackendSettingsDto
+        {
+            Type = store.Type.ToString(),
+            S3Bucket = s3.BucketName,
+            S3Prefix = s3.Prefix,
+            S3Region = s3.Region,
+            S3ServiceUrl = s3.ServiceUrl,
+            S3AccessKeyId = s3.AccessKeyId,
+            // SecretAccessKey is intentionally never echoed back.
+            S3ForcePathStyle = s3.ForcePathStyle,
+            S3LocalCachePath = s3.LocalCachePath,
         },
         _ => new ChunkStoreBackendSettingsDto { Type = store.Type.ToString() }
     };

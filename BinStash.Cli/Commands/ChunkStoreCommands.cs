@@ -62,6 +62,30 @@ public partial class ChunkStoreAddCommand : AuthenticatedCommandBase
 
     [CommandOption("local-path", 'p', Description = "Local path for the chunk store (required for Local type)")]
     public string ChunkStoreLocalPath { get; set; } = string.Empty;
+
+    [CommandOption("s3-bucket", Description = "S3 bucket name (required for S3 type)")]
+    public string? S3Bucket { get; set; }
+
+    [CommandOption("s3-prefix", Description = "S3 key prefix for all objects (optional, e.g. 'binstash/')")]
+    public string? S3Prefix { get; set; }
+
+    [CommandOption("s3-region", Description = "AWS region (e.g. 'eu-central-1'; required unless --s3-service-url is set)")]
+    public string? S3Region { get; set; }
+
+    [CommandOption("s3-service-url", Description = "Custom S3-compatible endpoint URL (for MinIO, Cloudflare R2, etc.)")]
+    public string? S3ServiceUrl { get; set; }
+
+    [CommandOption("s3-access-key-id", Description = "S3 access key ID (omit to use AWS default credential chain)")]
+    public string? S3AccessKeyId { get; set; }
+
+    [CommandOption("s3-secret-access-key", Description = "S3 secret access key (omit to use AWS default credential chain)")]
+    public string? S3SecretAccessKey { get; set; }
+
+    [CommandOption("s3-force-path-style", Description = "Force S3 path-style addressing (required for MinIO / self-hosted providers)")]
+    public bool S3ForcePathStyle { get; set; }
+
+    [CommandOption("s3-local-cache-path", Description = "Local directory for index cache and in-flight pack buffers (defaults to OS temp dir)")]
+    public string? S3LocalCachePath { get; set; }
     
     [CommandOption("chunker-type", 'c', Description = "Type of the chunker (FastCdc)")]
     public ChunkerType? ChunkerType { get; set; }
@@ -83,12 +107,28 @@ public partial class ChunkStoreAddCommand : AuthenticatedCommandBase
         {
             throw new CommandException("Local path is required for Local chunk store type.");
         }
-        
+
+        if (ChunkStoreType == ChunkStoreType.S3)
+        {
+            if (string.IsNullOrWhiteSpace(S3Bucket))
+                throw new CommandException("--s3-bucket is required for S3 chunk store type.");
+            if (string.IsNullOrWhiteSpace(S3Region) && string.IsNullOrWhiteSpace(S3ServiceUrl))
+                throw new CommandException("Either --s3-region or --s3-service-url is required for S3 chunk store type.");
+        }
+
         var createChunkStoreDto = new CreateChunkStoreDto
         {
             Name = Name,
             Type = ChunkStoreType.ToString(),
             LocalPath = ChunkStoreLocalPath,
+            S3Bucket = S3Bucket,
+            S3Prefix = S3Prefix,
+            S3Region = S3Region,
+            S3ServiceUrl = S3ServiceUrl,
+            S3AccessKeyId = S3AccessKeyId,
+            S3SecretAccessKey = S3SecretAccessKey,
+            S3ForcePathStyle = S3ForcePathStyle ? true : null,
+            S3LocalCachePath = S3LocalCachePath,
         };
         
         if (ChunkerType is not null)

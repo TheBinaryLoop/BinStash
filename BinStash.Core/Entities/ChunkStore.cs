@@ -65,7 +65,8 @@ public class ChunkStore
 
 public enum ChunkStoreType
 {
-    Local
+    Local = 0,
+    S3 = 1
 }
 
 public enum ProbeMode

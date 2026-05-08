@@ -16,6 +16,7 @@
 using System.Collections.Concurrent;
 using BinStash.Core.Entities;
 using BinStash.Core.Storage;
+using BinStash.Infrastructure.Storage.S3;
 
 namespace BinStash.Infrastructure.Storage;
 
@@ -29,6 +30,7 @@ public sealed class ChunkStoreStorageFactory : IChunkStoreStorageFactory, IDispo
         return _cache.GetOrAdd(key, _ => store.Type switch
         {
             ChunkStoreType.Local => CreateLocalStorage(store),
+            ChunkStoreType.S3 => CreateS3Storage(store),
             _ => throw new NotSupportedException($"Chunk store type '{store.Type}' is not supported.")
         });
     }
@@ -39,11 +41,25 @@ public sealed class ChunkStoreStorageFactory : IChunkStoreStorageFactory, IDispo
         return new LocalFolderChunkStoreStorage(settings.Path);
     }
 
+    private static S3ChunkStoreStorage CreateS3Storage(ChunkStore store)
+    {
+        var settings = store.GetBackendSettings<S3BackendSettings>();
+        return new S3ChunkStoreStorage(settings, store.Id);
+    }
+
     private static string BuildCacheKey(ChunkStore store) => store.Type switch
     {
         ChunkStoreType.Local => $"Local:{store.GetBackendSettings<LocalFolderBackendSettings>().Path}",
+        ChunkStoreType.S3 => BuildS3CacheKey(store),
         _ => $"{store.Type}:{store.Id}"
     };
+
+    private static string BuildS3CacheKey(ChunkStore store)
+    {
+        var s = store.GetBackendSettings<S3BackendSettings>();
+        // Identity: same bucket + prefix + service URL uniquely identifies an S3 store.
+        return $"S3:{s.BucketName}:{s.Prefix}:{s.ServiceUrl ?? string.Empty}";
+    }
 
     public void Dispose()
     {

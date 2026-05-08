@@ -53,7 +53,7 @@ public class ChunkStoreChunkerDto
 public class ChunkStoreBackendSettingsDto
 {
     /// <summary>
-    /// The backend type discriminator (e.g., "Local").
+    /// The backend type discriminator (e.g., "Local", "S3").
     /// </summary>
     public required string Type { get; set; }
 
@@ -61,6 +61,29 @@ public class ChunkStoreBackendSettingsDto
     /// Local filesystem path. Populated when <see cref="Type"/> is "Local".
     /// </summary>
     public string? LocalPath { get; set; }
+
+    // S3 backend fields (populated when Type is "S3")
+
+    /// <summary>S3 bucket name.</summary>
+    public string? S3Bucket { get; set; }
+
+    /// <summary>Optional key prefix inside the bucket (e.g. "binstash/prod/").</summary>
+    public string? S3Prefix { get; set; }
+
+    /// <summary>AWS region (e.g. "eu-central-1"). Required for AWS S3; omit when <see cref="S3ServiceUrl"/> is set.</summary>
+    public string? S3Region { get; set; }
+
+    /// <summary>Custom service URL for S3-compatible providers (MinIO, Cloudflare R2, Backblaze B2, etc.).</summary>
+    public string? S3ServiceUrl { get; set; }
+
+    /// <summary>AWS Access Key ID. When null the AWS default credential chain is used (IAM role, env vars, shared credentials).</summary>
+    public string? S3AccessKeyId { get; set; }
+
+    /// <summary>Force path-style addressing (required for MinIO and some S3-compatible providers).</summary>
+    public bool? S3ForcePathStyle { get; set; }
+
+    /// <summary>Local directory for index/buffer cache. Falls back to OS temp when null.</summary>
+    public string? S3LocalCachePath { get; set; }
 }
 
 public class CreateChunkStoreDto
@@ -74,6 +97,32 @@ public class CreateChunkStoreDto
     public string? LocalPath { get; set; }
 
     public ChunkStoreChunkerDto? Chunker { get; set; }
+
+    // S3 backend fields (required/optional when Type is "S3")
+
+    /// <summary>S3 bucket name. Required when <see cref="Type"/> is "S3".</summary>
+    public string? S3Bucket { get; set; }
+
+    /// <summary>Optional key prefix inside the bucket.</summary>
+    public string? S3Prefix { get; set; }
+
+    /// <summary>AWS region. Required for AWS S3; omit when <see cref="S3ServiceUrl"/> is set.</summary>
+    public string? S3Region { get; set; }
+
+    /// <summary>Custom service URL for S3-compatible providers.</summary>
+    public string? S3ServiceUrl { get; set; }
+
+    /// <summary>AWS Access Key ID. When null the AWS default credential chain is used.</summary>
+    public string? S3AccessKeyId { get; set; }
+
+    /// <summary>AWS Secret Access Key. When null the AWS default credential chain is used.</summary>
+    public string? S3SecretAccessKey { get; set; }
+
+    /// <summary>Force path-style addressing (MinIO, Cloudflare R2, Backblaze B2).</summary>
+    public bool? S3ForcePathStyle { get; set; }
+
+    /// <summary>Local directory for index/buffer cache. Falls back to OS temp when null.</summary>
+    public string? S3LocalCachePath { get; set; }
 }
 
 public class ChunkStoreMissingChunkSyncInfoDto
