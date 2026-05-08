@@ -39,6 +39,7 @@ using BinStash.Server.Email.Providers;
 using BinStash.Server.Extensions;
 using BinStash.Server.GraphQL.ObjectTypes;
 using BinStash.Server.GraphQL.Services;
+using BinStash.Server.Billing;
 using BinStash.Server.Grpc;
 using BinStash.Server.Health;
 using BinStash.Server.Helpers;
@@ -116,6 +117,8 @@ public static class Program
         builder.Services.AddScoped<TenantQueryService>();
         builder.Services.AddScoped<UserQueryService>();
         builder.Services.AddNoOpBilling();
+        var billingLoader = new BillingPluginLoader();
+        billingLoader.LoadAndRegisterServices(builder);
         builder.Services.AddResponseCompression();
         builder.Services.AddProblemDetails();
 
@@ -277,7 +280,8 @@ public static class Program
         using (var scope = app.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<BinStashDbContext>();
-            db.Database.Migrate(); // applies any pending migrations
+            if (db.Database.IsRelational())
+                db.Database.Migrate(); // applies any pending migrations
         }
         
         // Configure the HTTP request pipeline.
@@ -327,6 +331,7 @@ public static class Program
         app.UseWebSockets();
         app.MapGraphQL();
         app.MapAllEndpoints();
+        billingLoader.MapPluginEndpoints(app);
         
         app.Run();
     }

@@ -757,7 +757,7 @@ Wave FINAL (After ALL tasks):
 
 ---
 
-- [ ] T11. **Wire plugin loader into Program.cs + integration smoke tests**
+- [x] T11. **Wire plugin loader into Program.cs + integration smoke tests**
 
   **What to do**:
   - In `BinStash.Server/Program.cs`, after `services.AddNoOpBilling()`, call the plugin loader for service registration:

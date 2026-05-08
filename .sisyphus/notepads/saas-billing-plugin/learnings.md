@@ -83,3 +83,28 @@ ew ChunkStore(name, type, settings)
 - **CountingStream + await using var bug**: `await using var x = ...` (declaration style) disposes at END OF METHOD SCOPE, not at the point of the next statement. If RecordEgress is called after the declaration but before the method returns, BytesWritten is still 0. Fix: use explicit `await using (var x = ...) { ... }` block so disposal (and Zstd flush) happens before RecordEgress.
 - ZstdNetNGX CompressionStream flushes to inner stream via `WriteAsync(ReadOnlyMemory<byte>)` on DisposeAsync — confirmed by isolation test.
 - CountingStream must override all write paths: Write(byte[],int,int), Write(ReadOnlySpan<byte>), WriteByte(byte), WriteAsync(byte[],int,int,CT), WriteAsync(ReadOnlyMemory<byte>,CT).
+
+## T11: BillingPluginLoader wiring + integration smoke tests (2026-05-08)
+
+### Program.cs wiring
+- BillingPluginLoader instantiated as local var before builder.Build()
+- LoadAndRegisterServices(builder) called AFTER AddNoOpBilling(), BEFORE builder.Build()
+- MapPluginEndpoints(app) called AFTER builder.Build(), just before app.Run()
+- BillingPluginLoader.LoadAndRegisterServices takes WebApplicationBuilder (not IServiceCollection + IConfiguration separately)
+
+### WebApplicationFactory with static Program class
+- Program.cs uses public static class Program — cannot be used as type argument for WebApplicationFactory<T>
+- Solution: add BinStashServerEntryPoint.cs (non-static marker class in BinStash.Server namespace)
+- WebApplicationFactory<BinStashServerEntryPoint> works correctly
+
+### EF Core InMemory in WebApplicationFactory
+- Must remove IDbContextOptionsConfiguration<BinStashDbContext> descriptors (not just DbContextOptions<T>)
+- db.Database.Migrate() throws for InMemory provider — guard with db.Database.IsRelational() check in Program.cs
+- This guard is safe for production (always relational) and enables test isolation
+
+### InvalidPluginPath test approach
+- ConfigureAppConfiguration in WithWebHostBuilder does NOT reliably override config read by WebApplicationBuilder
+- Use Environment.SetEnvironmentVariable("BINSTASH_BILLING_PLUGIN_PATH", ...) in test + finally cleanup
+- Exception is InvalidOperationException wrapping FileNotFoundException from Assembly.LoadFrom
+
+### Test results: 354 total (48 Server.Tests + 19 Serializers.Tests + 287 Core.Tests), all passed
