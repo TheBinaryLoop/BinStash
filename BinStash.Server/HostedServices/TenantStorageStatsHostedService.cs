@@ -32,9 +32,11 @@ public sealed class TenantStorageStatsHostedService : BackgroundService
         {
             try
             {
-                await RunOnceAsync(stoppingToken);
+                // Use CancellationToken.None so an in-progress snapshot always completes
+                // atomically; stoppingToken is only used to exit the wait between runs.
+                await RunOnceAsync(CancellationToken.None);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Billing: failed to record per-tenant storage stats");
             }
