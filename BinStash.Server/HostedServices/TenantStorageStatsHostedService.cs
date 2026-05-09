@@ -66,7 +66,7 @@ public sealed class TenantStorageStatsHostedService : BackgroundService
             .Select(g => new
             {
                 TenantId = g.Key,
-                TotalBytes = g.Sum(x => (long)x.TotalLogicalBytes)
+                TotalBytes = (long)g.Sum(x => (decimal)x.TotalLogicalBytes)
             })
             .ToListAsync(cancellationToken);
 
