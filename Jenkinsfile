@@ -26,6 +26,15 @@ pipeline {
       }
     }
 
+    stage('Frontend') {
+      steps {
+        dir('BinStash.Frontend') {
+          bat 'pnpm install --frozen-lockfile'
+          bat 'pnpm build'
+        }
+      }
+    }
+
     stage('SDK Info') {
       steps {
         // The SDK is on PATH via the 'tools { dotnetsdk ... }' directive

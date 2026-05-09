@@ -309,11 +309,24 @@ public class BinStashApiClient
         var pipe = new Pipe();
         ReleaseDefinitionMetrics? serializerMetrics = null;
 
+        var countingStream = new CountingStream(pipe.Writer.AsStream());
         var serializeTask = Task.Run(async () =>
         {
             try
             {
-                serializerMetrics = await ReleasePackageSerializer.SerializeAsync(pipe.Writer.AsStream(), release, options);
+                serializerMetrics = await ReleasePackageSerializer.SerializeAsync(countingStream, release, options);
+                // Patch TotalBytes: the underlying PipeWriter stream is not seekable so the
+                // serializer always records 0. Use the byte count from CountingStream instead.
+                serializerMetrics = new ReleaseDefinitionMetrics
+                {
+                    TotalBytes          = countingStream.BytesWritten,
+                    FormatVersion       = serializerMetrics.FormatVersion,
+                    UniqueFileCount     = serializerMetrics.UniqueFileCount,
+                    ArtifactCount       = serializerMetrics.ArtifactCount,
+                    TokenCount          = serializerMetrics.TokenCount,
+                    CustomPropertyCount = serializerMetrics.CustomPropertyCount,
+                    Elapsed             = serializerMetrics.Elapsed,
+                };
             }
             finally
             {
@@ -557,4 +570,46 @@ public class BinStashApiClient
     }
 
     #endregion
+
+    /// <summary>Write-only stream wrapper that counts bytes forwarded to the inner stream.</summary>
+    private sealed class CountingStream(Stream inner) : Stream
+    {
+        public long BytesWritten { get; private set; }
+
+        public override bool CanRead  => false;
+        public override bool CanSeek  => false;
+        public override bool CanWrite => true;
+        public override long Length   => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            inner.Write(buffer, offset, count);
+            BytesWritten += count;
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            inner.Write(buffer);
+            BytesWritten += buffer.Length;
+        }
+
+        public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            await inner.WriteAsync(buffer, offset, count, cancellationToken);
+            BytesWritten += count;
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await inner.WriteAsync(buffer, cancellationToken);
+            BytesWritten += buffer.Length;
+        }
+
+        public override void Flush() => inner.Flush();
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+    }
 }
