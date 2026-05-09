@@ -21,6 +21,7 @@ using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
 using BinStash.Contracts.Repo;
 using BinStash.Core.Auth.Repository;
+using BinStash.Core.Billing;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
@@ -29,6 +30,7 @@ using BinStash.Server.Extensions;
 using BinStash.Server.Helpers;
 using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using ZstdNet;
 using KeyNotFoundException = System.Collections.Generic.KeyNotFoundException;
 
@@ -36,6 +38,8 @@ namespace BinStash.Server.Endpoints;
 
 public static class ReleaseEndpoints
 {
+    // BILLING: Metered endpoints: release download. NOT metered: health, OpenAPI, GraphQL.
+
     public static RouteGroupBuilder MapReleaseEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/tenants/{tenantId:guid}/repositories/{repoId:guid}/releases")
@@ -107,11 +111,8 @@ public static class ReleaseEndpoints
         return Results.Text(customProperties ?? "{}", "application/json");
     }
     
-    private static async Task<IResult> GetReleaseDownloadAsync(Guid id, string downloadPassword, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService)
+    private static async Task<IResult> GetReleaseDownloadAsync(Guid tenantId, Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService, IUsageMeteringService meteringService, ILoggerFactory loggerFactory)
     {
-        if (string.IsNullOrEmpty(downloadPassword) || downloadPassword != "D9BvHVpGlpaa9C8w230kQ8w8PIKUoc3k")
-            return Results.Unauthorized();
-
         if (!string.IsNullOrEmpty(file) && string.IsNullOrEmpty(component))
             return Results.BadRequest("Component must be specified when requesting a specific file.");
 
@@ -242,8 +243,11 @@ public static class ReleaseEndpoints
             Inline = false
         }.ToString();
 
-        await using var compressor = new CompressionStream(response.Body);
-        await using var tarWriter = new TarWriter(compressor);
+        // BILLING: Metered endpoints: release download. Counts actual bytes written to response stream. NOT metered: health, OpenAPI, GraphQL.
+        var countingBody = new CountingStream(response.Body);
+        await using (var compressor = new CompressionStream(countingBody))
+        await using (var tarWriter = new TarWriter(compressor))
+        {
 
         if (diffRelease is not null)
         {
@@ -409,6 +413,12 @@ public static class ReleaseEndpoints
                 await tarWriter.WriteFileAsync($"{relativePath}.hash", contentHash.GetBytes());
             }
         }
+        } // end await using tarWriter + compressor — flushes compressed bytes to countingBody
+
+        // BILLING: Record actual bytes written to response stream after all streaming is complete.
+        var logger = loggerFactory.CreateLogger("BinStash.Server.Endpoints.ReleaseEndpoints");
+        try { meteringService.RecordEgress(tenantId, countingBody.BytesWritten); }
+        catch (Exception ex) { logger.LogWarning(ex, "Billing: failed to record egress meter event"); }
 
         return Results.Empty;
     }
@@ -642,5 +652,26 @@ public static class ReleaseEndpoints
 
         return result;
     }
-    
+
+    private sealed class CountingStream(Stream inner) : Stream
+    {
+        public long BytesWritten { get; private set; }
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => inner.Flush();
+        public override Task FlushAsync(CancellationToken ct) => inner.FlushAsync(ct);
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) { inner.Write(buffer, offset, count); BytesWritten += count; }
+        public override void Write(ReadOnlySpan<byte> buffer) { inner.Write(buffer); BytesWritten += buffer.Length; }
+        public override void WriteByte(byte value) { inner.WriteByte(value); BytesWritten += 1; }
+        public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct) { await inner.WriteAsync(buffer, offset, count, ct); BytesWritten += count; }
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default) { await inner.WriteAsync(buffer, ct); BytesWritten += buffer.Length; }
+        protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
+    }
+
 }

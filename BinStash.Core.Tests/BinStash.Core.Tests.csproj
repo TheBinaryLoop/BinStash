@@ -30,6 +30,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BinStash.Core\BinStash.Core.csproj" />
+    <!-- Ensures BinStash.Server is built before tests run (billing tests load the assembly via reflection) -->
+    <ProjectReference Include="..\BinStash.Server\BinStash.Server.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
