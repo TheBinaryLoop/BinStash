@@ -13,6 +13,8 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Cli.Infrastructure;
+
 namespace BinStash.Cli.Auth;
 
 public sealed class AuthHeaderHandler : DelegatingHandler
@@ -28,6 +30,7 @@ public sealed class AuthHeaderHandler : DelegatingHandler
     {
         var token = await _authTokenFactory();
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        request.Headers.TryAddWithoutValidation("X-BinStash-Cli-Version", CliVersion.Value);
         return await base.SendAsync(request, cancellationToken);
     }
 }

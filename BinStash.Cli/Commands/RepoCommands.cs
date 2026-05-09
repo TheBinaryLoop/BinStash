@@ -36,7 +36,7 @@ public partial class RepoListCommand : TenantCommandBase
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
         var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
-        var repos = await client.GetRepositoriesAsync();
+        var repos = await client.GetRepositoriesAsync(GetTenantId());
         if (repos == null || repos.Count == 0)
         {
             await console.Output.WriteLineAsync("No repositories found.");
@@ -74,7 +74,7 @@ public partial class RepoAddCommand : TenantCommandBase
             StorageClassName = StorageClass
         };
         
-        var repo = await client.CreateRepositoryAsync(createDto);
+        var repo = await client.CreateRepositoryAsync(GetTenantId(), createDto);
         
         if (repo == null)
         {

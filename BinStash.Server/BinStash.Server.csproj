@@ -4,6 +4,7 @@
         <TargetFramework>net10.0</TargetFramework>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
+        <Version>1.0.0</Version>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
         <UserSecretsId>71fd78af-9cb7-4e7e-9539-9b6f11dd2d17</UserSecretsId>
         <Configurations>Debug;Release</Configurations>

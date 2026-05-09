@@ -31,18 +31,13 @@ namespace BinStash.Server.Services.ReleaseUpgrade;
 /// Algorithm per release:
 ///   1. Read old .rdef from storage (by current checksum).
 ///   2. Deserialize with backward-compatible deserializer.
-///   3. Re-serialize to latest version (V4).
+///   3. Re-serialize to latest version.
 ///   4. Compute BLAKE3 hash of the new bytes.
 ///   5. Write new .rdef to storage (content-addressed, so a new hash = new file).
 ///   6. Update DB row (SerializerVersion, ReleaseDefinitionChecksum).
 ///   7. Only AFTER the DB commit succeeds, delete the OLD .rdef file.
 ///      If the old hash == new hash (content unchanged), skip deletion entirely.
 ///   8. If deletion fails, log but do NOT roll back — the data is safe in the new file.
-///
-/// This fixes:
-///   BUG-04 — Only releases being upgraded are touched; no directory scan/delete.
-///   ERR-03 — Old file is deleted only after the new file + DB commit succeed.
-///   PERF-05 — SaveChanges is called in batches instead of per-release.
 /// </summary>
 public sealed class ReleaseUpgradeService : IReleaseUpgradeService
 {
@@ -187,15 +182,15 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
                     }
 
                     // Step 2: Deserialize (backward-compatible)
-                    var package = await ReleasePackageSerializer.DeserializeAsync(oldData, cancellationToken);
+                    var (package, _) = await ReleasePackageSerializer.DeserializeAsync(oldData, cancellationToken);
 
                     // Step 2b: Populate null Length fields from FileDefinition table.
-                    // V1/V2 formats did not store file lengths; the V4 serializer requires them.
+                    // V1/V2 formats did not store file lengths; the V6 serializer requires them.
                     // Look up missing lengths via ContentHash → FileDefinition.Length.
                     await PopulateMissingLengthsAsync(db, package, store.Id, cancellationToken);
 
                     // Step 3: Re-serialize to latest version
-                    var newData = await ReleasePackageSerializer.SerializeAsync(package, cancellationToken: cancellationToken);
+                    var (newData, _) = await ReleasePackageSerializer.SerializeAsync(package, cancellationToken: cancellationToken);
 
                     // Step 4: Compute new BLAKE3 hash
                     var newHash = new Hash32(Blake3.Hasher.Hash(newData).AsSpan());
@@ -393,18 +388,26 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
 
 /// <summary>
 /// DTO broadcast via GraphQL subscriptions on each progress update.
+/// Fields relevant to upgrade jobs are populated for <c>ReleaseUpgrade</c> job types;
+/// fields relevant to rebuild jobs are populated for <c>ChunkStoreRebuild</c> job types.
 /// </summary>
 public sealed class BackgroundJobProgressDto
 {
     public Guid JobId { get; init; }
     public required string JobType { get; init; }
     public required string Status { get; init; }
+    // --- ReleaseUpgrade fields ---
     public int TotalReleases { get; init; }
     public int ProcessedReleases { get; init; }
     public int FailedReleases { get; init; }
     public int SkippedReleases { get; init; }
     public long BytesSaved { get; init; }
     public long BytesGrown { get; init; }
+    // --- ChunkStoreRebuild fields ---
+    public int TotalBuckets { get; init; }
+    public int ProcessedBuckets { get; init; }
+    public int FailedBuckets { get; init; }
+    // --- Common ---
     public Guid? ChunkStoreId { get; init; }
     public DateTimeOffset? StartedAt { get; init; }
     public DateTimeOffset? CompletedAt { get; init; }

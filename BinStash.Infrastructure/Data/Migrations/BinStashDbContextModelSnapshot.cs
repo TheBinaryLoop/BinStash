@@ -408,6 +408,9 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.Property<long>("FilesSeenUnique")
                         .HasColumnType("bigint");
 
+                    b.Property<string>("IntendedRelease")
+                        .HasColumnType("text");
+
                     b.Property<DateTimeOffset>("LastUpdatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")

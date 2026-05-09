@@ -20,6 +20,7 @@ using BinStash.Core.Billing;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization.Utils;
+using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Grpc;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Auth;
@@ -136,13 +137,18 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
                 if (existingSet.Contains(fileHash))
                     continue;
 
-                var compressedChunkList = ChecksumCompressor.TransposeCompress(
-                    chunkList.Select(x => x.GetBytes()).ToList());
+                var record = new FileDefinitionRecord
+                {
+                    FileHash    = fileHash,
+                    FileLength  = fileLength,
+                    ChunkHashes = chunkList
+                };
+
+                var blob = record.Serialize();
 
                 var storeResult = await _chunkStoreService.StoreFileDefinitionAsync(
                     store,
-                    fileHash,
-                    compressedChunkList);
+                    blob);
 
                 if (!storeResult.Success)
                     throw new RpcException(new Status(StatusCode.Internal, $"Failed to store file definition ({fileHash.ToHexString()}) in chunk store."));
@@ -152,9 +158,9 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
 
                 fileDefinitionsToAdd.Add(new FileDefinition
                 {
-                    Checksum = fileHash,
+                    Checksum     = fileHash,
                     ChunkStoreId = store.Id,
-                    Length = fileLength
+                    Length       = fileLength,
                 });
             }
         }
@@ -249,6 +255,51 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
         var chunksSeenTotal = 0;
         var chunksSeenUnique = 0;
 
+        // Buffer incoming chunks and process in batches to minimise per-chunk DB round trips.
+        const int batchSize = 64;
+        var pendingBatch = new List<(Hash32 Hash, byte[] Data)>(batchSize);
+
+        async Task FlushBatchAsync()
+        {
+            if (pendingBatch.Count == 0) return;
+
+            var batchHashes = pendingBatch.Select(x => x.Hash).ToList();
+            var alreadyKnownSet = await _db.Chunks
+                .Where(c => c.ChunkStoreId == store.Id && batchHashes.Contains(c.Checksum))
+                .Select(c => c.Checksum)
+                .ToHashSetAsync(context.CancellationToken);
+
+            foreach (var (hash, data) in pendingBatch)
+            {
+                if (alreadyKnownSet.Contains(hash))
+                    continue;
+
+                var actualHash = new Hash32(Blake3.Hasher.Hash(data).AsSpan());
+                if (actualHash != hash)
+                    throw new RpcException(new Status(StatusCode.InvalidArgument, "Checksum mismatch for chunk."));
+
+                var (success, bytesWritten) = await _chunkStoreService.StoreChunkAsync(store, actualHash.ToHexString(), data);
+                if (!success)
+                    throw new RpcException(new Status(StatusCode.Internal, "Failed to store chunk."));
+
+                if (bytesWritten > 0)
+                {
+                    newlyWrittenCompressedBytes[hash] = bytesWritten;
+                    newlyWrittenLogicalBytes[hash] = data.Length;
+
+                    chunksToAdd.Add(new Chunk
+                    {
+                        Checksum = hash,
+                        ChunkStoreId = store.Id,
+                        Length = data.Length,
+                        CompressedLength = bytesWritten
+                    });
+                }
+            }
+
+            pendingBatch.Clear();
+        }
+
         while (await requestStream.MoveNext(context.CancellationToken))
         {
             var msg = requestStream.Current;
@@ -265,35 +316,13 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
 
             chunksSeenUnique++;
 
-            var alreadyKnown = await _db.Chunks
-                .AnyAsync(c => c.ChunkStoreId == store.Id && c.Checksum == hash, context.CancellationToken);
+            pendingBatch.Add((hash, msg.Data.Memory.ToArray()));
 
-            if (alreadyKnown)
-                continue;
-
-            var data = msg.Data.Memory.ToArray();
-            var actualHash = new Hash32(Blake3.Hasher.Hash(data).AsSpan());
-            if (actualHash != hash)
-                throw new RpcException(new Status(StatusCode.InvalidArgument, $"Checksum mismatch for {msg.Checksum}."));
-
-            var (success, bytesWritten) = await _chunkStoreService.StoreChunkAsync(store, actualHash.ToHexString(), data);
-            if (!success)
-                throw new RpcException(new Status(StatusCode.Internal, $"Failed to store chunk {msg.Checksum}."));
-
-            if (bytesWritten > 0)
-            {
-                newlyWrittenCompressedBytes[hash] = bytesWritten;
-                newlyWrittenLogicalBytes[hash] = data.Length;
-
-                chunksToAdd.Add(new Chunk
-                {
-                    Checksum = hash,
-                    ChunkStoreId = store.Id,
-                    Length = data.Length,
-                    CompressedLength = bytesWritten
-                });
-            }
+            if (pendingBatch.Count >= batchSize)
+                await FlushBatchAsync();
         }
+
+        await FlushBatchAsync();
 
         ingestSession.ChunksSeenTotal += chunksSeenTotal;
         ingestSession.ChunksSeenUnique += chunksSeenUnique;

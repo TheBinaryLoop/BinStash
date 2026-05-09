@@ -22,10 +22,12 @@ namespace BinStash.Server.HostedServices;
 public sealed class ChunkStoreStatsHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<ChunkStoreStatsHostedService> _logger;
 
-    public ChunkStoreStatsHostedService(IServiceScopeFactory scopeFactory)
+    public ChunkStoreStatsHostedService(IServiceScopeFactory scopeFactory, ILogger<ChunkStoreStatsHostedService> logger)
     {
         _scopeFactory = scopeFactory;
+        _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -38,9 +40,9 @@ public sealed class ChunkStoreStatsHostedService : BackgroundService
             {
                 await RunOnceAsync(stoppingToken);
             }
-            catch
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // TODO: inject logger
+                _logger.LogError(ex, "Unhandled error in ChunkStoreStatsHostedService");
             }
 
             await timer.WaitForNextTickAsync(stoppingToken);
@@ -59,10 +61,17 @@ public sealed class ChunkStoreStatsHostedService : BackgroundService
             .Select(x => x.Id)
             .ToListAsync(cancellationToken);
 
+        _logger.LogInformation("Stats collection run started — {Count} chunk store(s) to process", chunkStoreIds.Count);
+
+        var index = 0;
         foreach (var chunkStoreId in chunkStoreIds)
         {
+            index++;
             cancellationToken.ThrowIfCancellationRequested();
+            _logger.LogInformation("Processing chunk store {Index}/{Total} ({ChunkStoreId})", index, chunkStoreIds.Count, chunkStoreId);
             await collector.CollectAndStoreAsync(chunkStoreId, cancellationToken);
         }
+
+        _logger.LogInformation("Stats collection run finished — {Count} chunk store(s) processed", chunkStoreIds.Count);
     }
 }

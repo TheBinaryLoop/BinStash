@@ -190,7 +190,7 @@ public sealed class IngestionExecutionContext
             }
         }
     }
-
+    
     public void BindChunkMap(Hash32 hash, List<ChunkMapEntry> chunkMap)
     {
         if (_result.StoredContents.TryGetValue(hash, out var content))

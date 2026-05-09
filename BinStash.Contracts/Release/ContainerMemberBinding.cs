@@ -21,7 +21,9 @@ public sealed class ContainerMemberBinding
 {
     public required string EntryPath { get; set; }
     
-    // Filled after storage content hashing
+    /// <summary>
+    /// The file-content hash (<c>BLAKE3(file bytes)</c>).
+    /// </summary>
     public Hash32? ContentHash { get; set; }
     
     // Filled after storage content hashing

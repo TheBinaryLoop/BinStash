@@ -31,20 +31,15 @@ public static class RepositoryEndpoints
 {
     public static RouteGroupBuilder MapRepositoryEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/tenants/{tenantId:guid}/repositories")!
+        // The tenant-prefixed route /api/tenants/{tenantId}/repositories/... is served by GraphQL.
+        // This REST group uses host-based tenant resolution and is the CLI's primary path.
+        var group = app.MapGroup("/api/repositories")!
             .WithTags("Repositories")
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .RequireAuthorization();
-        
-        var tenantFromHostGroup = app.MapGroup("/api/repositories")!
-            .WithTags("Repositories")
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .RequireAuthorization();
-        
+
         MapGroup(group);
-        MapGroup(tenantFromHostGroup);
 
         return group;
     }
@@ -189,7 +184,7 @@ public static class RepositoryEndpoints
         return Results.Created($"/api/repositories/{repo.Id}", new RepositorySummaryDto
         {
             Id = repo.Id,
-            Name = chunkStore.Name,
+            Name = repo.Name,
             Description = repo.Description,
             StorageClass = storageClass.StorageClassName,
             Chunker = new ChunkStoreChunkerDto

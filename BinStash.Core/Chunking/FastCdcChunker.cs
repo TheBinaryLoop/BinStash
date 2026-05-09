@@ -28,10 +28,10 @@ internal static class FastCdcConstants
     {
         var table = new uint[256];
         var rng = new Random(1);
+        Span<byte> buffer = stackalloc byte[4];
 
         for (var i = 0; i < 256; i++)
         {
-            Span<byte> buffer = stackalloc byte[4];
             rng.NextBytes(buffer);
             table[i] = BitConverter.ToUInt32(buffer);
         }
@@ -94,40 +94,41 @@ public class FastCdcChunker : IChunker
     private IReadOnlyList<ChunkMapEntry> ChunkUsingBuffer(Stream stream, string? filePath, CancellationToken ct)
     {
         var chunks = new List<(long Offset, byte[] Data)>();
-        int b;
+        const int blockSize = 65536;
+        var block = new byte[blockSize];
         uint hash = 0;
-        var chunkStart = 0L;
-        var detectionPos = 0L;
+        long chunkStart = 0;
+        long streamPos = 0;
 
-        while ((b = stream.ReadByte()) != -1)
+        // Accumulate chunk data in a growable buffer to avoid double-reads.
+        using var chunkBuffer = new MemoryStream();
+
+        int bytesRead;
+        while ((bytesRead = stream.Read(block, 0, blockSize)) > 0)
         {
-            hash = (hash << 1) + FastCdcConstants.GearTable[b & 0xFF];
-            detectionPos++;
-
-            var currentLength = (int)(detectionPos - chunkStart);
-
-            if ((currentLength >= _minSize && (hash & _maskS) == 0) ||
-                (currentLength >= _avgSize && (hash & _maskL) == 0) ||
-                currentLength >= _maxSize)
+            var span = block.AsSpan(0, bytesRead);
+            for (var i = 0; i < bytesRead; i++)
             {
-                stream.Seek(chunkStart, SeekOrigin.Begin);
-                var buffer = new byte[currentLength];
-                stream.ReadExactly(buffer);
-                chunks.Add((chunkStart, buffer));
-                chunkStart = detectionPos;
-                stream.Position = detectionPos;
-                hash = 0;
+                hash = (hash << 1) + FastCdcConstants.GearTable[span[i]];
+                streamPos++;
+
+                var currentLength = (int)(streamPos - chunkStart);
+                chunkBuffer.Write(block, i, 1);
+
+                if ((currentLength >= _minSize && (hash & _maskS) == 0) ||
+                    (currentLength >= _avgSize && (hash & _maskL) == 0) ||
+                    currentLength >= _maxSize)
+                {
+                    chunks.Add((chunkStart, chunkBuffer.ToArray()));
+                    chunkBuffer.SetLength(0);
+                    chunkStart = streamPos;
+                    hash = 0;
+                }
             }
         }
 
-        if (chunkStart < stream.Length)
-        {
-            var length = (int)(stream.Length - chunkStart);
-            stream.Seek(chunkStart, SeekOrigin.Begin);
-            var buffer = new byte[length];
-            stream.ReadExactly(buffer);
-            chunks.Add((chunkStart, buffer));
-        }
+        if (chunkBuffer.Length > 0)
+            chunks.Add((chunkStart, chunkBuffer.ToArray()));
 
         return HashChunksParallel(chunks, filePath, ct);
     }

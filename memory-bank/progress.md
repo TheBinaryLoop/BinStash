@@ -2,7 +2,98 @@
 
 ## Current status
 
-Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC ingest, REST endpoints, multi-tenancy, and auth are implemented. No automated deployment pipeline exists. CliFx 3.0.0 upgrade is partially complete (API migration has outstanding LSP errors).
+Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC ingest, REST endpoints, multi-tenancy, and auth are implemented. No automated deployment pipeline exists. CliFx 3.0.0 upgrade is partially complete.
+
+**Completed 2026-04-25:** Release flow optimization and V6 rdef migration. Build: 0 errors. 337 tests pass.
+- **V6 rdef format:** `§0x02` stores FileHash (same as V4). V5 (StorageKey-based) erased. V5 deserializer retained for upgrade path.
+- **Pack store keyed by FileHash:** `ObjectStore.WriteFileDefinitionAsync` now uses `FileDefinitionRecord.Deserialize(blob).FileHash` as the pack index key. `IndexedPackFileHandler` for fileDefs uses `FileHash` extractor.
+- **`FileDefinition.StorageKey` DB column dropped** (EF migration `DropFileDefinitionStorageKey`).
+- **`FileDefinitionStorageKeyComputer` deleted.**
+- **Stats section (§0x0A)** now written by the serializer (was previously missing).
+- **Round trip reductions:** Removed redundant `GetRepositoryAsync` (call #3) and full release list scan (call #2) from `ReleaseAddOrchestrator`. Minimum round trips: 4 (was 6).
+- **gRPC batch dedup:** `UploadChunks` now checks existence in batches of 64 instead of per-chunk.
+- **FastCDC block reads:** `ChunkUsingBuffer` uses 64KB block reads instead of `ReadByte()`.
+- **gRPC pipeline:** `BinStashGrpcClient.UploadChunksAsync` uses producer-consumer `Channel<T>` (depth 4).
+- **Streaming .rdef upload:** `BinStashApiClient.CreateReleaseAsync` uses `Pipe` instead of `MemoryStream`.
+- **`IngestSession.IntendedRelease`** nullable string field added; stored from `CreateIngestSessionRequest` body.
+- EF migration `AddIngestSessionIntendedRelease` added.
+
+**Completed 2026-04-24:** Server codebase cleanup pass. Build: 0 errors.
+
+**Completed 2026-04-15:** `BinStash.ChunkStoreExplorer` redesigned as a file-explorer-style split-pane TUI. Builds with 0 errors, 0 warnings.
+
+**Completed 2026-04-14:** `BinStash.RepackFileDefs`, `BinStash.StoreMigration`, BINST-100, BINST-99, AOT fix, V1/V2 Length fix, frontend upgrade pipeline integration, BINST-93.
+
+## What works
+
+- Full ingestion pipeline (CLI → chunking → dedup → gRPC upload → REST finalize)
+- V6 `.rdef` format (read V1–V6); V5 retained for upgrade path
+- Pack-file storage with three-tier LSM-tree index (fileDefs keyed by FileHash)
+- GraphQL management API (HotChocolate 15), REST endpoints, gRPC streaming ingest
+- "Smart" composite auth (JWT Bearer / ApiKey / Cookie)
+- Multi-tenancy (Single/Multi mode), RBAC
+- Background services: SetupBootstrapper, ChunkStoreProbeService, ChunkStoreStatsHostedService, ReleaseUpgradeBackgroundService, ChunkStoreRebuildBackgroundService
+- 24 CLI commands; SVN import subsystem (SQLite-backed resumable state)
+- 32 EF Core migrations (auto-applied at startup)
+
+## Test suite
+
+| Project | Count |
+|---|---|
+| `BinStash.Core.Tests` | 283 |
+| `BinStash.Serializers.Tests` | 44 |
+| `BinStash.Server.Tests` | 10 |
+| **Total** | **337** |
+
+## Known gaps
+
+- CliFx 3.0 migration incomplete
+- S3 storage backend not implemented
+- `chunk-store delete` / `release delete` throw `NotImplementedException`
+- Stale docs (V2/V3 format, .NET 9 references)
+- No integration/E2E tests
+- No automated deployment pipeline
+
+
+- Deleted empty directories/files: `BinStash.Core/ChunkStreaming/`, `ZipFormatDetector.cs`, `SingleTenantBootstrapper.cs`. Removed stale `.csproj` `<Compile Remove>` entry.
+- Removed commented-out dead code: `GetReleaseStreamAsync`, `ChunkStoreShowCommand` duplicate, `ChunkStoreTestCommand`, `SingleTenantBootstrapper` registration.
+- REST/GraphQL boundary: removed duplicate or GraphQL-covered REST endpoints from `TenantEndpoints`, `RepositoryEndpoints`, `ReleaseEndpoints`, `ServiceAccountEndpoints`. Fixed `Name = chunkStore.Name` → `Name = repo.Name` bug in `RepositoryEndpoints`.
+- Removed duplicate `GetReleasesForRepository` from `TenantQueryService`.
+- `SetupGateMiddleware` now returns `application/problem+json` with `setup_required` error code.
+- `ChunkStoreStatsHostedService`: added `ILogger` injection, replaced silent `catch {}` with proper error logging.
+- Fixed build errors introduced by cleanup: restored `using Microsoft.EntityFrameworkCore` in `ServiceAccountEndpoints`, corrected accidental `ListTenantsForMember` → `InviteMemberAsync` rename in `TenantEndpoints`.
+
+**Completed 2026-04-15:** `BinStash.ChunkStoreExplorer` redesigned as a file-explorer-style split-pane TUI. Builds with 0 errors, 0 warnings.
+- Replaced sequential CLI menu with keyboard-driven split-pane: left panel = navigable tree (Store → Category → PrefixGroup1 → PrefixGroup2 → Bucket → Files), right panel = node stats/detail.
+- New write operations: **Rebuild segment from packs** (scan packs → decompress → BLAKE3 hash → sort+dedup → write `seg-000.idx`), **Rebuild bloom filter** (single segment or all segments in a bucket).
+- All original features preserved (Store Overview, Bucket Browser, Pack/Segment/Bloom inspectors, FileDef decoder, Hash Lookup, Integrity Check, Verify Pack Offsets, Log Dump/Search, Raw Blob Read).
+- Fix: moved `record`/`class` type declarations to end of file to resolve `CS8803` top-level statement ordering error.
+
+**Completed 2026-04-14:** `BinStash.RepackFileDefs` cross-bucket repack tool. Fixes the bucket-mismatch bug in `BinStash.StoreMigration` that caused all 10 `StoreVerify` tests to fail with `KeyNotFoundException`.
+- New project at `Utils/RepackFileDefs/` (console, net10.0, references Infrastructure + Blake3 2.2.1).
+- `Program.cs` — 4-step pipeline: scan all FileDef packs → route each entry to correct storageKey prefix → write new correctly-routed pack files → delete stale index → call `ObjectStore.RebuildStorageAsync()`.
+- `InternalsVisibleTo("BinStash.RepackFileDefs")` added to `BinStash.Infrastructure.csproj`.
+- Added to `/Tooling/` folder in `BinStash.slnx`.
+- Results on `C:\Tmp\BinStash\SecondLocalStoreSetup`: 194,857 entries repacked, rebuild OK, **all 10 StoreVerify tests PASS**.
+- Build: 0 errors, 0 warnings.
+
+**Completed 2026-04-14:** `BinStash.StoreMigration` standalone console tool. Repairs the on-disk FileDef store and PostgreSQL `FileDefinition.StorageKey` column after the BINST-99 LSM-tree + self-keying format change.
+- New project at `BinStash.StoreMigration/` (console, net10.0, references Infrastructure + Npgsql 10.0.2).
+- `OldFlatIndexReader.cs` — reads legacy `index{prefix}.idx` flat varint files (hash + fileNo + offset + length).
+- `Program.cs` — 5-step pipeline: pg_dump backup → parallel prefix scan → write new IDX2 segments → delete stale files → update StorageKey in DB.
+- `InternalsVisibleTo("BinStash.StoreMigration")` added to `BinStash.Infrastructure.csproj` for access to `PackFileEntry`, `SortedIndexSegment`, `IndexEntry`, `FileAtomicHelper`.
+- Added to `/Tooling/` folder in `BinStash.slnx`.
+- Build: 0 errors, 0 warnings. All 341 tests pass.
+
+**Completed 2026-04-14:** BINST-100 (chunk store rebuild as async background job). Build is 0 errors. All 341 tests pass.
+
+
+- **New files:** `FileAtomicHelper.cs`, `PackIndexBloomFilter.cs`, `SortedIndexSegment.cs` in `BinStash.Infrastructure/Storage/Indexing/`
+- **Rewritten:** `IndexedPackFileHandler.cs` — three-tier lookup (log dict → bloom+binary-search on segments), append log with `LogFlushThreshold=4096`, log flush to sorted segment, size-tiered compaction (16:1, levels 0→1→2). All public signatures unchanged.
+- **Updated:** `ObjectStore.cs` — lightweight stats path reads only 8-byte segment headers + log hash replay; no handler open required.
+- **Build:** 0 errors, 0 warnings. All 341 tests pass.
+
+**Completed 2026-04-14:** AOT fix for `BinStash.Cli` — `CredentialStore` now uses Windows DPAPI (`ProtectedData`) on Windows and AES-256-GCM on Linux/macOS instead of `Microsoft.AspNetCore.DataProtection`. This fixes the `Value cannot be null (Parameter 'dictionary')` runtime crash in AOT-published binaries. `Microsoft.AspNetCore.DataProtection` and `.Extensions` packages removed. `System.Security.Cryptography.ProtectedData` 9.0.5 added. AOT publish produces 0 IL warnings, 0 errors. `auth list` verified working on the AOT binary.
 
 **Completed 2026-04-14:** BINST-91 (polymorphic ChunkStore backend settings) and BINST-92 (ChunkerOptions improvements). Both tickets moved to Done. Build succeeds (0 errors), all 341 tests pass. Runtime deserialization bug fixed — `PropertyNameCaseInsensitive = true` added to `JsonSerializerOptions` in `ChunkStoreEntityTypeConfiguration` to handle existing PascalCase JSON data in the database.
 
@@ -29,7 +120,7 @@ Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC 
 ## What works (verified from code)
 
 - **Ingestion pipeline** — `FastCdcChunker` (FastCDC, BLAKE3), plain-file and ZIP input formats, gRPC `UploadChunks` and `UploadFileDefinitions` streams, REST release registration.
-- **Pack-file storage** — `LocalFolderChunkStoreStorage` / `ObjectStore` / `ObjectStoreManager` with `.pack` + `.idx` files; 4 GiB rotation. `IndexedPackFileHandler` with memory-mapped index, lock-free reads, `AsyncLruHandlerCache` (capacity 256).
+- **Pack-file storage** — `LocalFolderChunkStoreStorage` / `ObjectStore` / `ObjectStoreManager` with `.pack` + segment index files; 4 GiB rotation. `IndexedPackFileHandler` with three-tier LSM-tree index (log dict → bloom+binary-search on MMF segments), `AsyncLruHandlerCache` (capacity 256). Lightweight stats path reads only segment headers (8 bytes each) + log hash replay without opening a handler.
 - **Release format** — `ReleasePackageSerializer` producing `.rdef` binary files; V4 format as of 2026-04-13 with sort-by-path optimization. V4 is 30.4% smaller than V2 on the real 11,049-artifact sample (161,049 B vs 231,289 B). V1/V2/V3 deserialization retained for backward compatibility.
 - **GraphQL API** — HotChocolate 15 with `QueryType`, `MutationType`, filtering, sorting, projections, authorization.
 - **REST endpoints** — `ChunkStoreEndpoints`, `IdentityEndpoints`, `IngestSessionEndpoints`, `InstanceEndpoints`, `ReleaseEndpoints`, `RepositoryEndpoints`, `ServiceAccountEndpoints`, `SetupEndpoints`, `StorageClassEndpoints`, `TenantEndpoints`.
@@ -69,7 +160,7 @@ Alpha. Core ingestion pipeline, pack-file storage, GraphQL management API, gRPC 
 | **CliFx 3.0 migration incomplete** | CLI project has LSP/compile errors from CliFx 3.0 API renames (namespaces, class names). Must be resolved before CLI builds. |
 | **S3 chunk store not implemented** | Docs and CLI help reference S3 but no `IChunkStoreStorage` implementation exists. Only `LocalFolderChunkStoreStorage` is available. `ChunkStoreStorageFactory` throws `NotSupportedException` for non-Local types. |
 | **`StorageStrategy.cs` excluded** | `BinStash.Core/Ingestion/Models/StorageStrategy.cs` excluded via `<Compile Remove=...>`. Role unclear. |
-| **`SingleTenantBootstrapper` commented out** | In `Program.cs`. Single-tenant init relies solely on `SetupBootstrapper`. |
+| **`SingleTenantBootstrapper` removed** | `SingleTenantBootstrapper.cs` deleted and its `Program.cs` registration removed. `SetupBootstrapper` handles single-tenant init. |
 | **`chunk-store delete` / `release delete` stubs** | Present but throw `NotImplementedException`. |
 | **Stale documentation** | `docs/faq.md` says ".NET 9". `docs/file-format.md` covers V2/V3 only (V4 has 10 sections). `docs/architecture.md` is a 3-line placeholder. `docs/cli-reference.md` missing auth/analyze/svn/test commands. |
 | **No automated deployment** | Deployment is manual; no pipeline for container publishing or environment promotion. |

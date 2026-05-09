@@ -92,6 +92,44 @@ public class RepositoryQueryService
             .FirstOrDefaultAsync(ct);
     }
 
+    public async Task<RepositoryGql?> GetRepositoryByNameAsync(string repoName, CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+
+        var repoId = await _db.Repositories
+            .AsNoTracking()
+            .Where(r => r.TenantId == tenantContext.TenantId && r.Name == repoName)
+            .Select(r => (Guid?)r.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (repoId is null)
+            return null;
+
+        await GraphQlAuth.EnsureRepositoryPermissionAsync(user, _authorizationService, tenantContext.TenantId, repoId.Value, RepositoryPermission.Read);
+
+        return await _db.Repositories
+            .AsNoTracking()
+            .Where(r => r.TenantId == tenantContext.TenantId && r.Id == repoId.Value)
+            .Select(r => new RepositoryGql
+            {
+                Id = r.Id,
+                Name = r.Name,
+                Description = r.Description,
+                StorageClass = r.StorageClass,
+                CreatedAt = r.CreatedAt,
+                Chunker = new ChunkStoreChunkerGql
+                {
+                    Type = r.ChunkStore.ChunkerOptions.Type.ToString(),
+                    MinChunkSize = r.ChunkStore.ChunkerOptions.MinChunkSize,
+                    AvgChunkSize = r.ChunkStore.ChunkerOptions.AvgChunkSize,
+                    MaxChunkSize = r.ChunkStore.ChunkerOptions.MaxChunkSize
+                }
+            })
+            .FirstOrDefaultAsync(ct);
+    }
+
     public IQueryable<ReleaseGql> GetReleasesForRepository(Guid repoId)
     {
         var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);

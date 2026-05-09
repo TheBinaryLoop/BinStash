@@ -95,6 +95,8 @@ public static class Program
         builder.Services.Configure<StorageSettings>(builder.Configuration.GetSection("Storage"));
         builder.Services.AddSingleton<IValidateOptions<StorageSettings>, StorageSettingsValidator>();
         builder.Services.AddOptions<StorageSettings>().ValidateOnStart();
+        builder.Services.Configure<VersionGateSettings>(builder.Configuration.GetSection("VersionGate"));
+        builder.Services.Configure<RequestMetricsSettings>(builder.Configuration.GetSection("RequestMetrics"));
         
         // Add services to the container.
         builder.Services.AddSingleton<IChunkStoreStorageFactory, ChunkStoreStorageFactory>();
@@ -108,6 +110,7 @@ public static class Program
         builder.Services.AddScoped<ITokenService, TokenService>();
         builder.Services.AddScoped<TenantJoinService>();
         builder.Services.AddScoped<ChunkStoreQueryService>();
+        builder.Services.AddScoped<ChunkStoreMutationService>();
         builder.Services.AddScoped<ReleaseQueryService>();
         builder.Services.AddScoped<RepositoryMutationService>();
         builder.Services.AddScoped<RepositoryQueryService>();
@@ -116,6 +119,7 @@ public static class Program
         builder.Services.AddScoped<TenantMutationService>();
         builder.Services.AddScoped<TenantQueryService>();
         builder.Services.AddScoped<UserQueryService>();
+        builder.Services.AddScoped<BackgroundJobService>();
         builder.Services.AddNoOpBilling();
         var billingLoader = new BillingPluginLoader();
         billingLoader.LoadAndRegisterServices(builder);
@@ -240,7 +244,6 @@ public static class Program
         
         // Hosted services
         builder.Services.AddHostedService<SetupBootstrapper>();
-        //builder.Services.AddHostedService<SingleTenantBootstrapper>();
         builder.Services.AddHostedService<ChunkStoreProbeService>();
         builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
         builder.Services.AddHostedService<TenantStorageStatsHostedService>();
@@ -253,6 +256,11 @@ public static class Program
         }));
         builder.Services.AddScoped<IReleaseUpgradeService, ReleaseUpgradeService>();
         builder.Services.AddHostedService<ReleaseUpgradeBackgroundService>();
+
+        // Chunk-store rebuild pipeline: RebuildJobChannel → ChunkStoreRebuildBackgroundService → ChunkStoreRebuildService
+        builder.Services.AddSingleton<RebuildJobChannel>();
+        builder.Services.AddScoped<IChunkStoreRebuildService, ChunkStoreRebuildService>();
+        builder.Services.AddHostedService<ChunkStoreRebuildBackgroundService>();
 
         builder.Services.AddGraphQLServer()
             .ModifyCostOptions(options =>
@@ -301,10 +309,14 @@ public static class Program
         app.UseHttpsRedirection();
         app.UseResponseCompression();
         app.UseStatusCodePages();
+        app.UseMiddleware<RequestMetricsMiddleware>();
         app.UseMiddleware<SetupGateMiddleware>();
+        app.UseMiddleware<VersionGateMiddleware>();
         app.UseMiddleware<TenantResolutionMiddleware>();
         app.UseAuthentication();
         app.UseAuthorization();
+        app.UseDefaultFiles();
+        app.UseStaticFiles();
         app.MapHealthChecks("/health", new HealthCheckOptions
         {
                 ResponseWriter = async (context, report) =>
@@ -332,6 +344,7 @@ public static class Program
         app.MapGraphQL();
         app.MapAllEndpoints();
         billingLoader.MapPluginEndpoints(app);
+        app.MapFallbackToFile("index.html");
         
         app.Run();
     }

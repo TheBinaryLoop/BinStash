@@ -14,12 +14,13 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace BinStash.Core.Ingestion.Formats.Zip;
 
-public sealed class ZipRecipeBuilder
+public sealed partial class ZipRecipeBuilder
 {
-    public byte[] BuildSemanticRecipe(IReadOnlyList<ZipArchiveEntryInfo> allEntries)
+    public static byte[] BuildSemanticRecipe(IReadOnlyList<ZipArchiveEntryInfo> allEntries)
     {
         var dto = new ZipRecipeDto
         {
@@ -30,12 +31,12 @@ public sealed class ZipRecipeBuilder
             }).ToList()
         };
 
-        return JsonSerializer.SerializeToUtf8Bytes(dto);
+        return JsonSerializer.SerializeToUtf8Bytes(dto, ZipRecipeSerializerContext.Default.ZipRecipeDto);
     }
 
     private sealed class ZipRecipeDto
     {
-        public List<ZipRecipeEntryDto> Entries { get; set; } = new();
+        public List<ZipRecipeEntryDto> Entries { get; set; } = [];
     }
 
     private sealed class ZipRecipeEntryDto
@@ -43,4 +44,8 @@ public sealed class ZipRecipeBuilder
         public string FullName { get; set; } = string.Empty;
         public bool IsDirectory { get; set; }
     }
+
+    [JsonSerializable(typeof(ZipRecipeDto))]
+    [JsonSerializable(typeof(ZipRecipeEntryDto))]
+    private sealed partial class ZipRecipeSerializerContext : JsonSerializerContext { }
 }

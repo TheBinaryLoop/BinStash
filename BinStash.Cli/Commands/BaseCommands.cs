@@ -33,7 +33,15 @@ public abstract class CommandBase : ICommand
             return;
         }
 
-        await ExecuteCommandAsync(console);
+        try
+        {
+            await ExecuteCommandAsync(console);
+        }
+        catch (CliVersionIncompatibleException ex)
+        {
+            await console.Error.WriteLineAsync(
+                $"[ERROR] {ex.Message}");
+        }
     }
 
     protected abstract ValueTask ExecuteCommandAsync(IConsole console);
@@ -119,11 +127,39 @@ public abstract class TenantCommandBase : AuthenticatedCommandBase
     public required string? TenantSlug { get; set; }
 
     private Guid TenantId { get; set; }
-    
-    protected new string GetUrl()
+
+    protected Guid GetTenantId() => TenantId;
+
+    /// <summary>
+    /// Returns the plain API base URL (e.g. <c>https://host/api/</c>).
+    /// Use this for REST endpoints that use host-based tenant resolution
+    /// (repositories, releases list, chunk-stores).
+    /// </summary>
+    protected new string GetUrl() => base.GetUrl();
+
+    /// <summary>
+    /// Returns the tenant-scoped API base URL (e.g. <c>https://host/api/tenants/{id}/</c>).
+    /// Use this for ingest sessions, release download, and other endpoints that
+    /// require the tenant ID embedded in the URL path.
+    /// </summary>
+    protected string GetTenantUrl()
     {
         var url = base.GetUrl();
         return $"{url}tenants/{TenantId}/";
+    }
+
+    /// <summary>
+    /// Returns the server root URL (e.g. <c>https://host/</c>) for gRPC channel addressing.
+    /// </summary>
+    protected string GetGrpcUrl()
+    {
+        var url = base.GetUrl();
+        // Strip the /api/ suffix — gRPC channels use the server root
+        if (url.EndsWith("/api/", StringComparison.OrdinalIgnoreCase))
+            return url[..^5]; // remove trailing "api/"
+        if (url.EndsWith("/api", StringComparison.OrdinalIgnoreCase))
+            return url[..^4];
+        return url;
     }
 
     protected override async ValueTask<bool> PreCheckAsync(IConsole console)
@@ -138,21 +174,29 @@ public abstract class TenantCommandBase : AuthenticatedCommandBase
         }
 
         var apiClient = new BinStashApiClient(base.GetUrl(), AuthTokenFactory);
-        var tenants = await apiClient.GetTenantsAsync();
-        if (tenants is null)
+        try
         {
-            await console.Error.WriteLineAsync("Failed to retrieve tenants from the server.");
+            var tenants = await apiClient.GetTenantsAsync();
+            if (tenants is null)
+            {
+                await console.Error.WriteLineAsync("Failed to retrieve tenants from the server.");
+                return false;
+            }
+            
+            var tenant = tenants.FirstOrDefault(t => t.Slug.Equals(TenantSlug, StringComparison.OrdinalIgnoreCase));
+            if (tenant is null)
+            {
+                await console.Error.WriteLineAsync($"The tenant '{TenantSlug}' does not exist or is not accessible with the provided token.");
+                return false;
+            }
+            
+            TenantId = tenant.TenantId;
+        }
+        catch (CliVersionIncompatibleException ex)
+        {
+            await console.Error.WriteLineAsync($"[ERROR] {ex.Message}");
             return false;
         }
-        
-        var tenant = tenants.FirstOrDefault(t => t.Slug.Equals(TenantSlug, StringComparison.OrdinalIgnoreCase));
-        if (tenant is null)
-        {
-            await console.Error.WriteLineAsync($"The tenant '{TenantSlug}' does not exist or is not accessible with the provided token.");
-            return false;
-        }
-        
-        TenantId = tenant.TenantId;
 
         return true;
     }

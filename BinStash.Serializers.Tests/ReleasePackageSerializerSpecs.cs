@@ -56,7 +56,7 @@ public class ReleasePackageSerializerSpecs
     [Fact]
     public async Task Serialized_bytes_start_with_BPKG_magic()
     {
-        var bytes = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
         bytes[0].Should().Be((byte)'B');
         bytes[1].Should().Be((byte)'P');
         bytes[2].Should().Be((byte)'K');
@@ -64,10 +64,10 @@ public class ReleasePackageSerializerSpecs
     }
 
     [Fact]
-    public async Task Serialized_bytes_carry_version_4()
+    public async Task Serialized_bytes_carry_version_6()
     {
-        var bytes = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
-        bytes[4].Should().Be(4);
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
+        bytes[4].Should().Be(6);
     }
 
     // ---- Basic metadata round-trip ------------------------------------------
@@ -126,11 +126,14 @@ public class ReleasePackageSerializerSpecs
         rt.CreatedAt.ToUnixTimeSeconds().Should().Be(original.CreatedAt.ToUnixTimeSeconds());
     }
 
-    // ---- Stats round-trip ---------------------------------------------------
+    // ---- Stats not persisted in V6 ------------------------------------------
 
     [Fact]
-    public async Task Stats_round_trips()
+    public async Task Stats_are_not_written_in_V6()
     {
+        // V6 intentionally omits §0x0A: ComponentCount and FileCount are derivable
+        // from the artifact list; ChunkCount, RawSize, DedupedSize are recomputed
+        // server-side from the pack store. The section would only carry redundant data.
         var original = MinimalPackage();
         original.Stats = new ReleaseStats
         {
@@ -141,11 +144,11 @@ public class ReleasePackageSerializerSpecs
             DedupedSize = 40_000_000
         };
         var rt = await RoundTrip(original);
-        rt.Stats.ComponentCount.Should().Be(3);
-        rt.Stats.FileCount.Should().Be(42);
-        rt.Stats.ChunkCount.Should().Be(1337);
-        rt.Stats.RawSize.Should().Be(100_000_000);
-        rt.Stats.DedupedSize.Should().Be(40_000_000);
+        rt.Stats.ComponentCount.Should().Be(0);
+        rt.Stats.FileCount.Should().Be(0);
+        rt.Stats.ChunkCount.Should().Be(0);
+        rt.Stats.RawSize.Should().Be(0);
+        rt.Stats.DedupedSize.Should().Be(0);
     }
 
     // ---- Custom properties round-trip ---------------------------------------
@@ -361,7 +364,7 @@ public class ReleasePackageSerializerSpecs
     }
 
     [Fact]
-    public async Task Reconstructed_artifact_member_hashes_round_trip()
+    public async Task Reconstructed_artifact_member_content_hashes_round_trip()
     {
         var original = PackageWithReconstructed();
         var rt = await RoundTrip(original);
@@ -453,8 +456,8 @@ public class ReleasePackageSerializerSpecs
     {
         var options = new ReleasePackageSerializerOptions { EnableCompression = false };
         var original = MinimalPackage();
-        var bytes = await ReleasePackageSerializer.SerializeAsync(original, options);
-        var rt = await ReleasePackageSerializer.DeserializeAsync(bytes);
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(original, options);
+        var rt = (await ReleasePackageSerializer.DeserializeAsync(bytes)).Package;
         rt.ReleaseId.Should().Be("rel-001");
     }
 
@@ -463,9 +466,9 @@ public class ReleasePackageSerializerSpecs
     {
         var package = PackageWithManyOpaqueArtifacts(100);
 
-        var compressedBytes = await ReleasePackageSerializer.SerializeAsync(package,
+        var (compressedBytes, _) = await ReleasePackageSerializer.SerializeAsync(package,
             new ReleasePackageSerializerOptions { EnableCompression = true });
-        var uncompressedBytes = await ReleasePackageSerializer.SerializeAsync(package,
+        var (uncompressedBytes, _) = await ReleasePackageSerializer.SerializeAsync(package,
             new ReleasePackageSerializerOptions { EnableCompression = false });
 
         // Compression should at least not bloat the output for 100 identical-ish hashes
@@ -521,175 +524,19 @@ public class ReleasePackageSerializerSpecs
     // ---- V4 format: path tokenization ------------------------------------------
 
     [Fact]
-    public async Task V4_path_with_multiple_segments_round_trips()
+    public async Task V4_backward_compat_deserializes_content_hash_not_storage_key()
     {
-        var package = new ReleasePackage
-        {
-            Version = "1.0",
-            ReleaseId = "r",
-            RepoId = "rp",
-            Notes = "",
-            CreatedAt = DateTimeOffset.UtcNow,
-            OutputArtifacts =
-            [
-                new OutputArtifact
-                {
-                    Path = "MyComponent/bin/release/MyAssembly.dll",
-                    ComponentName = "MyComponent",
-                    Kind = OutputArtifactKind.File,
-                    RequiresBytePerfectReconstruction = false,
-                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x01), Length = 1024 }
-                }
-            ]
-        };
-
-        var rt = await RoundTrip(package);
-        rt.OutputArtifacts[0].Path.Should().Be("MyComponent/bin/release/MyAssembly.dll");
-    }
-
-    [Fact]
-    public async Task V4_component_name_derived_from_first_path_segment()
-    {
-        var package = new ReleasePackage
-        {
-            Version = "1.0",
-            ReleaseId = "r",
-            RepoId = "rp",
-            Notes = "",
-            CreatedAt = DateTimeOffset.UtcNow,
-            OutputArtifacts =
-            [
-                new OutputArtifact
-                {
-                    Path = "Eikona.Logistics.Web/bin/app.dll",
-                    ComponentName = "Eikona.Logistics.Web",
-                    Kind = OutputArtifactKind.File,
-                    RequiresBytePerfectReconstruction = false,
-                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x02), Length = 512 }
-                }
-            ]
-        };
-
-        var rt = await RoundTrip(package);
-        rt.OutputArtifacts[0].ComponentName.Should().Be("Eikona.Logistics.Web");
-        rt.OutputArtifacts[0].Path.Should().Be("Eikona.Logistics.Web/bin/app.dll");
-    }
-
-    [Fact]
-    public async Task V4_path_without_slash_round_trips()
-    {
-        var package = new ReleasePackage
-        {
-            Version = "1.0",
-            ReleaseId = "r",
-            RepoId = "rp",
-            Notes = "",
-            CreatedAt = DateTimeOffset.UtcNow,
-            OutputArtifacts =
-            [
-                new OutputArtifact
-                {
-                    Path = "standalone.bin",
-                    ComponentName = "standalone.bin",
-                    Kind = OutputArtifactKind.File,
-                    RequiresBytePerfectReconstruction = false,
-                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x03), Length = 256 }
-                }
-            ]
-        };
-
-        var rt = await RoundTrip(package);
-        rt.OutputArtifacts[0].Path.Should().Be("standalone.bin");
-        rt.OutputArtifacts[0].ComponentName.Should().Be("standalone.bin");
-    }
-
-    [Fact]
-    public async Task V4_shared_path_segments_across_artifacts_round_trip()
-    {
-        // Multiple artifacts sharing path segments — token deduplication matters
-        var package = new ReleasePackage
-        {
-            Version = "1.0",
-            ReleaseId = "r",
-            RepoId = "rp",
-            Notes = "",
-            CreatedAt = DateTimeOffset.UtcNow,
-            OutputArtifacts =
-            [
-                new OutputArtifact
-                {
-                    Path = "comp/bin/a.dll",
-                    ComponentName = "comp",
-                    Kind = OutputArtifactKind.File,
-                    RequiresBytePerfectReconstruction = false,
-                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x10), Length = 100 }
-                },
-                new OutputArtifact
-                {
-                    Path = "comp/bin/b.dll",
-                    ComponentName = "comp",
-                    Kind = OutputArtifactKind.File,
-                    RequiresBytePerfectReconstruction = false,
-                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x11), Length = 200 }
-                },
-                new OutputArtifact
-                {
-                    Path = "comp/bin/c.dll",
-                    ComponentName = "comp",
-                    Kind = OutputArtifactKind.File,
-                    RequiresBytePerfectReconstruction = false,
-                    Backing = new OpaqueBlobBacking { ContentHash = Hash(0x12), Length = 300 }
-                }
-            ]
-        };
-
-        var rt = await RoundTrip(package);
-        rt.OutputArtifacts.Should().HaveCount(3);
-        rt.OutputArtifacts[0].Path.Should().Be("comp/bin/a.dll");
-        rt.OutputArtifacts[1].Path.Should().Be("comp/bin/b.dll");
-        rt.OutputArtifacts[2].Path.Should().Be("comp/bin/c.dll");
-        rt.OutputArtifacts.Should().AllSatisfy(a => a.ComponentName.Should().Be("comp"));
-    }
-
-    [Fact]
-    public async Task V4_reconstructed_member_entry_paths_tokenized_correctly()
-    {
-        var package = new ReleasePackage
-        {
-            Version = "1.0",
-            ReleaseId = "r",
-            RepoId = "rp",
-            Notes = "",
-            CreatedAt = DateTimeOffset.UtcNow,
-            OutputArtifacts =
-            [
-                new OutputArtifact
-                {
-                    Path = "comp/archive.zip",
-                    ComponentName = "comp",
-                    Kind = OutputArtifactKind.File,
-                    RequiresBytePerfectReconstruction = false,
-                    Backing = new ReconstructedContainerBacking
-                    {
-                        FormatId = "zip",
-                        ReconstructionKind = ReconstructionKind.Semantic,
-                        Members =
-                        [
-                            new ContainerMemberBinding { EntryPath = "lib/foo.dll", ContentHash = Hash(0x11), Length = 512 },
-                            new ContainerMemberBinding { EntryPath = "lib/bar.dll", ContentHash = Hash(0x22), Length = 1024 },
-                            new ContainerMemberBinding { EntryPath = "lib/baz.dll", ContentHash = Hash(0x33), Length = 2048 }
-                        ],
-                        RecipePayload = [0xCA, 0xFE]
-                    }
-                }
-            ]
-        };
-
-        var rt = await RoundTrip(package);
-        var backing = rt.OutputArtifacts[0].Backing.Should().BeOfType<ReconstructedContainerBacking>().Subject;
-        backing.Members[0].EntryPath.Should().Be("lib/foo.dll");
-        backing.Members[1].EntryPath.Should().Be("lib/bar.dll");
-        backing.Members[2].EntryPath.Should().Be("lib/baz.dll");
+        // Produce V6 bytes for a minimal package. V4 and V6 share identical wire
+        // encoding for §0x02 — the only difference is which field the deserializer
+        // populates (ContentHash for V4 and V6, StorageKey for V5).
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
+        // Patch the version byte to 4 to exercise the V4 deserializer code path.
+        bytes[4] = 4;
+        var rt = (await ReleasePackageSerializer.DeserializeAsync(bytes)).Package;
+        rt.PackageFormatVersion.Should().Be(4);
+        var backing = rt.OutputArtifacts[0].Backing.Should().BeOfType<OpaqueBlobBacking>().Subject;
+        // V4 deserializer populates ContentHash, not StorageKey.
+        backing.ContentHash.Should().Be(Hash(0xAA));
     }
 
     [Fact]
@@ -710,10 +557,10 @@ public class ReleasePackageSerializerSpecs
     }
 
     [Fact]
-    public async Task V4_write_read_produces_version_4_header()
+    public async Task V6_write_read_produces_version_6_header()
     {
-        var bytes = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
-        bytes[4].Should().Be(4);
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
+        bytes[4].Should().Be(6);
     }
 
     [Fact]
@@ -798,7 +645,7 @@ public class ReleasePackageSerializerSpecs
 
         rt.OutputArtifacts.Should().HaveCount(5);
 
-        // V4 serialisation sorts artifacts by path for better compression.
+        // V6 serialisation sorts artifacts by path for better compression.
         // Look up each artifact by path rather than by position.
         var byPath = rt.OutputArtifacts.ToDictionary(a => a.Path, StringComparer.Ordinal);
 
@@ -843,8 +690,8 @@ public class ReleasePackageSerializerSpecs
     private static async Task<ReleasePackage> RoundTrip(ReleasePackage package,
         ReleasePackageSerializerOptions? options = null)
     {
-        var bytes = await ReleasePackageSerializer.SerializeAsync(package, options);
-        return await ReleasePackageSerializer.DeserializeAsync(bytes);
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(package, options);
+        return (await ReleasePackageSerializer.DeserializeAsync(bytes)).Package;
     }
 
     private static ReleasePackage PackageWithOpaque(bool requiresBytePerfect = false) => new()

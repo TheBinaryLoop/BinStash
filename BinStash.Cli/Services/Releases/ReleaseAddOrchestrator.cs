@@ -22,6 +22,7 @@ using BinStash.Core.Entities;
 using BinStash.Core.Ingestion.Abstractions;
 using BinStash.Core.Ingestion.Execution;
 using BinStash.Core.Ingestion.Models;
+using BinStash.Core.Storage;
 using Blake3;
 using Spectre.Console;
 
@@ -53,7 +54,7 @@ public sealed class ReleaseAddOrchestrator
             .Spinner(Spinner.Known.Dots)
             .StartAsync("Fetching repos...", async ctx =>
             {
-                var repositories = await restClient.GetRepositoriesAsync();
+                var repositories = await restClient.GetRepositoriesAsync(request.TenantId);
                 if (repositories == null || repositories.Count == 0)
                     throw new InvalidOperationException("No repositories found. Please create a repository first.");
 
@@ -65,19 +66,6 @@ public sealed class ReleaseAddOrchestrator
 
                 if (repository == null)
                     throw new InvalidOperationException($"Repository '{request.RepositoryName}' not found.");
-
-                ctx.Status("Checking release name duplicate...");
-                var releases = await restClient.GetReleasesForRepoAsync(repository.Id);
-                if (releases != null && releases.Any(r =>
-                        r.Version.Equals(request.Version, StringComparison.OrdinalIgnoreCase)))
-                {
-                    throw new InvalidOperationException(
-                        $"Release with version '{request.Version}' already exists in repository '{repository.Name}'.");
-                }
-
-                ctx.Status($"Fetching chunker settings for repository '{repository.Name}'...");
-                repository = await restClient.GetRepositoryAsync(repository.Id)
-                             ?? throw new InvalidOperationException("Repository disappeared while fetching details.");
 
                 if (repository.Chunker == null)
                     throw new InvalidOperationException($"Repository '{repository.Name}' does not have a chunker configured.");
@@ -117,7 +105,7 @@ public sealed class ReleaseAddOrchestrator
                 log?.Invoke($"Output artifact backing breakdown: {string.Join(", ", outputArtifactBreakdown)}");
 
                 ctx.Status("Requesting ingest session...");
-                var ingestSessionId = await restClient.CreateIngestSessionAsync(repository.Id, request.Version);
+                var ingestSessionId = await restClient.CreateIngestSessionAsync(request.TenantId, repository.Id, request.Version);
 
                 log?.Invoke($"Received ingest session ID: {ingestSessionId}");
 
@@ -145,6 +133,7 @@ public sealed class ReleaseAddOrchestrator
 
                 ctx.Status("Requesting missing file definitions...");
                 var missingFileChecksums = await restClient.GetMissingFileChecksumsAsync(
+                    request.TenantId,
                     repository.Id,
                     ingestSessionId,
                     hashingResult.ContentHashes.Keys.ToList());
@@ -163,6 +152,7 @@ public sealed class ReleaseAddOrchestrator
                 ctx.Status("Planning upload...");
                 var uploadPlan = await _serverUploadPlanner.CreateAsync(
                     restClient,
+                    request.TenantId,
                     repository.Id,
                     ingestSessionId,
                     hashingResult,
@@ -209,7 +199,7 @@ public sealed class ReleaseAddOrchestrator
                     repository.Id);
 
                 ctx.Status("Creating release...");
-                await restClient.CreateReleaseAsync(ingestSessionId, repository.Id.ToString(), releasePackage);
+                _ = await restClient.CreateReleaseAsync(request.TenantId, ingestSessionId, repository.Id.ToString(), releasePackage);
 
                 console.MarkupLine("[green]Release created successfully![/]");
             });
@@ -233,6 +223,7 @@ public sealed class ReleaseAddOrchestrator
 }
 
 public sealed record ReleaseAddOrchestrationRequest(
+    Guid TenantId,
     string Version,
     string? Notes,
     string RepositoryName,

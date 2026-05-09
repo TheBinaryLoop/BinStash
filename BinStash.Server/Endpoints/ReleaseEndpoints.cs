@@ -26,6 +26,7 @@ using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
+using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Server.Extensions;
 using BinStash.Server.Helpers;
 using BinStash.Server.Services.ChunkStores;
@@ -48,12 +49,8 @@ public static class ReleaseEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .RequireAuthorization();
         
-        group.MapGet("/{id:guid}", GetReleaseByIdAsync)
-            .WithDescription("Get a release by ID.")
-            .WithSummary("Get Release")
-            .Produces<ReleaseSummaryDto>()
-            .Produces(StatusCodes.Status404NotFound)
-            .RequireRepoPermission(RepositoryPermission.Read);
+        // Release reads (get by id, list) are served by GraphQL (query { release(id) }, query { repository { releases } }).
+        // REST is kept only for operations GraphQL cannot serve: binary download and raw custom properties.
 
         group.MapGet("/{id:guid}/properties", GetReleaseCustomPropertiesAsync)
             .WithDescription("Get custom properties of a release.")
@@ -70,39 +67,7 @@ public static class ReleaseEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .RequireRepoPermission(RepositoryPermission.Read);
         
-        /*group.MapGet("/{id:guid}/stream", GetReleaseStreamAsync)!
-            .WithDescription("Stream a release package.")
-            .WithSummary("Stream Release")
-            .Produces(StatusCodes.Status200OK)
-            .Produces(StatusCodes.Status404NotFound)
-            .Produces(StatusCodes.Status400BadRequest)
-            .RequireRepoPermission(RepositoryPermission.Read);*/
-        
-        // TODO: DELETE /api/releases/{id:guid}
-
         return group;
-    }
-    
-    private static async Task<IResult> GetReleaseByIdAsync(Guid id, BinStashDbContext db)
-    {
-        var release = await db.Releases.AsNoTracking().Include(r => r.Repository).FirstOrDefaultAsync(r => r.Id == id);
-        if (release == null)
-            return Results.NotFound();
-
-        return Results.Ok(new ReleaseSummaryDto
-        {
-            Id = release.Id,
-            Version = release.Version,
-            CreatedAt = release.CreatedAt,
-            Notes = release.Notes,
-            Repository = new RepositorySummaryDto
-            {
-                Id = release.Repository.Id,
-                Name = release.Repository.Name,
-                Description = release.Repository.Description,
-                StorageClass = release.Repository.StorageClass,
-            }
-        });
     }
     
     private static async Task<IResult> GetReleaseCustomPropertiesAsync(Guid id, BinStashDbContext db)
@@ -141,7 +106,7 @@ public static class ReleaseEndpoints
         if (packageData == null)
             return Results.NotFound("Release package not found in the chunk store.");
 
-        var releasePackage = await ReleasePackageSerializer.DeserializeAsync(packageData);
+        var (releasePackage, _) = await ReleasePackageSerializer.DeserializeAsync(packageData);
 
         var artifacts = ResolveDownloadArtifacts(releasePackage, component, file).ToList();
         if (artifacts.Count == 0)
@@ -167,7 +132,7 @@ public static class ReleaseEndpoints
             .Select(x => (x.ComponentName, x.RelativePath, x.Artifact, Backing: (OpaqueBlobBacking)x.Artifact.Backing))
             .ToList();
 
-        var fileHashes = opaqueArtifacts
+        var contentHashes = opaqueArtifacts
             .Where(x => x.Backing.ContentHash != null)
             .Select(x => x.Backing.ContentHash!.Value)
             .Distinct()
@@ -176,26 +141,30 @@ public static class ReleaseEndpoints
         sw.Restart();
 
         var fileChunkMap = new ConcurrentDictionary<Hash32, List<(Hash32 Hash, int Length)>>();
+        var storageKeyToFileHash = new ConcurrentDictionary<Hash32, Hash32>();
 
         using (var throttler = new SemaphoreSlim(32))
         {
-            await Task.WhenAll(fileHashes.Select(async uniqueFileHash =>
+            await Task.WhenAll(contentHashes.Select(async contentKey =>
             {
                 await throttler.WaitAsync();
                 try
                 {
-                    var fileDefinition = await chunkStoreService.RetrieveFileDefinitionAsync(
+                    var fileDefinitionBlob = await chunkStoreService.RetrieveFileDefinitionAsync(
                         repo.ChunkStore,
-                        uniqueFileHash.ToHexString());
+                        contentKey.ToHexString());
 
-                    if (fileDefinition == null)
-                        throw new FileNotFoundException("File definition not found in the chunk store.");
+                    if (fileDefinitionBlob == null)
+                        throw new FileNotFoundException($"File definition for storage key {contentKey.ToHexString()} not found in the chunk store.");
 
-                    var chunkList = ChecksumCompressor.TransposeDecompressHashes(fileDefinition)
+                    var record = FileDefinitionRecord.Deserialize(fileDefinitionBlob);
+                    storageKeyToFileHash[contentKey] = record.FileHash;
+
+                    var chunkList = record.ChunkHashes
                         .Select(static x => (x, -1))
                         .ToList();
 
-                    fileChunkMap[uniqueFileHash] = chunkList;
+                    fileChunkMap[contentKey] = chunkList;
                 }
                 finally
                 {
@@ -229,9 +198,7 @@ public static class ReleaseEndpoints
         Debug.WriteLine($"[ReleaseDownload] Built file-chunk map with {uniqueChunks.Count} unique chunks (in {sw.ElapsedMilliseconds} ms)");
         sw.Stop();
 
-        var fileStats = await db.FileDefinitions.AsNoTracking()
-            .Where(x => x.ChunkStoreId == repo.ChunkStoreId && fileHashes.Contains(x.Checksum))
-            .ToDictionaryAsync(x => x.Checksum, x => x.Length);
+
 
         response.Headers.ContentEncoding = "identity";
         response.ContentType = "application/zstd";
@@ -258,7 +225,7 @@ public static class ReleaseEndpoints
             if (diffPackageData == null)
                 return Results.NotFound("Diff release package not found in the chunk store.");
 
-            var diffReleasePackage = await ReleasePackageSerializer.DeserializeAsync(diffPackageData);
+            var (diffReleasePackage, _) = await ReleasePackageSerializer.DeserializeAsync(diffPackageData);
 
             var diffArtifacts = ResolveDownloadArtifacts(diffReleasePackage, component, file).ToList();
             if (diffArtifacts.Any(x => x.Artifact.Backing is not OpaqueBlobBacking))
@@ -270,34 +237,38 @@ public static class ReleaseEndpoints
                 .Select(x => (x.ComponentName, x.RelativePath, x.Artifact, Backing: (OpaqueBlobBacking)x.Artifact.Backing))
                 .ToList();
 
-            var diffFileHashes = diffOpaqueArtifacts
+            var diffContentHashes = diffOpaqueArtifacts
                 .Where(x => x.Backing.ContentHash != null)
                 .Select(x => x.Backing.ContentHash!.Value)
                 .Distinct()
-                .Except(fileHashes)
+                .Except(contentHashes)
                 .ToList();
 
             var diffFileChunkMap = new ConcurrentDictionary<Hash32, List<(Hash32 Hash, int Length)>>();
+            var diffStorageKeyToFileHash = new ConcurrentDictionary<Hash32, Hash32>();
 
             using (var throttler = new SemaphoreSlim(32))
             {
-                await Task.WhenAll(diffFileHashes.Select(async uniqueFileHash =>
+                await Task.WhenAll(diffContentHashes.Select(async contentHash =>
                 {
                     await throttler.WaitAsync();
                     try
                     {
-                        var fileDefinition = await chunkStoreService.RetrieveFileDefinitionAsync(
+                        var fileDefinitionBlob = await chunkStoreService.RetrieveFileDefinitionAsync(
                             repo.ChunkStore,
-                            uniqueFileHash.ToHexString());
+                            contentHash.ToHexString());
 
-                        if (fileDefinition == null)
-                            throw new FileNotFoundException("File definition not found in the chunk store.");
+                        if (fileDefinitionBlob == null)
+                            throw new FileNotFoundException($"File definition for storage key {contentHash.ToHexString()} not found in the chunk store.");
 
-                        var chunkList = ChecksumCompressor.TransposeDecompressHashes(fileDefinition)
+                        var record = FileDefinitionRecord.Deserialize(fileDefinitionBlob);
+                        diffStorageKeyToFileHash[contentHash] = record.FileHash;
+
+                        var chunkList = record.ChunkHashes
                             .Select(static x => (x, -1))
                             .ToList();
 
-                        diffFileChunkMap[uniqueFileHash] = chunkList;
+                        diffFileChunkMap[contentHash] = chunkList;
                     }
                     finally
                     {
@@ -335,8 +306,8 @@ public static class ReleaseEndpoints
             foreach (var kvp in diffFileChunkMap)
                 fileChunkMap.TryAdd(kvp.Key, kvp.Value);
 
-            var currentFiles = ToLegacyDeltaFiles(opaqueArtifacts);
-            var baseFiles = ToLegacyDeltaFiles(diffOpaqueArtifacts);
+            var currentFiles = ToLegacyDeltaFiles(opaqueArtifacts, storageKeyToFileHash);
+            var baseFiles = ToLegacyDeltaFiles(diffOpaqueArtifacts, diffStorageKeyToFileHash);
 
             var (deltaManifest, newChunkChecksums, newFileChecksums) = DeltaCalculator.ComputeDeltaManifest(
                 baseFiles,
@@ -384,12 +355,13 @@ public static class ReleaseEndpoints
             foreach (var artifactEntry in opaqueArtifacts)
             {
                 var contentHash = artifactEntry.Backing.ContentHash
-                                  ?? throw new InvalidOperationException($"Opaque artifact '{artifactEntry.Artifact.Path}' has no content hash.");
+                                  ?? throw new InvalidOperationException($"Opaque artifact '{artifactEntry.Artifact.Path}' has no storage key.");
 
                 var relativePath = artifactEntry.RelativePath.Replace('\\', '/');
                 if (string.IsNullOrEmpty(component))
                     relativePath = $"{artifactEntry.ComponentName}/{relativePath}";
-                var totalSize = artifactEntry.Backing.Length ?? fileStats[contentHash];
+                var totalSize = artifactEntry.Backing.Length
+                                ?? throw new InvalidOperationException($"Opaque artifact '{artifactEntry.Artifact.Path}' has no length.");
 
                 await tarWriter.WriteFileAsync(relativePath, async outputStream =>
                 {
@@ -410,7 +382,8 @@ public static class ReleaseEndpoints
                         windowSize: 32);
                 }, totalSize, release.CreatedAt.UtcDateTime);
 
-                await tarWriter.WriteFileAsync($"{relativePath}.hash", contentHash.GetBytes());
+                var fileHash = storageKeyToFileHash[contentHash];
+                await tarWriter.WriteFileAsync($"{relativePath}.hash", fileHash.GetBytes());
             }
         }
         } // end await using tarWriter + compressor — flushes compressed bytes to countingBody
@@ -619,7 +592,8 @@ public static class ReleaseEndpoints
     }
 
     private static List<(string Component, ReleaseFile File)> ToLegacyDeltaFiles(
-        IEnumerable<(string ComponentName, string RelativePath, OutputArtifact Artifact, OpaqueBlobBacking Backing)> artifacts)
+        IEnumerable<(string ComponentName, string RelativePath, OutputArtifact Artifact, OpaqueBlobBacking Backing)> artifacts,
+        IReadOnlyDictionary<Hash32, Hash32> contentHashToFileHash)
     {
         return artifacts
             .Select(x => (
@@ -627,7 +601,7 @@ public static class ReleaseEndpoints
                 File: new ReleaseFile
                 {
                     Name = x.RelativePath.Replace('\\', '/'),
-                    Hash = x.Backing.ContentHash ?? default,
+                    Hash = x.Backing.ContentHash.HasValue && contentHashToFileHash.TryGetValue(x.Backing.ContentHash.Value, out var fh) ? fh : default,
                     Chunks = new List<DeltaChunkRef>()
                 }))
             .ToList();

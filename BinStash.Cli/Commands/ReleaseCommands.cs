@@ -41,7 +41,7 @@ public partial class ReleasesListCommand : TenantCommandBase
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
         var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
-        var repositories = await client.GetRepositoriesAsync();
+        var repositories = await client.GetRepositoriesAsync(GetTenantId());
         if (repositories == null || repositories.Count == 0)
         {
             console.WriteLine("No repositories found. Please create a repository first.");
@@ -59,7 +59,7 @@ public partial class ReleasesListCommand : TenantCommandBase
             return;
         }
                 
-        var releases = await client.GetReleasesForRepoAsync(repository.Id);
+        var releases = await client.GetReleasesForRepoAsync(GetTenantId(), repository.Id);
         releases ??= new List<ReleaseSummaryDto>();
         if (releases.Count == 0)
         {
@@ -111,7 +111,7 @@ public partial class ReleaseDownloadCommand : TenantCommandBase
         
         var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
 
-        var repositories = await client.GetRepositoriesAsync();
+        var repositories = await client.GetRepositoriesAsync(GetTenantId());
         if (repositories == null || repositories.Count == 0)
         {
             console.WriteLine("No repositories found. Please create a repository first.");
@@ -129,7 +129,7 @@ public partial class ReleaseDownloadCommand : TenantCommandBase
             return;
         }
             
-        var releases = await client.GetReleasesForRepoAsync(repository.Id);
+        var releases = await client.GetReleasesForRepoAsync(GetTenantId(), repository.Id);
         if (releases == null || releases.Count == 0)
         {
             await console.Output.WriteLineAsync("No releases found.");
@@ -151,41 +151,14 @@ public partial class ReleaseDownloadCommand : TenantCommandBase
         
         var downloadPath = Path.Combine(TargetFolder, $"{release.Version}.tar.zst");
 
-        if (!await client.DownloadReleaseAsync(repository.Id, release.Id, downloadPath, Component))
+        if (!await client.DownloadReleaseAsync(GetTenantId(), repository.Id, release.Id, downloadPath, Component))
         {
-            throw new CommandException($"Failed to download release '{release.Version}' (ID: {release.Id}) from repository '{release.Repository.Name}'.");
+            throw new CommandException($"Failed to download release '{release.Version}' (ID: {release.Id}).");
         }
         
         await console.Output.WriteLineAsync($"Successfully downloaded release package to '{TargetFolder}'...");
     }
 }
-
-/*[Command("chunk-store show", Description = "Display infos about a chunk store")]
-public class ChunkStoreShowCommand : ICommand
-{
-    [CommandOption("id", 'i', Description = "Id of the chunk store", IsRequired = true)]
-    public Guid Id { get; set; }
-    
-    public async ValueTask ExecuteAsync(IConsole console)
-    {
-        var client = new BinStashApiClient("http://localhost:5190");
-        var chunkStore = await client.GetChunkStoreAsync(Id);
-        
-        if (chunkStore == null)
-        {
-            await console.Output.WriteLineAsync($"Chunk store with ID {Id} not found.");
-            return;
-        }
-        
-        await console.Output.WriteLineAsync("Chunk Store Details:");
-        await console.Output.WriteLineAsync($"- Name: {chunkStore.Name}");
-        await console.Output.WriteLineAsync($"- Type: {chunkStore.Type}");
-        await console.Output.WriteLineAsync($"- Chunker: {chunkStore.Chunker.Type}");
-        await console.Output.WriteLineAsync($"  - Min chunk size: {chunkStore.Chunker.MinChunkSize}");
-        await console.Output.WriteLineAsync($"  - Avg chunk size: {chunkStore.Chunker.AvgChunkSize}");
-        await console.Output.WriteLineAsync($"  - Max chunk size: {chunkStore.Chunker.MaxChunkSize}");
-    }
-}*/
 
 [Command("release install", Description = "Install a release")]
 public partial class ReleaseInstallCommand : TenantCommandBase
@@ -212,7 +185,7 @@ public partial class ReleaseInstallCommand : TenantCommandBase
         
         var client = new BinStashApiClient(GetUrl(), AuthTokenFactory, console: console);
 
-        var repositories = await client.GetRepositoriesAsync();
+        var repositories = await client.GetRepositoriesAsync(GetTenantId());
         if (repositories == null || repositories.Count == 0)
         {
             console.WriteLine("No repositories found. Please create a repository first.");
@@ -230,7 +203,7 @@ public partial class ReleaseInstallCommand : TenantCommandBase
             return;
         }
             
-        var releases = await client.GetReleasesForRepoAsync(repository.Id);
+        var releases = await client.GetReleasesForRepoAsync(GetTenantId(), repository.Id);
         if (releases == null || releases.Count == 0)
         {
             await console.Output.WriteLineAsync("No releases found.");
@@ -252,9 +225,9 @@ public partial class ReleaseInstallCommand : TenantCommandBase
         
         var downloadPath = Path.Combine(TargetFolder, $"{release.Version}.tar.zst");
 
-        if (!await client.DownloadReleaseAsync(repository.Id, release.Id, downloadPath, Component))
+        if (!await client.DownloadReleaseAsync(GetTenantId(), repository.Id, release.Id, downloadPath, Component))
         {
-            throw new CommandException($"Failed to download release '{release.Version}' (ID: {release.Id}) from repository '{release.Repository.Name}'.");
+            throw new CommandException($"Failed to download release '{release.Version}' (ID: {release.Id}).");
         }
         
         await File.WriteAllTextAsync(Path.Combine(TargetFolder, "release-id.txt"), release.Id.ToString());

@@ -40,7 +40,11 @@ public class ChunkStore
     public long? MinFreeBytes { get; set; }
 
     // ReSharper disable once UnusedMember.Local
-    private ChunkStore() { } // EF
+    private ChunkStore() // EF
+    {
+        Name = null!;
+        BackendSettings = null!;
+    }
 
     public ChunkStore(string name, ChunkStoreType type, ChunkStoreBackendSettings backendSettings)
     {

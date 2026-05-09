@@ -13,7 +13,6 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Core.Entities;
 using BinStash.Server.Endpoints;
 
 namespace BinStash.Server.Extensions;
@@ -33,6 +32,7 @@ public static class EndpointRouteBuilderExtensions
         app.MapSetupEndpoints();
         app.MapStorageClassEndpoints();
         app.MapTenantEndpoints();
-        app.MapUpgradeJobEndpoints();
+        // Background job management is served via GraphQL (query backgroundJobs / mutation cancelBackgroundJob).
+        // The REST endpoints for rebuild and upgrade jobs have been removed.
     }
 }

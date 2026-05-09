@@ -118,8 +118,8 @@ public class IngestMeterTests : IDisposable
         public Task<byte[]?> RetrieveChunkAsync(ChunkStore store, string chunkId)
             => Task.FromResult<byte[]?>(null);
 
-        public Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, Hash32 fileHash, ReadOnlyMemory<byte> data)
-            => Task.FromResult((true, data.Length));
+        public Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> data)
+            => Task.FromResult((true, default(Hash32), data.Length));
 
         public Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string fileHash)
             => Task.FromResult<byte[]?>(null);
@@ -134,6 +134,9 @@ public class IngestMeterTests : IDisposable
             => Task.FromResult(true);
 
         public Task<bool> RebuildStorageAsync(ChunkStore store)
+            => Task.FromResult(true);
+
+        public Task<bool> RebuildStorageWithProgressAsync(ChunkStore store, IProgress<bool> progress, CancellationToken cancellationToken)
             => Task.FromResult(true);
 
         public Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(ChunkStore store, IReadOnlyCollection<string> fileHashes)

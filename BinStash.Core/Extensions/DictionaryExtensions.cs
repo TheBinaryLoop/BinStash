@@ -13,12 +13,15 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 
 namespace BinStash.Core.Extensions;
 
 public static class DictionaryExtensions
 {
+    [RequiresUnreferencedCode("Uses JsonSerializer.Serialize with Dictionary<string, object> which requires reflection. Only call from non-AOT contexts.")]
+    [RequiresDynamicCode("Uses JsonSerializer.Serialize with Dictionary<string, object> which requires dynamic code generation. Only call from non-AOT contexts.")]
     public static string ToJson(this Dictionary<string, string> dict)
     {
         var root = new Dictionary<string, object>();

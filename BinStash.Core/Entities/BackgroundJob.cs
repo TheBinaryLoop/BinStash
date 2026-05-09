@@ -81,6 +81,7 @@ public enum BackgroundJobStatus
 public static class BackgroundJobTypes
 {
     public const string ReleaseUpgrade = "ReleaseUpgrade";
+    public const string ChunkStoreRebuild = "ChunkStoreRebuild";
 }
 
 /// <summary>
@@ -105,4 +106,24 @@ public sealed class ReleaseUpgradeProgressData
     public int SkippedReleases { get; set; }
     public long BytesSaved { get; set; }
     public long BytesGrown { get; set; }
+}
+
+/// <summary>
+/// Typed input payload for a <see cref="BackgroundJobTypes.ChunkStoreRebuild"/> job.
+/// Serialized to JSON and stored in <see cref="BackgroundJob.JobData"/>.
+/// </summary>
+public sealed class ChunkStoreRebuildJobData
+{
+    public Guid ChunkStoreId { get; set; }
+}
+
+/// <summary>
+/// Typed progress payload for a <see cref="BackgroundJobTypes.ChunkStoreRebuild"/> job.
+/// Serialized to JSON and stored in <see cref="BackgroundJob.ProgressData"/>.
+/// </summary>
+public sealed class ChunkStoreRebuildProgressData
+{
+    public int TotalBuckets { get; set; }
+    public int ProcessedBuckets { get; set; }
+    public int FailedBuckets { get; set; }
 }

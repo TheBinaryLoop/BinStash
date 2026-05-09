@@ -111,7 +111,7 @@ public class QuotaEnforcementTests : IDisposable
             .GetMethod("CreateIngestSessionAsync",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
 
-        var result = await (Task<IResult>)method.Invoke(null, [tenantId, repoId, _db, billingCache, CancellationToken.None])!;
+        var result = await (Task<IResult>)method.Invoke(null, [tenantId, repoId, null, _db, billingCache, CancellationToken.None])!;
 
         // Assert
         var services = new ServiceCollection();

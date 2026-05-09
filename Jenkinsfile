@@ -3,6 +3,7 @@ pipeline {
 
   tools {
     dotnetsdk 'dotnet-lts'
+    nodejs 'node-lts'
   }
 
   options {
@@ -23,6 +24,21 @@ pipeline {
     stage('Checkout') {
       steps {
         checkout scm
+      }
+    }
+
+    stage('Frontend') {
+      steps {
+        dir('BinStash.Frontend') {
+          bat 'corepack enable'
+          bat 'corepack prepare pnpm@latest --activate'
+          bat 'pnpm install --frozen-lockfile'
+          bat 'pnpm build'
+        }
+      }
+      post {
+        success { echo '✅ Frontend build completed.' }
+        failure { echo '❌ Frontend build failed. Check logs.' }
       }
     }
 
@@ -75,16 +91,6 @@ pipeline {
     }
   }
   post {
-    //always {
-      // Recommended by the plugin to avoid lingering build servers on agents
-      // (shuts down MSBuild/Roslyn servers that may keep the build "hanging")
-    //  dotnetBuild(
-        // dummy no-op call solely to access the 'shutDownBuildServers' option
-    //    project: '.', // ignored for shutdown
-    //    sdk: 'dotnet-lts',
-    //    shutDownBuildServers: true
-    //  ) // :contentReference[oaicite:1]{index=1}
-    //}
     success { echo "✅ Build completed for ${env.SOLUTION} (${env.BUILD_CONFIG})." }
     failure { echo "❌ Build failed. Check logs." }
   }

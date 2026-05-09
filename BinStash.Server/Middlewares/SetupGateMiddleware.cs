@@ -22,10 +22,18 @@ namespace BinStash.Server.Middlewares;
 
 public sealed class SetupGateMiddleware(RequestDelegate next)
 {
+    private static bool _setupComplete;
+    
     public async Task InvokeAsync(HttpContext ctx, BinStashDbContext db, IOptions<TenancySettings> tenancyOpts)
     {
+        if (_setupComplete)
+        {
+            await next(ctx);
+            return;
+        }
+        
         var path = ctx.Request.Path;
-
+        
         // Allow setup + tooling endpoints
         if (path.StartsWithSegments("/api/setup", StringComparison.OrdinalIgnoreCase) || 
             path.StartsWithSegments("/api/chunkstores/", StringComparison.OrdinalIgnoreCase) ||
@@ -40,11 +48,20 @@ public sealed class SetupGateMiddleware(RequestDelegate next)
         var state = await db.SetupStates.AsNoTracking().SingleOrDefaultAsync(x => x.Id == 1);
         if (state is null || !state.IsInitialized)
         {
-            // TODO: Return problem+json with setup_required code
             ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-            await ctx.Response.WriteAsync("setup_required");
+            ctx.Response.ContentType = "application/problem+json";
+            await ctx.Response.WriteAsJsonAsync(new
+            {
+                type = "https://binstash.app/errors/setup-required",
+                title = "Setup Required",
+                status = 503,
+                detail = "This BinStash instance has not been initialized yet. Please complete the setup process first.",
+                errorCode = "setup_required"
+            });
             return;
         }
+        
+        _setupComplete = true;
 
         await next(ctx);
     }

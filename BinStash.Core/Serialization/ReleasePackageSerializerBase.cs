@@ -14,7 +14,6 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using System.Buffers;
-using System.Numerics;
 using System.Text;
 using BinStash.Contracts.Release;
 using BinStash.Core.Serialization.Utils;
@@ -25,17 +24,13 @@ namespace BinStash.Core.Serialization;
 
 public abstract class ReleasePackageSerializerBase
 {
-    protected static readonly Dictionary<byte, byte[]> ZstDicts = new()
-    {
-        //{ 0x03, File.ReadAllBytes(@"C:\Tmp\dict_sample\strings-64.dict") }
-    };
+    protected static readonly Dictionary<byte, byte[]> ZstDicts = new();
     
     private static readonly RecyclableMemoryStreamManager RecyclableMemoryStreamManager =
         new(new RecyclableMemoryStreamManager.Options(blockSize: 128 * 1024, largeBufferMultiple: 1024 * 1024, maximumBufferSize: 16 * 1024 * 1024, maximumSmallPoolFreeBytes: 256L * 1024 * 1024, maximumLargePoolFreeBytes: 512L * 1024 * 1024));
     
     protected static async Task WriteSectionAsync(Stream baseStream, byte id, Action<BinaryWriter> write, bool enableCompression, int compressionLevel, CancellationToken ct)
     {
-        var streamPosition = baseStream.Position;
         await using var ms = RecyclableMemoryStreamManager.GetStream();
         var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
         write(w);

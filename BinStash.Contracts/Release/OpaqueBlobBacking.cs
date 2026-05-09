@@ -19,6 +19,10 @@ namespace BinStash.Contracts.Release;
 
 public sealed class OpaqueBlobBacking : ArtifactBacking
 {
+    /// <summary>
+    /// The file-content hash (<c>BLAKE3(file bytes)</c>).
+    /// </summary>
     public Hash32? ContentHash { get; set; }
+
     public long? Length { get; set; }
 }

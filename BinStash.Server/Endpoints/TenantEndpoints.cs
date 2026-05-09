@@ -16,15 +16,16 @@
 using System.Security.Claims;
 using System.Text;
 using BinStash.Contracts.Tenant;
-using BinStash.Core.Auth.Instance;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Configuration;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace BinStash.Server.Endpoints;
 
@@ -41,36 +42,18 @@ public static class TenantEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .RequireAuthorization();
         
-        // TODO: Create tenant endpoint (auth only, no tenant context yet)
-        
         var explicitTenantGroup = group.MapGroup("/{tenantId:guid}")!;
-        
+
+        // Tenant list/get/create/update are handled via GraphQL (query { tenants }, query { tenant(id) },
+        // mutation { createTenant }, mutation { updateTenant }). Only the CLI-facing tenant list is kept here.
         group.MapGet("/", ListTenantsForMember)!
-            .WithDescription("Get tenants the user is a member of.")
+            .WithDescription("Get tenants the user is a member of. Used by the CLI; web UI uses GraphQL.")
             .WithSummary("List Tenants");
-        group.MapPost("/", CreateTenant)!
-            .WithDescription("Create a new tenant.")
-            .WithSummary("Create Tenant")
-            .RequireInstancePermission(InstancePermission.Admin);
         
-        group.MapGet("/{id:guid}", GetTenant)!
-            .WithDescription("Get a tenant by ID.")
-            .WithSummary("Get Tenant");
-        
-        explicitTenantGroup.MapPut("/", UpdateTenant)!
-            .WithDescription("Update tenant details.")
-            .WithSummary("Update Tenant")
-            .RequireTenantPermission(TenantPermission.Admin);
-        
-        explicitTenantGroup.MapDelete("/", (HttpContext context) => Results.StatusCode(StatusCodes.Status501NotImplemented))! // TODO: implement tenant deletion with safeguards (e.g. only if no members, or transfer ownership first)
+        explicitTenantGroup.MapDelete("/", (HttpContext context) => Results.StatusCode(StatusCodes.Status501NotImplemented))!
             .WithDescription("Delete a tenant. (Not implemented yet)")
             .WithSummary("Delete Tenant")
             .RequireTenantPermission(TenantPermission.Admin);
-        
-        group.MapGet("/current", GetCurrentTenant)!
-            .WithDescription("Get the current tenant.")
-            .WithSummary("Get Current Tenant")
-            .RequireTenantPermission(TenantPermission.Member);
         
         group.MapGet("/current/members", GetMembersForTenant)!
             .WithDescription("Get members of the current tenant.")
@@ -85,7 +68,7 @@ public static class TenantEndpoints
                 // - Permission: TenantAdmin
                 // - Why: invite flow is the typical SaaS onboarding mechanism; avoids public registration.
                 // - When: admin invites a coworker by email.
-        group.MapPost("/current/invatations", InviteMemberAsync)!
+        group.MapPost("/current/invitations", InviteMemberAsync)!
             .WithDescription("Invite a member to a tenant.")
             .WithSummary("Invite Tenant Member")
             .RequireTenantPermission(TenantPermission.Admin);
@@ -195,58 +178,6 @@ public static class TenantEndpoints
         return Results.Ok(membersWithRoles);
     }
 
-    private static async Task<IResult> CreateTenant(CreateTenantDto request, HttpContext context, BinStashDbContext db)
-    {
-        if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Slug))
-            return Results.BadRequest("Name and Slug are required.");
-
-        var userIdStr = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
-        if (!Guid.TryParse(userIdStr, out var userId))
-            return Results.Unauthorized();
-        
-        var existingSlug = await db.Tenants.AnyAsync(t => t.Slug.ToLower() == request.Slug.ToLower());
-        if (existingSlug)
-            return Results.BadRequest("Slug already exists.");
-        
-        var tenant = new Tenant
-        {
-            Id = Guid.CreateVersion7(),
-            Name = request.Name,
-            Slug = request.Slug.ToLowerInvariant(),
-            CreatedAt = DateTimeOffset.UtcNow,
-            CreatedByUserId = userId
-        };
-        
-        await db.Tenants.AddAsync(tenant);
-        
-        await db.SaveChangesAsync();
-        
-        return Results.Created($"/api/tenants/{tenant.Id}", new { tenant.Id, tenant.Name, tenant.Slug, tenant.CreatedAt });
-    }
-    
-    private static async Task<IResult> UpdateTenant(UpdateTenantDto request, HttpContext context, BinStashDbContext db, TenantContext tenantContext)
-    {
-        var tenant = await db.Tenants.FindAsync(tenantContext.TenantId);
-        if (tenant == null)
-            return Results.NotFound("Tenant not found.");
-        
-        if (!string.IsNullOrWhiteSpace(request.Name))
-            tenant.Name = request.Name;
-        
-        if (!string.IsNullOrWhiteSpace(request.Slug) && !request.Slug.Equals(tenant.Slug, StringComparison.CurrentCultureIgnoreCase))
-        {
-            var existingSlug = await db.Tenants.AnyAsync(t => t.Slug.Equals(request.Slug, StringComparison.CurrentCultureIgnoreCase) && t.Id != tenant.Id);
-            if (existingSlug)
-                return Results.BadRequest("Slug already exists.");
-            
-            tenant.Slug = request.Slug.ToLowerInvariant();
-        }
-        
-        await db.SaveChangesAsync();
-        
-        return Results.Ok(new { tenant.Id, tenant.Name, tenant.Slug, tenant.CreatedAt });
-    }
-    
     private static async Task<IResult> ListTenantsForMember(HttpContext context, BinStashDbContext db)
     {
         var userId = await db.Users.FirstOrDefaultAsync(u => u.Email == context.User.Identity!.Name);
@@ -291,58 +222,7 @@ public static class TenantEndpoints
         return Results.Ok(tenants);
     }
     
-    private static async Task<IResult> GetTenant(Guid id, HttpContext context, BinStashDbContext db)
-    {
-        var userIdStr = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
-        if (!Guid.TryParse(userIdStr, out var userId))
-            return Results.Unauthorized();
-        
-        var isMember = await db.TenantMembers
-            .AnyAsync(m => m.TenantId == id && m.UserId == userId);
-
-        if (!isMember)
-            return Results.NotFound();
-        
-        return await db.Tenants.AsNoTracking()
-            .Where(t => t.Id == id)
-            .Select(t => new
-            {
-                t.Id,
-                t.Name,
-                t.Slug,
-                t.CreatedAt
-            })
-            .FirstOrDefaultAsync()
-            .ContinueWith<IResult>(t =>
-            {
-                var tenant = t.Result;
-                if (tenant == null)
-                    return Results.NotFound("Tenant not found.");
-                
-                return Results.Ok(tenant);
-            });
-    }
-    
-    private static async Task<IResult> GetCurrentTenant(HttpContext context, BinStashDbContext db, TenantContext tenantContext)
-    {
-        var tenant = await db.Tenants.AsNoTracking()
-            .Where(t => t.Id == tenantContext.TenantId)
-            .Select(t => new
-            {
-                t.Id,
-                t.Name,
-                t.Slug,
-                t.CreatedAt
-            })
-            .FirstOrDefaultAsync();
-        
-        if (tenant == null)
-            return Results.NotFound("Tenant not found.");
-        
-        return Results.Ok(tenant);
-    }
-    
-    private static async Task<IResult> InviteMemberAsync(InviteTenantMemberDto request, HttpContext context, BinStashDbContext db, TenantContext tenantContext, UserManager<BinStashUser> userManager, ITenantEmailSender emailSender, LinkGenerator linkGenerator)
+    private static async Task<IResult> InviteMemberAsync(InviteTenantMemberDto request, HttpContext context, BinStashDbContext db, TenantContext tenantContext, UserManager<BinStashUser> userManager, ITenantEmailSender emailSender, LinkGenerator linkGenerator, IOptions<DomainSettings> domainOptions)
     {
         var tenant = await db.Tenants.FindAsync(tenantContext.TenantId);
         if (tenant == null)
@@ -381,7 +261,7 @@ public static class TenantEndpoints
         var code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(invitation.Code));
         
         // TODO: Get host form settings
-        var acceptInvitationFrontendUrl = $"http://localhost:5173/invite/{tenantContext.TenantId:D}/{code}";
+        var acceptInvitationFrontendUrl = IdentityEndpoints.BuildFrontendUrl(domainOptions.Value, context, $"/invite/{tenantContext.TenantId:D}/{code}");
         var acceptEmailUrl = !string.IsNullOrEmpty(_acceptInvitationEndpointName) ? linkGenerator.GetUriByName(context, _acceptInvitationEndpointName, values: new { code })
                               : throw new NotSupportedException($"Could not find endpoint named '{_acceptInvitationEndpointName}'.");
         

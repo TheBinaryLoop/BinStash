@@ -7,6 +7,7 @@ using BinStash.Core.Billing;
 using BinStash.Core.Entities;
 using BinStash.Core.Storage.Stats;
 using BinStash.Infrastructure.Data;
+using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Server.Endpoints;
 using BinStash.Server.Services.ChunkStores;
 using FluentAssertions;
@@ -126,14 +127,19 @@ public class EgressMeterTests : IDisposable
         public Task<byte[]?> RetrieveChunkAsync(ChunkStore store, string chunkId)
             => Task.FromResult<byte[]?>(null);
 
-        public Task<(bool Success, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, Hash32 fileHash, ReadOnlyMemory<byte> data)
-            => Task.FromResult((true, data.Length));
+        public Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> data)
+            => Task.FromResult((true, FakeHash, data.Length));
 
         public Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string fileHash)
         {
-            // Return empty transpose-compressed hash list (varint 0 = no chunks)
-            // TransposeDecompressHashes reads a varint count; 0x00 0x00 encodes count=0
-            return Task.FromResult<byte[]?>(new byte[] { 0x00, 0x00 });
+            // Return a valid FileDefinitionRecord with no chunks.
+            var record = new FileDefinitionRecord
+            {
+                FileHash = FakeHash,
+                FileLength = 0,
+                ChunkHashes = [],
+            };
+            return Task.FromResult<byte[]?>(record.Serialize());
         }
 
         public Task<bool> StoreReleasePackageAsync(ChunkStore store, ReadOnlyMemory<byte> packageData)
@@ -160,7 +166,7 @@ public class EgressMeterTests : IDisposable
                     }
                 ],
             };
-            var bytes = BinStash.Core.Serialization.ReleasePackageSerializer.SerializeAsync(package).GetAwaiter().GetResult();
+            var bytes = BinStash.Core.Serialization.ReleasePackageSerializer.SerializeAsync(package).GetAwaiter().GetResult().Data;
             return Task.FromResult<byte[]?>(bytes);
         }
 
@@ -168,6 +174,9 @@ public class EgressMeterTests : IDisposable
             => Task.FromResult(true);
 
         public Task<bool> RebuildStorageAsync(ChunkStore store)
+            => Task.FromResult(true);
+
+        public Task<bool> RebuildStorageWithProgressAsync(ChunkStore store, IProgress<bool> progress, CancellationToken cancellationToken)
             => Task.FromResult(true);
 
         public Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(ChunkStore store, IReadOnlyCollection<string> fileHashes)

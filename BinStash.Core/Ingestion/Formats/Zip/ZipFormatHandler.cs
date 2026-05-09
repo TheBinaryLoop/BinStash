@@ -65,7 +65,7 @@ public sealed class ZipFormatHandler : IInputFormatHandler
             return Task.CompletedTask;
         }
 
-        var recipePayload = _recipeBuilder.BuildSemanticRecipe(entries);
+        var recipePayload = ZipRecipeBuilder.BuildSemanticRecipe(entries);
 
         context.RegisterReconstructedContainerOutputArtifact(
             input: input,

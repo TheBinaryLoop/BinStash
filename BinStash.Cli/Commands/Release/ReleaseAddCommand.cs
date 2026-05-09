@@ -75,6 +75,7 @@ public partial class ReleaseAddCommand : TenantCommandBase
         });
 
         var request = new ReleaseAddOrchestrationRequest(
+            TenantId: GetTenantId(),
             Version: Version,
             Notes: noteContent,
             RepositoryName: RepositoryName,
@@ -83,7 +84,7 @@ public partial class ReleaseAddCommand : TenantCommandBase
             CustomProperties: CustomProperties);
 
         var restClient = new BinStashApiClient(GetUrl(), AuthTokenFactory);
-        var grpcClient = new BinStashGrpcClient(GetUrl(), AuthTokenFactory);
+        var grpcClient = new BinStashGrpcClient(GetGrpcUrl(), AuthTokenFactory);
 
         await _orchestrator.RunAsync(ansiConsole, restClient, grpcClient, request, message => ansiConsole.MarkupLine($"[grey]LOG:[/] {message}[grey]...[/]"), CancellationToken.None);
     }

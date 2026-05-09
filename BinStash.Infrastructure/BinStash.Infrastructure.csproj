@@ -28,4 +28,16 @@
         <EmbeddedResource Include="Templates\**\*.hbs" />
     </ItemGroup>
 
+    <ItemGroup>
+        <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+            <_Parameter1>BinStash.StoreMigration</_Parameter1>
+        </AssemblyAttribute>
+        <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+            <_Parameter1>BinStash.RepackFileDefs</_Parameter1>
+        </AssemblyAttribute>
+        <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+            <_Parameter1>BinStash.ChunkStoreExplorer</_Parameter1>
+        </AssemblyAttribute>
+    </ItemGroup>
+
 </Project>

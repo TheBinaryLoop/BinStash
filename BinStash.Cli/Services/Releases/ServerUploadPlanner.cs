@@ -22,7 +22,7 @@ namespace BinStash.Cli.Services.Releases;
 
 public sealed class ServerUploadPlanner
 {
-    public async Task<ServerUploadPlan> CreateAsync(BinStashApiClient client, Guid repositoryId, Guid ingestSessionId, StorageHashingResult hashingResult, ChunkMapGenerationResult chunkMapResult, CancellationToken ct = default)
+    public async Task<ServerUploadPlan> CreateAsync(BinStashApiClient client, Guid tenantId, Guid repositoryId, Guid ingestSessionId, StorageHashingResult hashingResult, ChunkMapGenerationResult chunkMapResult, CancellationToken ct = default)
     {
         var uniqueChunkChecksums = chunkMapResult.FileChunkMaps.Values
             .SelectMany(x => x.Select(cme => cme.Checksum))
@@ -30,7 +30,7 @@ public sealed class ServerUploadPlanner
             .OrderBy(x => x)
             .ToList();
 
-        var missingChunkChecksums = uniqueChunkChecksums.Count == 0 ? [] : await client.GetMissingChunkChecksumsAsync(repositoryId, ingestSessionId, uniqueChunkChecksums);
+        var missingChunkChecksums = uniqueChunkChecksums.Count == 0 ? [] : await client.GetMissingChunkChecksumsAsync(tenantId, repositoryId, ingestSessionId, uniqueChunkChecksums);
 
         var missingChunkSet = new HashSet<Hash32>(missingChunkChecksums);
         var selectedEntries = new Dictionary<Hash32, ChunkMapEntry>();
