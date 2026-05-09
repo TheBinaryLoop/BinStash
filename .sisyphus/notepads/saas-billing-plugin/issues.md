@@ -1,1 +1,0 @@
-# Issues — saas-billing-plugin

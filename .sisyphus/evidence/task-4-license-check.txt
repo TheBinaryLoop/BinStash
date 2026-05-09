@@ -1,3 +1,0 @@
-LICENSE-COMMERCIAL.md exists: True
-LICENSE.txt dual-license note: True
-README.md dual-license section: True
