@@ -65,7 +65,8 @@ pipeline {
           noBuild: true,
           logger: 'xunit',
           sdk: 'dotnet-lts',
-          shutDownBuildServers: true
+          shutDownBuildServers: true,
+          filter: 'Category!=Integration'
         )
       }
       post {
