@@ -78,21 +78,55 @@ public abstract class UrlCommandBase : CommandBase
 
 public abstract class AuthenticatedCommandBase : UrlCommandBase
 {
-    [CommandOption("token", Description = "Authentication token for the BinStash server.")]
+    [CommandOption("token", Description = "Bearer access token (JWT) for the BinStash server.")]
     public string? Token { get; set; }
+
+    [CommandOption("api-key", Description = "Service-account API key in the form <id>.<secret>. Suitable for non-interactive/CI use.")]
+    public string? ApiKey { get; set; }
 
     [CommandOption("no-auth", Description = "Disable authentication.")]
     public bool NoAuth { get; set; }
 
     protected Func<Task<string>> AuthTokenFactory { get; private set; } = () => Task.FromResult(string.Empty);
 
+    /// <summary>
+    /// The HTTP/gRPC authorization scheme that pairs with the token produced by
+    /// <see cref="AuthTokenFactory"/> — <c>"Bearer"</c> for JWTs (stored creds or <c>--token</c>)
+    /// or <c>"ApiKey"</c> for a service-account API key (<c>--api-key</c>).
+    /// </summary>
+    protected string AuthScheme { get; private set; } = "Bearer";
+
     protected override async ValueTask<bool> PreCheckAsync(IConsole console)
     {
         if (!await base.PreCheckAsync(console))
             return false;
-        
+
         if (NoAuth) return true;
 
+        // Precedence: explicit command-line credentials win over the stored credential store,
+        // and are checked first so a missing store (which throws "Not logged in") never aborts
+        // a non-interactive/CI invocation that supplied its own credential.
+
+        // 1. Service-account API key — long-lived, ideal for CI. Sent with the "ApiKey" scheme.
+        if (!string.IsNullOrWhiteSpace(ApiKey))
+        {
+            var apiKey = ApiKey;
+            AuthScheme = "ApiKey";
+            Token = apiKey;
+            AuthTokenFactory = () => Task.FromResult(apiKey);
+            return true;
+        }
+
+        // 2. Explicit bearer token (raw JWT).
+        if (!string.IsNullOrWhiteSpace(Token))
+        {
+            var token = Token;
+            AuthScheme = "Bearer";
+            AuthTokenFactory = () => Task.FromResult(token);
+            return true;
+        }
+
+        // 3. Stored interactive credentials (auto-refreshing).
         var http = new HttpClient { BaseAddress = new Uri(GetUrl()) };
         var auth = new Auth.AuthService(http);
 
@@ -103,6 +137,7 @@ public abstract class AuthenticatedCommandBase : UrlCommandBase
             {
                 await console.Output.WriteLineAsync("Using stored authentication token.");
                 Token = accessToken;
+                AuthScheme = "Bearer";
                 AuthTokenFactory = auth.GetValidAccessTokenAsync;
             }
         }
@@ -174,7 +209,7 @@ public abstract class TenantCommandBase : AuthenticatedCommandBase
             return false;
         }
 
-        var apiClient = new BinStashApiClient(base.GetUrl(), AuthTokenFactory);
+        var apiClient = new BinStashApiClient(base.GetUrl(), AuthTokenFactory, authScheme: AuthScheme);
         try
         {
             var tenants = await apiClient.GetTenantsAsync();

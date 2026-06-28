@@ -20,16 +20,18 @@ namespace BinStash.Cli.Auth;
 public sealed class AuthHeaderHandler : DelegatingHandler
 {
     private readonly Func<Task<string>> _authTokenFactory;
+    private readonly string _authScheme;
 
-    public AuthHeaderHandler(Func<Task<string>> authTokenFactory)
+    public AuthHeaderHandler(Func<Task<string>> authTokenFactory, string authScheme = "Bearer")
     {
         _authTokenFactory = authTokenFactory;
+        _authScheme = authScheme;
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var token = await _authTokenFactory();
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(_authScheme, token);
         request.Headers.TryAddWithoutValidation("X-BinStash-Cli-Version", CliVersion.Value);
         return await base.SendAsync(request, cancellationToken);
     }

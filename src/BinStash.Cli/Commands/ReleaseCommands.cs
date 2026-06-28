@@ -40,7 +40,7 @@ public partial class ReleasesListCommand : TenantCommandBase
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory, authScheme: AuthScheme);
         var repositories = await client.GetRepositoriesAsync(GetTenantId());
         if (repositories == null || repositories.Count == 0)
         {
@@ -109,7 +109,7 @@ public partial class ReleaseDownloadCommand : TenantCommandBase
         if (!string.IsNullOrEmpty(Version) && string.IsNullOrEmpty(RepositoryName)) throw new CommandException("You must specify a repository name when providing a version.");
         if (string.IsNullOrWhiteSpace(TargetFolder)) throw new CommandException("You must specify a target directory.");
         
-        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory, authScheme: AuthScheme);
 
         var repositories = await client.GetRepositoriesAsync(GetTenantId());
         if (repositories == null || repositories.Count == 0)
@@ -183,7 +183,7 @@ public partial class ReleaseInstallCommand : TenantCommandBase
         if (!string.IsNullOrEmpty(Version) && string.IsNullOrEmpty(RepositoryName)) throw new CommandException("You must specify a repository name when providing a version.");
         if (string.IsNullOrWhiteSpace(TargetFolder)) throw new CommandException("You must specify a target directory.");
         
-        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory, console: console);
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory, console: console, authScheme: AuthScheme);
 
         var repositories = await client.GetRepositoriesAsync(GetTenantId());
         if (repositories == null || repositories.Count == 0)

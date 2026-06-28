@@ -20,11 +20,13 @@ export type ApiKeyInfoDto = {
   expiresAt?: string | null
   lastUsedAt?: string | null
   isActive: boolean
+  scopes?: string[]
 }
 
 export type CreateApiKeyRequest = {
   displayName: string
   expiresAt?: string | null
+  scopes?: string[]
 }
 
 export type CreateApiKeyResponse = {

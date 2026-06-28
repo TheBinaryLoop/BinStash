@@ -173,7 +173,7 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
     public async Task UnknownKeyId_ReturnsFail()
     {
         var unknownId = Guid.NewGuid();
-        var (handler, _) = await BuildHandlerAsync($"ApiKey {unknownId}.somesecret");
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(unknownId)}.somesecret");
 
         var result = await handler.AuthenticateAsync();
 
@@ -189,7 +189,7 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
     public async Task WrongSecret_ReturnsFail()
     {
         var (key, _) = await SeedApiKeyAsync();
-        var (handler, _) = await BuildHandlerAsync($"ApiKey {key.Id}.wrongsecret");
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(key.Id)}.wrongsecret");
 
         var result = await handler.AuthenticateAsync();
 
@@ -205,7 +205,7 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
     public async Task ExpiredKey_ReturnsFail()
     {
         var (key, rawSecret) = await SeedApiKeyAsync(expiresAt: DateTimeOffset.UtcNow.AddHours(-1));
-        var (handler, _) = await BuildHandlerAsync($"ApiKey {key.Id}.{rawSecret}");
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(key.Id)}.{rawSecret}");
 
         var result = await handler.AuthenticateAsync();
 
@@ -221,7 +221,7 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
     public async Task RevokedKey_ReturnsFail()
     {
         var (key, rawSecret) = await SeedApiKeyAsync(revokedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
-        var (handler, _) = await BuildHandlerAsync($"ApiKey {key.Id}.{rawSecret}");
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(key.Id)}.{rawSecret}");
 
         var result = await handler.AuthenticateAsync();
 
@@ -240,7 +240,7 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
             subjectType: SubjectType.ServiceAccount,
             scopes: ["repo:read", "repo:write"]);
 
-        var (handler, _) = await BuildHandlerAsync($"ApiKey {key.Id}.{rawSecret}");
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(key.Id)}.{rawSecret}");
 
         var result = await handler.AuthenticateAsync();
 
@@ -270,7 +270,7 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
         var (key, rawSecret) = await SeedApiKeyAsync();
         key.LastUsedAt.Should().BeNull("no prior use");
 
-        var (handler, _) = await BuildHandlerAsync($"ApiKey {key.Id}.{rawSecret}");
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(key.Id)}.{rawSecret}");
         var before = DateTimeOffset.UtcNow;
 
         await handler.AuthenticateAsync();
@@ -289,12 +289,18 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
     {
         var (key, rawSecret) = await SeedApiKeyAsync();
 
-        var (handler, _) = await BuildHandlerAsync($"APIKEY {key.Id}.{rawSecret}");
+        var (handler, _) = await BuildHandlerAsync($"APIKEY {EncodeId(key.Id)}.{rawSecret}");
 
         var result = await handler.AuthenticateAsync();
 
         result.Succeeded.Should().BeTrue("scheme prefix matching must be case-insensitive");
     }
+
+    /// <summary>
+    /// Encodes a key id the same way <c>ServiceAccountEndpoints</c> mints it — hex of
+    /// <see cref="Guid.ToByteArray"/> — so the tests exercise the real on-the-wire key format.
+    /// </summary>
+    private static string EncodeId(Guid id) => Convert.ToHexStringLower(id.ToByteArray());
 
     // -----------------------------------------------------------------------
     // Helper: minimal IOptionsMonitor implementation

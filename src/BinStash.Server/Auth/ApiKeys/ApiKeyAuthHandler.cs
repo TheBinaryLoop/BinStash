@@ -35,8 +35,22 @@ public class ApiKeyAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> opti
 
         var value = auth.ToString()["ApiKey ".Length..].Trim();
         var parts = value.Split('.', 2);
-        if (parts.Length != 2 || !Guid.TryParse(parts[0], out var keyId))
+        if (parts.Length != 2)
             return AuthenticateResult.Fail("Invalid API key format.");
+
+        Guid keyId;
+        try
+        {
+            // The key id is encoded as the hex of ApiKey.Id.ToByteArray() (see
+            // ServiceAccountEndpoints.CreateApiKeyForServiceAccountAsync), so it must be decoded the
+            // same way the refresh-token endpoint does (new Guid(byte[])). Guid.TryParse interprets
+            // the 32-hex "N" form with a different byte order and would never match the stored id.
+            keyId = new Guid(Convert.FromHexString(parts[0]));
+        }
+        catch (Exception ex) when (ex is FormatException or ArgumentException)
+        {
+            return AuthenticateResult.Fail("Invalid API key format.");
+        }
 
         var secret = parts[1];
 

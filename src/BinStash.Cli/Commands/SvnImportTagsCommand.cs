@@ -80,8 +80,8 @@ public sealed partial class SvnImportTagsCommand : TenantCommandBase
 
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var api = new BinStashApiClient(GetUrl(), AuthTokenFactory, console);
-        var ingestClient = new BinStashGrpcClient(GetGrpcUrl(), AuthTokenFactory);
+        var api = new BinStashApiClient(GetUrl(), AuthTokenFactory, console, AuthScheme);
+        var ingestClient = new BinStashGrpcClient(GetGrpcUrl(), AuthTokenFactory, AuthScheme);
 
         var repositories = await api.GetRepositoriesAsync(GetTenantId());
         var repository = repositories?.FirstOrDefault(r => r.Name.Equals(RepositoryName, StringComparison.OrdinalIgnoreCase));

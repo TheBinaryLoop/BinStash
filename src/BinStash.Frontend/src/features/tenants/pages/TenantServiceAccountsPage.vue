@@ -119,10 +119,23 @@
               <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Expires (optional)</label>
               <input v-model="newKeyExpiry" type="datetime-local" class="form-input w-full text-sm" />
             </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Scopes</label>
+              <div class="space-y-1.5">
+                <label v-for="s in SCOPE_OPTIONS" :key="s.value" class="flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox" :value="s.value" v-model="newKeyScopes" class="form-checkbox mt-0.5 text-violet-500 rounded" />
+                  <span class="text-xs leading-snug">
+                    <span class="font-medium text-gray-700 dark:text-gray-300">{{ s.label }}</span>
+                    <code class="ml-1 text-[10px] text-gray-400 dark:text-gray-500">{{ s.value }}</code>
+                    <span class="block text-gray-400 dark:text-gray-500">{{ s.desc }}</span>
+                  </span>
+                </label>
+              </div>
+            </div>
           </div>
           <div v-if="newKeyError" class="mt-2 text-xs text-red-500">{{ newKeyError }}</div>
           <div class="mt-3 flex gap-2">
-            <button @click="showNewKeyForm = false; newKeyName = ''; newKeyExpiry = ''" class="btn border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm">Cancel</button>
+            <button @click="showNewKeyForm = false; newKeyName = ''; newKeyExpiry = ''; newKeyScopes = ['tenant:member']" class="btn border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm">Cancel</button>
             <button @click="doCreateKey" :disabled="creatingKey" class="btn bg-violet-500 hover:bg-violet-600 text-white text-sm disabled:opacity-50">
               {{ creatingKey ? 'Creating…' : 'Create Key' }}
             </button>
@@ -143,6 +156,10 @@
                 Created {{ fmtDate(k.createdAt) }}
                 <span v-if="k.expiresAt"> · Expires {{ fmtDate(k.expiresAt) }}</span>
                 <span v-if="k.lastUsedAt"> · Last used {{ fmtDate(k.lastUsedAt) }}</span>
+              </div>
+              <div v-if="k.scopes && k.scopes.length" class="flex flex-wrap gap-1 mt-1">
+                <span v-for="s in k.scopes" :key="s"
+                  class="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 font-mono">{{ s }}</span>
               </div>
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -197,6 +214,12 @@ const apiKeys = ref<ApiKeyInfoDto[]>([])
 const showNewKeyForm = ref(false)
 const newKeyName = ref('')
 const newKeyExpiry = ref('')
+const SCOPE_OPTIONS = [
+  { value: 'tenant:member', label: 'Member', desc: 'Publish releases, run ingest, read repositories.' },
+  { value: 'tenant:admin', label: 'Admin', desc: 'Administer the tenant and create repositories.' },
+  { value: 'tenant:billing', label: 'Billing', desc: 'Manage billing for the tenant.' },
+]
+const newKeyScopes = ref<string[]>(['tenant:member'])
 const creatingKey = ref(false)
 const newKeyError = ref<string | null>(null)
 const newKeyResult = ref<CreateApiKeyResponse | null>(null)
@@ -258,9 +281,10 @@ async function doCreateKey() {
     const res = await createApiKey(keysTarget.value.id, {
       displayName: newKeyName.value.trim(),
       expiresAt: newKeyExpiry.value ? new Date(newKeyExpiry.value).toISOString() : null,
+      scopes: [...newKeyScopes.value],
     })
     newKeyResult.value = res
-    showNewKeyForm.value = false; newKeyName.value = ''; newKeyExpiry.value = ''
+    showNewKeyForm.value = false; newKeyName.value = ''; newKeyExpiry.value = ''; newKeyScopes.value = ['tenant:member']
     apiKeys.value = await listApiKeys(keysTarget.value.id)
   } catch (e: any) { newKeyError.value = e?.message ?? 'Failed to create API key.' }
   finally { creatingKey.value = false }

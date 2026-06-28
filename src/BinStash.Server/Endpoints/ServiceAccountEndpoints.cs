@@ -81,7 +81,7 @@ public static class ServiceAccountEndpoints
         if (serviceAccount == null || serviceAccount.TenantId != tenantId)
             return Results.NotFound();
         
-        var (apiKey, rawApiKey) = await tokenService.CreateApiKeyAsync(SubjectType.ServiceAccount, serviceAccount.Id, request.DisplayName, request.ExpiresAt);
+        var (apiKey, rawApiKey) = await tokenService.CreateApiKeyAsync(SubjectType.ServiceAccount, serviceAccount.Id, request.DisplayName, request.ExpiresAt, request.Scopes);
         
         return Results.Created($"/api/service-accounts/{serviceAccountId}/api-keys/{apiKey.Id}", new CreateApiKeyResponse(apiKey.DisplayName, $"{Convert.ToHexStringLower(apiKey.Id.ToByteArray())}.{rawApiKey}", apiKey.ExpiresAt));
     }
@@ -95,7 +95,7 @@ public static class ServiceAccountEndpoints
         
         var apiKeys = await db.ApiKeys
             .Where(x => x.SubjectType == SubjectType.ServiceAccount && x.SubjectId == serviceAccountId)
-            .Select(x => new ApiKeyInfoDto(x.Id, x.DisplayName, x.CreatedAt, x.ExpiresAt, x.LastUsedAt, x.IsActive))
+            .Select(x => new ApiKeyInfoDto(x.Id, x.DisplayName, x.CreatedAt, x.ExpiresAt, x.LastUsedAt, x.IsActive, x.Scopes))
             .ToListAsync(context.RequestAborted);
         
         return Results.Ok(apiKeys);

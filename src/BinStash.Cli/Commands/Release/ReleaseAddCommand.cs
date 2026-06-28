@@ -83,8 +83,8 @@ public partial class ReleaseAddCommand : TenantCommandBase
             ComponentMapFile: string.IsNullOrWhiteSpace(ComponentMapFile) ? null : ComponentMapFile,
             CustomProperties: CustomProperties);
 
-        var restClient = new BinStashApiClient(GetUrl(), AuthTokenFactory);
-        var grpcClient = new BinStashGrpcClient(GetGrpcUrl(), AuthTokenFactory);
+        var restClient = new BinStashApiClient(GetUrl(), AuthTokenFactory, authScheme: AuthScheme);
+        var grpcClient = new BinStashGrpcClient(GetGrpcUrl(), AuthTokenFactory, AuthScheme);
 
         await _orchestrator.RunAsync(ansiConsole, restClient, grpcClient, request, message => ansiConsole.MarkupLine($"[grey]LOG:[/] {message}[grey]...[/]"), CancellationToken.None);
     }

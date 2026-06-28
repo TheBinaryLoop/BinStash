@@ -30,11 +30,12 @@ public class TenantEntityTypeConfiguration : IEntityTypeConfiguration<Tenant>
         builder.Property(t => t.Slug).IsRequired().HasMaxLength(64);
         builder.Property(t => t.Name).IsRequired().HasMaxLength(256);
         builder.Property(t => t.CreatedAt).IsRequired().HasDefaultValueSql("now() at time zone 'utc'");
-        builder.Property(t => t.CreatedByUserId).IsRequired();
+        // Optional: the setup-created default tenant has no creator (it is created before any user exists).
+        builder.Property(t => t.CreatedByUserId).IsRequired(false);
         builder.Property(t => t.Status).IsRequired().HasDefaultValue(TenantStatus.Active);
-        
+
         builder.HasIndex(t => t.Slug).IsUnique();
-        
-        builder.HasOne<BinStashUser>().WithMany().HasForeignKey(t => t.CreatedByUserId);
+
+        builder.HasOne<BinStashUser>().WithMany().HasForeignKey(t => t.CreatedByUserId).IsRequired(false);
     }
 }

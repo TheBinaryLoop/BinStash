@@ -180,6 +180,28 @@ public static class TenantEndpoints
 
     private static async Task<IResult> ListTenantsForMember(HttpContext context, BinStashDbContext db)
     {
+        // Service-account (machine) subjects have no user/membership row; resolve the single
+        // tenant the service account belongs to so CLI/CI flows can map --tenant <slug> to an id.
+        if (context.User.FindFirstValue("auth_type") == "machine")
+        {
+            if (!Guid.TryParse(context.User.FindFirstValue(ClaimTypes.NameIdentifier), out var subjectId))
+                return Results.Unauthorized();
+
+            var serviceAccountTenants = await db.ServiceAccounts.AsNoTracking()
+                .Where(sa => sa.Id == subjectId)
+                .Join(db.Tenants.AsNoTracking(), sa => sa.TenantId, t => t.Id, (sa, t) => new TenantInfoDto
+                (
+                    t.Id,
+                    t.Name,
+                    t.Slug,
+                    DateTimeOffset.UtcNow,
+                    "ServiceAccount"
+                ))
+                .ToListAsync();
+
+            return Results.Ok(serviceAccountTenants);
+        }
+
         var userId = await db.Users.FirstOrDefaultAsync(u => u.Email == context.User.Identity!.Name);
         if (userId == null)
             return Results.Unauthorized();

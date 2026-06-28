@@ -35,7 +35,7 @@ public partial class RepoListCommand : TenantCommandBase
 {
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory, authScheme: AuthScheme);
         var repos = await client.GetRepositoriesAsync(GetTenantId());
         if (repos == null || repos.Count == 0)
         {
@@ -64,7 +64,7 @@ public partial class RepoAddCommand : TenantCommandBase
     
     protected override async ValueTask ExecuteCommandAsync(IConsole console)
     {
-        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory);
+        var client = new BinStashApiClient(GetUrl(), AuthTokenFactory, authScheme: AuthScheme);
         
         
         var createDto = new CreateRepositoryDto

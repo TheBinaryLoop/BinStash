@@ -30,11 +30,13 @@ public sealed class BinStashGrpcClient
 {
     private readonly IngestService.IngestServiceClient _ingestClient;
     private readonly Func<Task<string>> _authTokenFactory;
+    private readonly string _authScheme;
 
 
-    public BinStashGrpcClient(string rootUrl, Func<Task<string>> authTokenFactory)
+    public BinStashGrpcClient(string rootUrl, Func<Task<string>> authTokenFactory, string authScheme = "Bearer")
     {
         _authTokenFactory = authTokenFactory;
+        _authScheme = authScheme;
         var channel = GrpcChannel.ForAddress(rootUrl);
         _ingestClient = new IngestService.IngestServiceClient(channel);
     }
@@ -46,7 +48,7 @@ public sealed class BinStashGrpcClient
 
         var headers = new Metadata
         {
-            { "authorization", $"Bearer {await _authTokenFactory()}" },
+            { "authorization", $"{_authScheme} {await _authTokenFactory()}" },
             { "x-ingest-session-id", ingestSessionId.ToString() },
             { "x-repo-id", repoId.ToString() }
         };
@@ -87,7 +89,7 @@ public sealed class BinStashGrpcClient
         
         var headers = new Metadata
         {
-            { "authorization", $"Bearer {await _authTokenFactory()}" },
+            { "authorization", $"{_authScheme} {await _authTokenFactory()}" },
             { "x-ingest-session-id", ingestSessionId.ToString() },
             { "x-repo-id", repoId.ToString() }
         };

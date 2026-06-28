@@ -168,7 +168,12 @@ public static class SetupEndpoints
         });
     }
 
-    private static async Task<IResult> SetTenancyAsync(SetTenancyRequest req, BinStashDbContext db, IConfiguration config, IOptions<TenancySettings> tenancyOpts)
+    // The setup endpoints use IOptionsSnapshot (re-bound per request) rather than
+    // IOptions (a process-wide singleton cached on first .Value access). DefaultTenantId
+    // is created mid-flow (ConfigureDefaultTenantAsync); a singleton resolved earlier —
+    // e.g. when Tenancy:Mode is supplied via appsettings/env and read here — would freeze
+    // it at Guid.Empty and break the later storage-defaults step.
+    private static async Task<IResult> SetTenancyAsync(SetTenancyRequest req, BinStashDbContext db, IConfiguration config, IOptionsSnapshot<TenancySettings> tenancyOpts)
     {
         var state = await db.SetupStates.SingleAsync(x => x.Id == 1);
         if (state.IsInitialized) return Results.Conflict("already_initialized");
@@ -219,6 +224,9 @@ public static class SetupEndpoints
             Id = Guid.CreateVersion7(),
             Name = req.Name,
             Slug = req.Slug,
+            // CreatedByUserId is intentionally left null: this default tenant is created
+            // during setup, before any user account exists. User-created tenants
+            // (TenantMutationService.CreateTenantAsync) always stamp the creating user.
         };
         db.Tenants.Add(tenant);
         
@@ -319,7 +327,7 @@ public static class SetupEndpoints
         return Results.Ok(new { });
     }
     
-    private static async Task<IResult> EnsureStorageDefaultsAsync(EnsureStorageDefaultsRequest req, BinStashDbContext db, IOptions<TenancySettings> tenancyOpts)
+    private static async Task<IResult> EnsureStorageDefaultsAsync(EnsureStorageDefaultsRequest req, BinStashDbContext db, IOptionsSnapshot<TenancySettings> tenancyOpts)
     {
         if (req.StorageClassDefaultMappings.Count == 0) 
             return Results.BadRequest("At least one storage class default mapping is required.");
@@ -378,7 +386,7 @@ public static class SetupEndpoints
         BinStashDbContext db,
         UserManager<BinStashUser> users,
         RoleManager<IdentityRole<Guid>> roles,
-        IOptions<TenancySettings> tenancyOpts
+        IOptionsSnapshot<TenancySettings> tenancyOpts
     )
     {
         var state = await db.SetupStates.SingleAsync(x => x.Id == 1);
@@ -455,7 +463,7 @@ public static class SetupEndpoints
     private static async Task<IResult> FinishAsync(
         BinStashDbContext db,
         IConfiguration config,
-        IOptions<TenancySettings> tenancyOpts
+        IOptionsSnapshot<TenancySettings> tenancyOpts
     )
     {
         var state = await db.SetupStates.SingleAsync(x => x.Id == 1);

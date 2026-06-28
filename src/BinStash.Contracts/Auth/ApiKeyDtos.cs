@@ -16,6 +16,6 @@
 namespace BinStash.Contracts.Auth;
 
 
-public record CreateApiKeyRequest(string DisplayName, DateTimeOffset? ExpiresAt = null);
+public record CreateApiKeyRequest(string DisplayName, DateTimeOffset? ExpiresAt = null, string[]? Scopes = null);
 public record CreateApiKeyResponse(string DisplayName, string Key, DateTimeOffset? ExpiresAt);
-public record ApiKeyInfoDto(Guid Id, string DisplayName, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? LastUsedAt, bool IsActive);
+public record ApiKeyInfoDto(Guid Id, string DisplayName, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? LastUsedAt, bool IsActive, string[] Scopes);

@@ -77,7 +77,7 @@ public class TokenService(IOptions<JwtSettings> jwtOptions, BinStashDbContext db
         return (accessToken, $"{Convert.ToHexStringLower(refreshToken.Id.ToByteArray())}.{rawRefreshToken}");
     }
 
-    public async Task<(ApiKey apiKey, string rawApiKey)> CreateApiKeyAsync(SubjectType subjectType, Guid subjectId, string name, DateTimeOffset? requestExpiresAt)
+    public async Task<(ApiKey apiKey, string rawApiKey)> CreateApiKeyAsync(SubjectType subjectType, Guid subjectId, string name, DateTimeOffset? requestExpiresAt, string[]? scopes = null)
     {
         var rawApiKey = GenerateSecureToken();
         var apiKey = new ApiKey
@@ -86,7 +86,8 @@ public class TokenService(IOptions<JwtSettings> jwtOptions, BinStashDbContext db
             SubjectType = subjectType,
             SubjectId = subjectId,
             DisplayName = name,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = DateTimeOffset.UtcNow,
+            Scopes = scopes ?? []
         };
         if (requestExpiresAt.HasValue) 
             apiKey.ExpiresAt = requestExpiresAt.Value;

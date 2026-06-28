@@ -72,5 +72,11 @@ export async function apiJson<T>(input: string, init?: RequestInit): Promise<T> 
   }
 
   // ── Success ───────────────────────────────────────────────────────────────
+  // 204 No Content (and any other empty-bodied success, e.g. DELETE endpoints)
+  // carries no JSON to parse — calling res.json() on an empty body throws a
+  // SyntaxError. Return undefined for these instead.
+  if (res.status === 204 || res.headers.get('content-length') === '0') {
+    return undefined as T
+  }
   return (await res.json()) as T
 }

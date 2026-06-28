@@ -22,5 +22,5 @@ public interface ITokenService
 {
     Task<(string accessToken, string refreshToken)> CreateTokensAsync(IdentityUser<Guid> user);
     Task<(ApiKey apiKey, string rawApiKey)> CreateApiKeyAsync(SubjectType subjectType, Guid subjectId, string name,
-        DateTimeOffset? requestExpiresAt);
+        DateTimeOffset? requestExpiresAt, string[]? scopes = null);
 }

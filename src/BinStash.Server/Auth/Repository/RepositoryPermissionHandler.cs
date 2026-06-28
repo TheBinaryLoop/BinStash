@@ -16,6 +16,7 @@
 using System.Security.Claims;
 using BinStash.Core.Auth;
 using BinStash.Core.Auth.Repository;
+using BinStash.Core.Auth.Tenant;
 using BinStash.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -29,7 +30,34 @@ public class RepositoryPermissionHandler(BinStashDbContext db) : AuthorizationHa
         var userIdStr = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.User.FindFirstValue("sub");
         if (!Guid.TryParse(userIdStr, out var userId))
             return;
-        
+
+        // Machine subjects (service-account API keys) are authorized by key scopes, and only for
+        // repositories belonging to the tenant the service account itself belongs to.
+        // tenant:member grants Read/Write (publish); tenant:admin additionally grants repo Admin.
+        if (context.User.FindFirstValue("auth_type") == "machine")
+        {
+            var ownsTenant = await db.ServiceAccounts
+                .AnyAsync(sa => sa.Id == userId && sa.TenantId == resource.TenantId);
+            var machineRepoInTenant = await db.Repositories
+                .AnyAsync(r => r.Id == resource.RepoId && r.TenantId == resource.TenantId);
+
+            if (ownsTenant && machineRepoInTenant)
+            {
+                var scopes = context.User.FindAll("scope").Select(c => c.Value).ToList();
+                var granted = requirement.Permission switch
+                {
+                    RepositoryPermission.Read or RepositoryPermission.Write =>
+                        scopes.Contains(TenantScopes.Member) || scopes.Contains(TenantScopes.Admin),
+                    RepositoryPermission.Admin => scopes.Contains(TenantScopes.Admin),
+                    _ => false
+                };
+                if (granted)
+                    context.Succeed(requirement);
+            }
+
+            return;
+        }
+
         // check if user is instance admin
         var isInstanceAdmin = await db.UserRoles.Where(ur => ur.UserId == userId)
             .Join(db.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => r)

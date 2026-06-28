@@ -137,3 +137,16 @@
     border-color: var(--color-gray-200, currentColor);
   }
 }
+
+/*
+  Tailwind CSS v4's Preflight no longer sets `cursor: pointer` on buttons
+  (v3 did). Restore the pointer cursor for interactive controls so hovering
+  a button shows the expected hand cursor, while leaving disabled controls
+  with the default arrow.
+*/
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}

@@ -30,6 +30,26 @@ public sealed class TenantPermissionHandler(BinStashDbContext db)
         if (!Guid.TryParse(userIdStr, out var userId))
             return;
 
+        // Machine subjects (service-account API keys) are authorized purely by their key scopes,
+        // and only for the tenant the service account itself belongs to — a key can never act
+        // outside its own tenant regardless of scopes.
+        if (context.User.FindFirstValue("auth_type") == "machine")
+        {
+            var ownTenantId = await db.ServiceAccounts
+                .Where(sa => sa.Id == userId)
+                .Select(sa => (Guid?)sa.TenantId)
+                .FirstOrDefaultAsync();
+
+            if (ownTenantId == resource.TenantId)
+            {
+                var scopes = context.User.FindAll("scope").Select(c => c.Value).ToList();
+                if (TenantScopes.Satisfies(scopes, requirement.Permission))
+                    context.Succeed(requirement);
+            }
+
+            return;
+        }
+
         // check if user is instance admin
         var isInstanceAdmin = await db.UserRoles.Where(ur => ur.UserId == userId)
             .Join(db.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => r)

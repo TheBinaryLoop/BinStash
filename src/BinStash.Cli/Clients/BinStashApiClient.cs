@@ -46,7 +46,7 @@ public class BinStashApiClient
     private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy = HttpPolicyExtensions.HandleTransientHttpError().OrResult(msg => msg.StatusCode == HttpStatusCode.TooManyRequests).WaitAndRetryAsync(5, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
     private readonly IConsole? _console;
     
-    public BinStashApiClient(string rootUrl, Func<Task<string>>? authTokenFactory = null!, IConsole? console = null)
+    public BinStashApiClient(string rootUrl, Func<Task<string>>? authTokenFactory = null!, IConsole? console = null, string authScheme = "Bearer")
     {
         authTokenFactory ??= () => Task.FromResult(string.Empty);
         // Wire it into the handler pipeline manually
@@ -62,7 +62,7 @@ public class BinStashApiClient
             InnerHandler = sockets
         };
         
-        var authHandler = new AuthHeaderHandler(authTokenFactory)
+        var authHandler = new AuthHeaderHandler(authTokenFactory, authScheme)
         {
             InnerHandler = policyHandler
         };
