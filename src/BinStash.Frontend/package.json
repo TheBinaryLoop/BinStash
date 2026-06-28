@@ -34,7 +34,7 @@
     "@vue/compiler-sfc": "^3.5.32",
     "postcss": "^8.5.10",
     "tailwindcss": "^4.2.2",
-    "vite": "^8.0.8",
+    "vite": "^8.0.16",
     "vite-plugin-mkcert": "^2.0.0"
   }
 }
