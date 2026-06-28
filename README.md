@@ -49,6 +49,22 @@ dotnet build --configuration Release
 
 ---
 
+## 🧰 Local development
+
+Spin up a throwaway local instance — disposable PostgreSQL in Docker plus the server
+running from source — with the harness under
+[`tooling/dev-instance/`](tooling/dev-instance/README.md):
+
+```pwsh
+pwsh tooling/dev-instance/up.ps1      # terminal A: Postgres + server on https://localhost:7117
+pwsh tooling/dev-instance/setup.ps1   # terminal B: one-time first-run setup wizard
+```
+
+See [`tooling/dev-instance/README.md`](tooling/dev-instance/README.md) for the full flow,
+CLI examples, and cleanup.
+
+---
+
 ## 🧪 CLI Overview
 
 ```bash

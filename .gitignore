@@ -208,3 +208,7 @@ ModelManifest.xml
 /.vs/Registry/DesignTimeBuild/.dtbcache.v2
 /.vs/Registry/v17
 /.vs/Registry/FileContentIndex
+
+# Local dev-instance runtime artifacts (the harness in tooling/dev-instance is committed)
+/tooling/dev-instance/storage/
+/tooling/dev-instance/.tenant

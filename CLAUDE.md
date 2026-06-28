@@ -83,6 +83,11 @@ projects), `tests/` (the three test projects), and `tooling/` (`BinStash.StoreMi
   `dotnet ef migrations add <Name> --project src/BinStash.Infrastructure --startup-project src/BinStash.Server`.
 - **CLI AOT publish** runs the `FixZstdNativeLayout` target to relocate `libzstd` into the
   `runtimes/<rid>/native/` layout `ZstdNetNGX`'s resolver expects — don't break that target.
+- **Local dev instance**: `tooling/dev-instance/` is a self-contained harness (disposable Postgres
+  in Docker via `compose.yaml` + the server from source over HTTPS on `:7117`). Run
+  `pwsh tooling/dev-instance/up.ps1` then `setup.ps1`; tear down with `down.ps1`. The scripts are
+  committed; only `tooling/dev-instance/storage/` (runtime chunk store) is gitignored. See its
+  `README.md`.
 - **CI**: `Jenkinsfile` builds the frontend (pnpm), then `dotnet restore`/`build`/`test` (xUnit
   logger) on `dotnet-lts`. Platform here is win32; the server container is Linux.
 
