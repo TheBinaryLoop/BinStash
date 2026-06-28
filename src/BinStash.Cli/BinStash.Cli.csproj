@@ -20,19 +20,28 @@
 
     <ItemGroup>
       <PackageReference Include="CliFx" Version="3.0.0" />
-      <PackageReference Include="Google.Protobuf" Version="3.34.1" />
-      <PackageReference Include="Grpc.Net.Client" Version="2.76.0" />
-      <PackageReference Include="Grpc.Tools" Version="2.80.0">
+      <PackageReference Include="Google.Protobuf" Version="3.35.1" />
+      <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
+      <PackageReference Include="Grpc.Tools" Version="2.81.1">
         <PrivateAssets>all</PrivateAssets>
         <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       </PackageReference>
-      <PackageReference Include="Microsoft.AspNetCore.DataProtection" Version="10.0.7" />
-      <PackageReference Include="Microsoft.AspNetCore.DataProtection.Extensions" Version="10.0.5" />
-      <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.5" />
-      <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="10.0.5" />
-      <PackageReference Include="Spectre.Console" Version="0.55.0" />
-      <PackageReference Include="System.IO.Hashing" Version="10.0.5" />
-      <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.5" />
+      <PackageReference Include="Microsoft.AspNetCore.DataProtection" Version="10.0.9" />
+      <PackageReference Include="Microsoft.AspNetCore.DataProtection.Extensions" Version="10.0.9" />
+      <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+      <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="10.0.9" />
+      <!--
+          Pin the native SQLite binary above the version Microsoft.Data.Sqlite 10.0.9
+          pulls in transitively (SQLitePCLRaw.lib.e_sqlite3 2.1.11), which is flagged by
+          GHSA-2m69-gcr7-jv3q / CVE-2025-6965. 3.50.3 bundles SQLite 3.50.3 (≥ the 3.50.2
+          fix). This package is native-only (no managed deps), so it overrides the
+          vulnerable transitive without bumping SQLitePCLRaw.core/provider to 3.x.
+          Remove once Microsoft.Data.Sqlite ships a patched native transitively.
+      -->
+      <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
+      <PackageReference Include="Spectre.Console" Version="0.57.1" />
+      <PackageReference Include="System.IO.Hashing" Version="10.0.9" />
+      <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.9" />
       <PackageReference Include="ZstdNetNGX" Version="1.0.0" />
     </ItemGroup>
 
