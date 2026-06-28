@@ -23,14 +23,14 @@ const props = withDefaults(
 const toneClasses = computed(() => {
   switch (props.tone) {
     case 'success':
-      return 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-200'
+      return 'bg-success-soft text-success'
     case 'warning':
-      return 'bg-amber-500/20 text-amber-700 dark:text-amber-200'
+      return 'bg-warning-soft text-warning'
     case 'error':
-      return 'bg-rose-500/20 text-rose-700 dark:text-rose-200'
+      return 'bg-danger-soft text-danger'
     case 'info':
     default:
-      return 'bg-violet-500/15 text-violet-700 dark:text-violet-200'
+      return 'bg-accent-soft text-accent'
   }
 })
 </script>

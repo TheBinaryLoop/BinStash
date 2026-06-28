@@ -1,5 +1,5 @@
 <template>
-  <div :class="['rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs', padded ? 'p-6 sm:p-8' : '']">
+  <div :class="['rounded-card border border-hairline bg-panel shadow-xs', padded ? 'p-6 sm:p-8' : '']">
     <slot />
   </div>
 </template>

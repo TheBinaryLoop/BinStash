@@ -23,10 +23,10 @@
       <form @submit.prevent="onSubmit">
         <div class="space-y-4">
           <div>
-            <label class="block text-sm font-medium mb-1" for="email">Email Address</label>
+            <label class="mb-1.5 block text-sm font-medium text-ink-strong" for="email">Email Address</label>
             <input
               id="email"
-              class="form-input w-full"
+              class="h-11 w-full rounded-2xl border border-hairline bg-transparent px-4 text-sm text-ink-strong outline-none transition placeholder:text-ink-muted focus:border-accent disabled:opacity-50"
               type="email"
               autocomplete="email"
               v-model.trim="email"
@@ -36,10 +36,10 @@
           </div>
 
           <div>
-            <label class="block text-sm font-medium mb-1" for="password">Password</label>
+            <label class="mb-1.5 block text-sm font-medium text-ink-strong" for="password">Password</label>
             <input
               id="password"
-              class="form-input w-full"
+              class="h-11 w-full rounded-2xl border border-hairline bg-transparent px-4 text-sm text-ink-strong outline-none transition placeholder:text-ink-muted focus:border-accent disabled:opacity-50"
               type="password"
               autocomplete="current-password"
               v-model="password"
@@ -49,28 +49,26 @@
           </div>
         </div>
 
-        <div class="flex items-center mt-4">
+        <div class="mt-4 flex items-center">
           <input
             id="stay-signed-in"
             type="checkbox"
-            class="form-checkbox"
+            class="size-4 rounded border-hairline text-accent focus:ring-accent"
             v-model="staySignedIn"
             :disabled="isSubmitting"
           />
-          <label for="stay-signed-in" class="ml-2 text-sm text-gray-600 dark:text-gray-400">
+          <label for="stay-signed-in" class="ml-2 text-sm text-ink-muted">
             Stay signed in
           </label>
         </div>
 
-        <div class="flex items-center justify-between mt-6">
-          <div class="mr-1">
-            <router-link class="text-sm underline hover:no-underline" to="/reset-password">
-              Forgot Password?
-            </router-link>
-          </div>
+        <div class="mt-6 flex items-center justify-between gap-3">
+          <router-link class="text-sm text-ink-muted underline-offset-2 transition hover:text-ink-strong hover:underline" to="/reset-password">
+            Forgot Password?
+          </router-link>
 
           <button
-            class="btn bg-violet-500 text-white hover:bg-violet-600 dark:bg-violet-500 dark:hover:bg-violet-600 whitespace-nowrap ml-3"
+            class="inline-flex items-center rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white whitespace-nowrap transition hover:brightness-110 disabled:opacity-50"
             type="submit"
             :disabled="isSubmitting"
           >
@@ -80,11 +78,11 @@
         </div>
       </form>
 
-      <div class="pt-5 mt-6 border-t border-gray-200 dark:border-gray-700/60">
-        <div class="text-sm">
+      <div class="mt-6 border-t border-hairline pt-5">
+        <div class="text-sm text-ink-muted">
           Don’t have an account?
           <router-link
-            class="font-medium text-violet-500 hover:text-violet-600 dark:hover:text-violet-400"
+            class="font-medium text-accent transition hover:brightness-110"
             :to="{ path: '/signup', query: authFlowQuery }"
           >
             Sign Up

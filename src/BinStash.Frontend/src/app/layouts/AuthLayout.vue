@@ -1,54 +1,37 @@
 <template>
-  <main class="bg-white dark:bg-gray-900">
-    <div class="relative flex">
-      <!-- Content -->
-      <div class="w-full md:w-1/2">
-        <div class="min-h-dvh h-full flex flex-col">
-          <div class="flex items-center h-16 px-4 sm:px-6 lg:px-8">
-            <router-link class="block" to="/">
-              <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true">
-                <defs>
-                  <linearGradient x1="28.538%" y1="20.229%" x2="100%" y2="108.156%" id="auth-layout-logo-a">
-                    <stop stop-color="#B7ACFF" stop-opacity="0" offset="0%" />
-                    <stop stop-color="#B7ACFF" offset="100%" />
-                  </linearGradient>
-                  <linearGradient x1="88.638%" y1="29.267%" x2="22.42%" y2="100%" id="auth-layout-logo-b">
-                    <stop stop-color="#7BC8FF" stop-opacity="0" offset="0%" />
-                    <stop stop-color="#7BC8FF" offset="100%" />
-                  </linearGradient>
-                </defs>
-                <rect fill="#8470FF" width="32" height="32" rx="16" />
-                <path
-                  d="M18.277.16C26.035 1.267 32 7.938 32 16c0 8.837-7.163 16-16 16a15.937 15.937 0 01-10.426-3.863L18.277.161z"
-                  fill="#755FF8"
-                />
-                <path
-                  d="M7.404 2.503l18.339 26.19A15.93 15.93 0 0116 32C7.163 32 0 24.837 0 16 0 10.327 2.952 5.344 7.404 2.503z"
-                  fill="url(#auth-layout-logo-a)"
-                />
-                <path
-                  d="M2.223 24.14L29.777 7.86A15.926 15.926 0 0132 16c0 8.837-7.163 16-16 16-5.864 0-10.991-3.154-13.777-7.86z"
-                  fill="url(#auth-layout-logo-b)"
-                />
-              </svg>
-            </router-link>
-          </div>
+  <main class="font-montserrat min-h-dvh bg-canvas text-ink-strong">
+    <div class="flex min-h-dvh">
+      <!-- Form column -->
+      <div class="flex w-full flex-col md:w-1/2">
+        <div class="flex h-16 items-center px-4 sm:px-6 lg:px-8">
+          <router-link class="flex items-center gap-2" to="/">
+            <span class="flex size-8 items-center justify-center rounded-[10px] bg-linear-to-br from-brand-from to-brand-to">
+              <span class="size-5 rounded-[4px] border-2 border-white" />
+            </span>
+            <span class="text-sm font-semibold tracking-tight text-ink-strong">BinStash</span>
+          </router-link>
+        </div>
 
-          <div class="w-full max-w-md mx-auto px-4 py-8 sm:px-0 sm:py-12">
+        <div class="flex flex-1 items-center">
+          <div class="mx-auto w-full max-w-md px-4 py-8 sm:px-8 sm:py-12">
             <router-view />
           </div>
         </div>
       </div>
 
-      <!-- Image -->
-      <div class="hidden md:block absolute top-0 bottom-0 right-0 md:w-1/2" aria-hidden="true">
-        <img
-          class="object-cover object-center w-full h-full"
-          src="@/images/auth-image.jpg"
-          width="760"
-          height="1024"
-          alt="Authentication"
-        />
+      <!-- Brand hero -->
+      <div class="relative hidden w-1/2 overflow-hidden bg-linear-to-br from-brand-from to-brand-to md:block" aria-hidden="true">
+        <div class="absolute -left-24 -top-24 size-96 rounded-full bg-white/10 blur-3xl" />
+        <div class="absolute -bottom-32 -right-16 size-96 rounded-full bg-black/20 blur-3xl" />
+        <div class="relative flex h-full flex-col items-center justify-center gap-6 px-12 text-center text-white">
+          <span class="flex size-20 items-center justify-center rounded-[24px] border border-white/20 bg-white/10 backdrop-blur-sm">
+            <span class="size-10 rounded-[8px] border-2 border-white" />
+          </span>
+          <h2 class="text-3xl font-bold tracking-tight">BinStash</h2>
+          <p class="max-w-sm text-sm leading-relaxed text-white/80">
+            Content-defined, deduplicated, compressed storage for your build artifacts and release packages.
+          </p>
+        </div>
       </div>
     </div>
   </main>

@@ -1,10 +1,10 @@
 <template>
   <div :class="['mb-8', centered ? 'text-center' : '']">
-    <h1 class="text-3xl text-gray-800 dark:text-gray-100 font-bold">
+    <h1 class="text-2xl font-bold tracking-tight text-ink-strong">
       {{ title }}
     </h1>
 
-    <p v-if="description" class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+    <p v-if="description" class="mt-2 text-sm text-ink-muted">
       {{ description }}
     </p>
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-wrap gap-1 mb-6 border-b border-gray-200 dark:border-gray-700">
+  <div class="flex flex-wrap gap-1 mb-6 border-b border-hairline">
     <button
       v-for="tab in tabs"
       :key="tab.id"
@@ -44,8 +44,8 @@ const props = withDefaults(defineProps<{
   modelValue: null,
   defaultTab: '',
   syncWithRouteHash: false,
-  activeClass: 'border-violet-500 text-violet-600 dark:text-violet-400',
-  inactiveClass: 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200',
+  activeClass: 'border-accent text-accent',
+  inactiveClass: 'border-transparent text-ink-muted hover:text-ink-strong',
 })
 
 const emit = defineEmits<{

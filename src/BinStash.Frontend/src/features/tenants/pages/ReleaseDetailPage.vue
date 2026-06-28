@@ -1,58 +1,58 @@
 <template>
-  <div class="space-y-6">
-    <nav v-if="!loading && release" class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-      <router-link :to="`/t/${tenantId}/repositories`" class="hover:text-violet-500 transition">Repositories</router-link>
-      <IconChevronRight class="w-4 h-4 text-gray-300 dark:text-gray-600 shrink-0" />
-      <router-link :to="`/t/${tenantId}/repositories/${repoId}`" class="hover:text-violet-500 transition truncate max-w-56 sm:max-w-none">
+  <div class="font-montserrat space-y-6">
+    <nav v-if="!loading && release" class="flex items-center gap-2 text-sm text-ink-muted">
+      <router-link :to="`/t/${tenantId}/repositories`" class="transition hover:text-accent">Repositories</router-link>
+      <IconChevronRight class="w-4 h-4 text-ink-subtle shrink-0" />
+      <router-link :to="`/t/${tenantId}/repositories/${repoId}`" class="transition hover:text-accent truncate max-w-56 sm:max-w-none">
         {{ repoName }}
       </router-link>
-      <IconChevronRight class="w-4 h-4 text-gray-300 dark:text-gray-600 shrink-0" />
-      <span class="text-gray-700 dark:text-gray-200 font-medium truncate">Release {{ release.version }}</span>
+      <IconChevronRight class="w-4 h-4 text-ink-subtle shrink-0" />
+      <span class="font-medium text-ink-strong truncate">Release {{ release.version }}</span>
     </nav>
 
     <div v-if="loading" class="flex justify-center py-24">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-500"></div>
+      <div class="h-8 w-8 animate-spin rounded-full border-2 border-accent/20 border-t-accent"></div>
     </div>
 
-    <div v-else-if="error" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-4 text-red-700 dark:text-red-400">
+    <div v-else-if="error" class="rounded-card border border-danger/20 bg-danger-soft px-5 py-4 text-sm text-danger">
       {{ error }}
     </div>
 
     <template v-else-if="release">
-      <section class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm">
-        <div class="h-1.5 bg-linear-to-r from-violet-500 via-fuchsia-500 to-teal-400" />
-        <div class="p-6 lg:p-7">
+      <section class="overflow-hidden rounded-card border border-hairline bg-card">
+        <div class="h-1 bg-linear-to-r from-success via-accent to-brand-to" />
+        <div class="p-5 lg:p-6">
           <div class="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-            <div class="min-w-0">
-              <div class="flex flex-wrap items-center gap-3 mb-3">
-                <span class="inline-flex items-center gap-1.5 rounded-full bg-violet-100 px-3 py-1 text-sm font-semibold text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
-                  <IconTag class="h-3.5 w-3.5" />
-                  {{ release.version }}
-                </span>
-                <span class="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600 dark:bg-gray-700/60 dark:text-gray-300">
-                  <IconCalendar class="h-3.5 w-3.5" />
-                  Published {{ fmtDateFull(release.createdAt) }}
-                </span>
+            <div class="flex min-w-0 items-start gap-3">
+              <div class="flex size-12 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+                <IconPackage class="size-6" />
               </div>
-              <div class="flex flex-wrap items-center gap-3">
-                <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Release details</h1>
-                <span class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold"
-                  :class="scoreBadgeClasses(releaseScore)">
-                  Score {{ releaseScoreDisplay }}
-                  <span class="text-xs font-medium opacity-80">{{ releaseScoreLabel }}</span>
-                </span>
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-3">
+                  <h1 class="text-2xl font-bold text-ink-strong">{{ release.version }}</h1>
+                  <span class="inline-flex items-center gap-1.5 rounded-full border border-hairline px-3 py-1 text-xs font-medium text-ink-muted">
+                    <IconCalendar class="h-3.5 w-3.5" />
+                    Published {{ fmtDateFull(release.createdAt) }}
+                  </span>
+                </div>
+                <div class="mt-2 flex flex-wrap items-center gap-3">
+                  <span class="text-sm font-medium text-ink-muted">Release details</span>
+                  <span class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold"
+                    :class="scoreBadgeClasses(releaseScore)">
+                    Score {{ releaseScoreDisplay }}
+                    <span class="text-xs font-medium opacity-80">{{ releaseScoreLabel }}</span>
+                  </span>
+                </div>
+                <p class="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
+                  {{ release.notes || 'A versioned package snapshot stored with content-defined chunking and deduplication.' }}
+                </p>
               </div>
-              <p class="mt-2 max-w-3xl text-sm leading-6 text-gray-500 dark:text-gray-400">
-                Lorem ipsum.
-              </p>
             </div>
 
-            <div class="flex flex-wrap gap-3 shrink-0">
-              <a :href="downloadUrl" target="_blank" class="btn bg-violet-500 hover:bg-violet-600 text-white flex items-center gap-2 self-start">
-                <IconDownload class="w-4 h-4" />
-                Download
-              </a>
-            </div>
+            <a :href="downloadUrl" target="_blank" class="inline-flex shrink-0 items-center gap-2 self-start rounded-full bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:brightness-110">
+              <IconDownload class="w-4 h-4" />
+              Download
+            </a>
           </div>
         </div>
       </section>
@@ -61,56 +61,56 @@
 
       <section v-if="activeTab === 'overview'" class="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div class="xl:col-span-2 space-y-6">
-          <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700/60 shadow-sm overflow-hidden">
-            <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700/60 flex items-center justify-between gap-3">
-              <h2 class="font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                <IconFileText class="w-4 h-4 text-gray-400" /> Release Notes
+          <div class="rounded-card border border-hairline bg-card overflow-hidden">
+            <div class="flex items-center justify-between gap-3 border-b border-hairline px-5 py-4">
+              <h2 class="flex items-center gap-2 font-semibold text-ink-strong">
+                <IconFileText class="w-4 h-4 text-ink-muted" /> Release Notes
               </h2>
-              <span class="inline-flex items-center rounded-full bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">
+              <span class="inline-flex items-center rounded-full bg-accent-soft px-2.5 py-1 text-xs font-semibold text-accent">
                 Primary summary
               </span>
             </div>
             <div class="p-5">
-              <p v-if="release.notes" class="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap leading-relaxed">{{ release.notes }}</p>
-              <p v-else class="text-sm text-gray-400">No release notes were provided for this version.</p>
+              <p v-if="release.notes" class="whitespace-pre-wrap text-sm leading-relaxed text-ink-muted">{{ release.notes }}</p>
+              <p v-else class="text-sm text-ink-subtle">No release notes were provided for this version.</p>
             </div>
           </div>
         </div>
 
         <div class="space-y-6">
-          <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
-            <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Release details</h2>
+          <div class="rounded-card border border-hairline bg-card overflow-hidden">
+            <div class="border-b border-hairline px-5 py-4">
+              <h2 class="text-lg font-semibold text-ink-strong">Release details</h2>
             </div>
-            <dl class="divide-y divide-gray-100 dark:divide-gray-700/60">
+            <dl class="divide-y divide-hairline">
               <div class="px-5 py-4">
-                <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Version</dt>
-                <dd class="mt-1 text-sm font-semibold text-gray-900 dark:text-white font-mono">{{ release.version }}</dd>
+                <dt class="text-xs uppercase tracking-wide text-ink-subtle">Version</dt>
+                <dd class="mt-1 font-mono text-sm font-semibold text-ink-strong">{{ release.version }}</dd>
               </div>
               <div class="px-5 py-4">
-                <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Repository</dt>
-                <dd class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ repoName }}</dd>
+                <dt class="text-xs uppercase tracking-wide text-ink-subtle">Repository</dt>
+                <dd class="mt-1 text-sm font-semibold text-ink-strong">{{ repoName }}</dd>
               </div>
               <div class="px-5 py-4">
-                <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Published</dt>
-                <dd class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ fmtDateFull(release.createdAt) }}</dd>
+                <dt class="text-xs uppercase tracking-wide text-ink-subtle">Published</dt>
+                <dd class="mt-1 text-sm font-semibold text-ink-strong">{{ fmtDateFull(release.createdAt) }}</dd>
               </div>
               <div class="px-5 py-4">
-                <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Release ID</dt>
-                <dd class="mt-1 break-all text-xs font-mono text-gray-500 dark:text-gray-400">{{ releaseId }}</dd>
+                <dt class="text-xs uppercase tracking-wide text-ink-subtle">Release ID</dt>
+                <dd class="mt-1 break-all font-mono text-xs text-ink-muted">{{ releaseId }}</dd>
               </div>
             </dl>
           </div>
 
-          <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
-            <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Quick assessment</h2>
+          <div class="rounded-card border border-hairline bg-card overflow-hidden">
+            <div class="border-b border-hairline px-5 py-4">
+              <h2 class="text-lg font-semibold text-ink-strong">Quick assessment</h2>
             </div>
             <div class="space-y-4 p-5">
               <div
                 v-for="item in assessments"
                 :key="item.label"
-                class="rounded-xl border p-4"
+                class="rounded-2xl border p-4"
                 :class="metricCardClasses(item.tone)"
               >
                 <div class="flex items-center justify-between gap-3">
@@ -133,16 +133,16 @@
       <section v-else-if="activeTab === 'metrics'">
         <div v-if="metrics" class="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <div class="xl:col-span-2 space-y-6">
-            <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm overflow-visible">
-              <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Key outcomes</h2>
-                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">The most important quality signals for this release, based on reuse and storage efficiency.</p>
+            <div class="rounded-card border border-hairline bg-card overflow-visible">
+              <div class="border-b border-hairline px-5 py-4">
+                <h2 class="text-lg font-semibold text-ink-strong">Key outcomes</h2>
+                <p class="mt-1 text-sm text-ink-muted">The most important quality signals for this release, based on reuse and storage efficiency.</p>
               </div>
               <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2 xl:grid-cols-4">
                 <article
                   v-for="metric in topMetrics"
                   :key="metric.key"
-                  class="rounded-2xl border p-4 shadow-xs"
+                  class="rounded-2xl border p-4"
                   :class="metricCardClasses(metric.tone)"
                 >
                   <div class="flex items-start justify-between gap-3">
@@ -157,42 +157,16 @@
               </div>
             </div>
 
-            <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm overflow-visible">
-              <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Storage impact</h2>
-                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">How much logical content this release represents versus how much truly new storage it introduced.</p>
+            <div class="rounded-card border border-hairline bg-card overflow-visible">
+              <div class="border-b border-hairline px-5 py-4">
+                <h2 class="text-lg font-semibold text-ink-strong">Storage impact</h2>
+                <p class="mt-1 text-sm text-ink-muted">How much logical content this release represents versus how much truly new storage it introduced.</p>
               </div>
               <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
                 <article
                   v-for="metric in storageMetrics"
                   :key="metric.key"
-                  class="rounded-xl border p-4"
-                  :class="metricCardClasses(metric.tone)"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <div class="flex items-center gap-2">
-                        <h3 class="text-sm font-semibold" :class="metricValueClasses(metric.tone)">{{ metric.label }}</h3>
-                      </div>
-                      <p class="mt-2 text-xl font-bold" :class="metricValueClasses(metric.tone)">{{ metric.value }}</p>
-                    </div>
-                    <MetricInfo :text="metric.help" />
-                  </div>
-                  <p class="mt-3 text-sm leading-6" :class="metricBodyClasses(metric.tone)">{{ metric.description }}</p>
-                </article>
-              </div>
-            </div>
-
-            <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm overflow-visible">
-              <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Deduplication & compression</h2>
-                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">These metrics show the quality of reuse and compression achieved for this release.</p>
-              </div>
-              <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">
-                <article
-                  v-for="metric in efficiencyMetrics"
-                  :key="metric.key"
-                  class="rounded-xl border p-4"
+                  class="rounded-2xl border p-4"
                   :class="metricCardClasses(metric.tone)"
                 >
                   <div class="flex items-start justify-between gap-3">
@@ -207,40 +181,64 @@
               </div>
             </div>
 
-            <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm overflow-visible">
-              <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Release composition</h2>
-                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Counts and metadata that describe what is inside the release and how it maps to chunked storage.</p>
+            <div class="rounded-card border border-hairline bg-card overflow-visible">
+              <div class="border-b border-hairline px-5 py-4">
+                <h2 class="text-lg font-semibold text-ink-strong">Deduplication &amp; compression</h2>
+                <p class="mt-1 text-sm text-ink-muted">These metrics show the quality of reuse and compression achieved for this release.</p>
+              </div>
+              <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">
+                <article
+                  v-for="metric in efficiencyMetrics"
+                  :key="metric.key"
+                  class="rounded-2xl border p-4"
+                  :class="metricCardClasses(metric.tone)"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 class="text-sm font-semibold" :class="metricValueClasses(metric.tone)">{{ metric.label }}</h3>
+                      <p class="mt-2 text-xl font-bold" :class="metricValueClasses(metric.tone)">{{ metric.value }}</p>
+                    </div>
+                    <MetricInfo :text="metric.help" />
+                  </div>
+                  <p class="mt-3 text-sm leading-6" :class="metricBodyClasses(metric.tone)">{{ metric.description }}</p>
+                </article>
+              </div>
+            </div>
+
+            <div class="rounded-card border border-hairline bg-card overflow-visible">
+              <div class="border-b border-hairline px-5 py-4">
+                <h2 class="text-lg font-semibold text-ink-strong">Release composition</h2>
+                <p class="mt-1 text-sm text-ink-muted">Counts and metadata that describe what is inside the release and how it maps to chunked storage.</p>
               </div>
               <div class="grid grid-cols-1 gap-4 p-5 md:grid-cols-2 xl:grid-cols-4">
                 <article
                   v-for="metric in compositionMetrics"
                   :key="metric.key"
-                  class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4"
+                  class="rounded-2xl border border-hairline p-4"
                 >
                   <div class="flex items-start justify-between gap-3">
                     <div>
-                      <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ metric.label }}</h3>
-                      <p class="mt-2 text-xl font-bold text-gray-900 dark:text-white">{{ metric.value }}</p>
+                      <h3 class="text-sm font-semibold text-ink-strong">{{ metric.label }}</h3>
+                      <p class="mt-2 text-xl font-bold text-ink-strong">{{ metric.value }}</p>
                     </div>
                     <MetricInfo :text="metric.help" />
                   </div>
-                  <p class="mt-3 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ metric.description }}</p>
+                  <p class="mt-3 text-sm leading-6 text-ink-muted">{{ metric.description }}</p>
                 </article>
               </div>
             </div>
           </div>
 
           <div class="space-y-6">
-            <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm overflow-hidden self-start">
-              <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Quick assessment</h2>
+            <div class="rounded-card border border-hairline bg-card overflow-hidden self-start">
+              <div class="border-b border-hairline px-5 py-4">
+                <h2 class="text-lg font-semibold text-ink-strong">Quick assessment</h2>
               </div>
               <div class="space-y-4 p-5">
                 <div
                   v-for="item in assessments"
                   :key="item.label"
-                  class="rounded-xl border p-4"
+                  class="rounded-2xl border p-4"
                   :class="metricCardClasses(item.tone)"
                 >
                   <div class="flex items-center justify-between gap-3">
@@ -258,88 +256,88 @@
               </div>
             </div>
 
-            <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm overflow-hidden self-start">
-              <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Score formula</h2>
+            <div class="rounded-card border border-hairline bg-card overflow-hidden self-start">
+              <div class="border-b border-hairline px-5 py-4">
+                <h2 class="text-lg font-semibold text-ink-strong">Score formula</h2>
               </div>
-              <div class="p-5 space-y-3 text-sm text-gray-600 dark:text-gray-300">
+              <div class="space-y-3 p-5 text-sm text-ink-muted">
                 <p>The current frontend fallback score is computed from the release metrics and can later be replaced by the API-provided score.</p>
-                <code class="block whitespace-pre-wrap rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50 dark:bg-gray-900/30 p-3 text-xs text-gray-700 dark:text-gray-200">score = round(100 × (0.35×effective + 0.20×dedupe + 0.15×compression + 0.20×newData + 0.10×savedBytes))</code>
+                <code class="block whitespace-pre-wrap rounded-2xl border border-hairline p-3 text-xs text-ink">score = round(100 × (0.35×effective + 0.20×dedupe + 0.15×compression + 0.20×newData + 0.10×savedBytes))</code>
               </div>
             </div>
 
-            <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-sm overflow-hidden self-start">
-              <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Metric coverage</h2>
+            <div class="rounded-card border border-hairline bg-card overflow-hidden self-start">
+              <div class="border-b border-hairline px-5 py-4">
+                <h2 class="text-lg font-semibold text-ink-strong">Metric coverage</h2>
               </div>
-              <dl class="divide-y divide-gray-100 dark:divide-gray-700/60">
+              <dl class="divide-y divide-hairline">
                 <div class="px-5 py-4">
-                  <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Storage metrics</dt>
-                  <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">4 values</dd>
+                  <dt class="text-xs uppercase tracking-wide text-ink-subtle">Storage metrics</dt>
+                  <dd class="mt-1 text-sm font-medium text-ink-strong">4 values</dd>
                 </div>
                 <div class="px-5 py-4">
-                  <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Efficiency metrics</dt>
-                  <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">5 values</dd>
+                  <dt class="text-xs uppercase tracking-wide text-ink-subtle">Efficiency metrics</dt>
+                  <dd class="mt-1 text-sm font-medium text-ink-strong">5 values</dd>
                 </div>
                 <div class="px-5 py-4">
-                  <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Composition metrics</dt>
-                  <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">4 values</dd>
+                  <dt class="text-xs uppercase tracking-wide text-ink-subtle">Composition metrics</dt>
+                  <dd class="mt-1 text-sm font-medium text-ink-strong">4 values</dd>
                 </div>
                 <div class="px-5 py-4">
-                  <dt class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Primary signal</dt>
-                  <dd class="mt-1 text-sm font-medium text-gray-900 dark:text-white">New data share</dd>
+                  <dt class="text-xs uppercase tracking-wide text-ink-subtle">Primary signal</dt>
+                  <dd class="mt-1 text-sm font-medium text-ink-strong">New data share</dd>
                 </div>
               </dl>
             </div>
           </div>
         </div>
 
-        <div v-else class="rounded-2xl border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 px-5 py-4 text-sm text-amber-700 dark:text-amber-300">
+        <div v-else class="rounded-card border border-warning/25 bg-warning-soft px-5 py-4 text-sm text-warning">
           Metrics are not available for this release yet.
         </div>
       </section>
 
       <section v-else-if="activeTab === 'properties'">
-        <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700/60 shadow-sm overflow-hidden">
-          <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700/60 flex items-center justify-between">
-            <h2 class="font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-              <IconListDetails class="w-4 h-4 text-gray-400" /> Custom Properties
+        <div class="rounded-card border border-hairline bg-card overflow-hidden">
+          <div class="flex items-center justify-between border-b border-hairline px-5 py-4">
+            <h2 class="flex items-center gap-2 font-semibold text-ink-strong">
+              <IconListDetails class="w-4 h-4 text-ink-muted" /> Custom Properties
             </h2>
           </div>
           <div class="p-5">
-            <div v-if="propsLoading" class="text-sm text-gray-400">Loading…</div>
-            <div v-else-if="parsedProps && Object.keys(parsedProps).length > 0" class="divide-y divide-gray-100 dark:divide-gray-700/60">
-              <div v-for="(val, key) in parsedProps" :key="key" class="py-2.5 flex items-start gap-4">
-                <span class="text-xs font-mono font-medium text-gray-600 dark:text-gray-400 min-w-35">{{ key }}</span>
-                <span class="text-sm text-gray-800 dark:text-gray-200 break-all">{{ val }}</span>
+            <div v-if="propsLoading" class="text-sm text-ink-subtle">Loading…</div>
+            <div v-else-if="parsedProps && Object.keys(parsedProps).length > 0" class="divide-y divide-hairline">
+              <div v-for="(val, key) in parsedProps" :key="key" class="flex items-start gap-4 py-2.5">
+                <span class="min-w-35 font-mono text-xs font-medium text-ink-muted">{{ key }}</span>
+                <span class="break-all text-sm text-ink-strong">{{ val }}</span>
               </div>
             </div>
-            <div v-else class="text-sm text-gray-400">No custom properties.</div>
+            <div v-else class="text-sm text-ink-subtle">No custom properties.</div>
           </div>
         </div>
       </section>
 
       <section v-else-if="activeTab === 'download'">
-        <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700/60 shadow-sm overflow-hidden">
-          <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700/60">
-            <h2 class="font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-              <IconDownload class="w-4 h-4 text-gray-400" /> Download
+        <div class="rounded-card border border-hairline bg-card overflow-hidden">
+          <div class="border-b border-hairline px-5 py-4">
+            <h2 class="flex items-center gap-2 font-semibold text-ink-strong">
+              <IconDownload class="w-4 h-4 text-ink-muted" /> Download
             </h2>
           </div>
-          <div class="p-5 space-y-3">
-            <p class="text-sm text-gray-500 dark:text-gray-400">Download this release as a package. Use the BinStash client to reconstruct files from the chunk store.</p>
+          <div class="space-y-3 p-5">
+            <p class="text-sm text-ink-muted">Download this release as a package. Use the BinStash client to reconstruct files from the chunk store.</p>
             <div class="flex flex-wrap gap-3">
-              <a :href="downloadUrl" target="_blank" class="btn bg-violet-500 hover:bg-violet-600 text-white flex items-center gap-2 text-sm">
+              <a :href="downloadUrl" target="_blank" class="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:brightness-110">
                 <IconPackage class="w-4 h-4" /> Full Release Package
               </a>
             </div>
-            <div class="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
-              <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2 uppercase">CLI Download Command</p>
+            <div class="mt-4 border-t border-hairline pt-4">
+              <p class="mb-2 text-xs font-semibold uppercase text-ink-subtle">CLI Download Command</p>
               <div class="flex items-center gap-2">
-                <code class="flex-1 text-xs bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2.5 font-mono text-gray-700 dark:text-gray-300">
+                <code class="flex-1 rounded-2xl border border-hairline px-4 py-2.5 font-mono text-xs text-ink">
                   binstash download --tenant {{ tenantId }} --repo {{ repoId }} --version {{ release.version }}
                 </code>
-                <button @click="copyCli" class="btn border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 text-xs shrink-0">
+                <button @click="copyCli" class="shrink-0 rounded-full border border-hairline px-3.5 py-2 text-xs font-medium text-ink-muted transition hover:text-ink-strong">
                   {{ cliCopied ? 'Copied!' : 'Copy' }}
                 </button>
               </div>
@@ -347,38 +345,6 @@
           </div>
         </div>
       </section>
-
-      <div v-if="false" class="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <div v-if="release.notes" class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700/60 shadow-sm overflow-hidden">
-          <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700/60">
-            <h2 class="font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-              <IconFileText class="w-4 h-4 text-gray-400" /> Release Notes
-            </h2>
-          </div>
-          <div class="p-5">
-            <p class="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap leading-relaxed">{{ release.notes }}</p>
-          </div>
-        </div>
-
-        <div v-if="properties || propsLoading" class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700/60 shadow-sm overflow-hidden">
-          <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700/60 flex items-center justify-between">
-            <h2 class="font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-              <IconListDetails class="w-4 h-4 text-gray-400" /> Custom Properties
-            </h2>
-          </div>
-          <div class="p-5">
-            <div v-if="propsLoading" class="text-sm text-gray-400">Loading…</div>
-            <div v-else-if="parsedProps && Object.keys(parsedProps).length > 0" class="divide-y divide-gray-100 dark:divide-gray-700/60">
-              <div v-for="(val, key) in parsedProps" :key="key" class="py-2.5 flex items-start gap-4">
-                <span class="text-xs font-mono font-medium text-gray-600 dark:text-gray-400 min-w-35">{{ key }}</span>
-                <span class="text-sm text-gray-800 dark:text-gray-200 break-all">{{ val }}</span>
-              </div>
-            </div>
-            <div v-else class="text-sm text-gray-400">No custom properties.</div>
-          </div>
-        </div>
-      </div>
-
     </template>
   </div>
 </template>
@@ -723,55 +689,55 @@ const assessments = computed(() => {
 function metricCardClasses(tone: MetricTone) {
   switch (tone) {
     case 'good':
-      return 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/20 dark:bg-emerald-500/10'
+      return 'border-success/25 bg-success-soft'
     case 'bad':
-      return 'border-amber-200 bg-amber-50 dark:border-amber-500/20 dark:bg-amber-500/10'
+      return 'border-warning/25 bg-warning-soft'
     default:
-      return 'border-gray-200 bg-gray-50/80 dark:border-gray-700/60 dark:bg-gray-900/30'
+      return 'border-hairline'
   }
 }
 
 function metricEyebrowClasses(tone: MetricTone) {
   switch (tone) {
     case 'good':
-      return 'text-emerald-600 dark:text-emerald-300'
+      return 'text-success/80'
     case 'bad':
-      return 'text-amber-600 dark:text-amber-300'
+      return 'text-warning/80'
     default:
-      return 'text-gray-400 dark:text-gray-500'
+      return 'text-ink-subtle'
   }
 }
 
 function metricValueClasses(tone: MetricTone) {
   switch (tone) {
     case 'good':
-      return 'text-emerald-900 dark:text-emerald-100'
+      return 'text-success'
     case 'bad':
-      return 'text-amber-900 dark:text-amber-100'
+      return 'text-warning'
     default:
-      return 'text-gray-900 dark:text-white'
+      return 'text-ink-strong'
   }
 }
 
 function metricBodyClasses(tone: MetricTone) {
   switch (tone) {
     case 'good':
-      return 'text-emerald-700 dark:text-emerald-200'
+      return 'text-success/80'
     case 'bad':
-      return 'text-amber-700 dark:text-amber-200'
+      return 'text-warning/80'
     default:
-      return 'text-gray-500 dark:text-gray-400'
+      return 'text-ink-muted'
   }
 }
 
 function badgeClasses(tone: MetricTone) {
   switch (tone) {
     case 'good':
-      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300'
+      return 'bg-success-soft text-success'
     case 'bad':
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300'
+      return 'bg-warning-soft text-warning'
     default:
-      return 'bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300'
+      return 'bg-hairline text-ink-muted'
   }
 }
 

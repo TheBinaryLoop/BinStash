@@ -1,7 +1,7 @@
 <template>
   <router-link
     :to="to"
-    class="group flex items-center gap-3 rounded-[20px] border border-transparent px-3 py-2.5 transition-all hover:border-[#3B4285] hover:bg-[#19284F] dark:hover:border-[#3B4285] dark:hover:bg-[#19284F]"
+    class="group flex items-center gap-3 rounded-[20px] border border-transparent px-3 py-2.5 transition-all hover:border-hairline hover:bg-raised"
   >
     <div
       class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all group-hover:text-white group-hover:shadow-sm"
@@ -10,10 +10,10 @@
       <component :is="icon" class="h-4 w-4" />
     </div>
     <div>
-      <div class="text-sm font-semibold text-slate-900 transition-colors group-hover:text-white dark:text-white">
+      <div class="text-sm font-semibold text-ink-strong transition-colors group-hover:text-ink-strong">
         {{ title }}
       </div>
-      <div class="text-xs text-slate-500 transition-colors group-hover:text-slate-400 dark:text-slate-400">
+      <div class="text-xs text-ink-muted transition-colors">
         {{ subtitle }}
       </div>
     </div>
@@ -42,15 +42,15 @@ export default {
     },
     iconBgClass: {
       type: String,
-      default: 'bg-[#7C86FF]/15',
+      default: 'bg-accent-soft',
     },
     iconColorClass: {
       type: String,
-      default: 'text-[#7C86FF]',
+      default: 'text-accent',
     },
     iconHoverBgClass: {
       type: String,
-      default: 'group-hover:bg-[#7C86FF]',
+      default: 'group-hover:bg-accent',
     },
   },
 }

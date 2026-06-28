@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=fallback');
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=fallback');
 
 @import 'tailwindcss';
 @import './additional-styles/flatpickr.css';
@@ -118,6 +119,92 @@
   --text-6xl--letter-spacing: -0.02em;
 
   --breakpoint-xs: 480px;
+}
+
+/* ── BinStash redesign tokens (phase2) ────────────────────────────────────
+   Semantic tokens lifted from the designer's Figma file (file
+   9f72i09eKORuUOiaw4Io7y). The design bound no Figma variables, so values are
+   read straight off the frames. Dark values are exact from the design; light
+   values are inferred neutral counterparts. Each token reads a --ds-* custom
+   property so a single utility (e.g. `bg-card`) adapts to the `.dark` class.
+   `inline` makes the generated utilities reference the variable directly so
+   they stay reactive to the runtime theme switch. */
+@theme inline {
+  --color-canvas: var(--ds-canvas);
+  --color-panel: var(--ds-panel);
+  --color-card: var(--ds-card);
+  --color-raised: var(--ds-raised);
+  --color-hairline: var(--ds-hairline);
+
+  --color-ink-strong: var(--ds-ink-strong);
+  --color-ink-muted: var(--ds-ink-muted);
+  --color-ink-subtle: var(--ds-ink-subtle);
+
+  --color-accent: var(--ds-accent);
+  --color-accent-soft: var(--ds-accent-soft);
+  --color-brand-from: var(--ds-brand-from);
+  --color-brand-to: var(--ds-brand-to);
+
+  --color-success: var(--ds-success);
+  --color-success-soft: var(--ds-success-soft);
+  --color-warning: var(--ds-warning);
+  --color-warning-soft: var(--ds-warning-soft);
+  --color-danger: var(--ds-danger);
+  --color-danger-soft: var(--ds-danger-soft);
+
+  --radius-panel: 36px;
+  --radius-card: 28px;
+  --radius-control: 10px;
+
+  --font-montserrat: "Montserrat", "Inter", sans-serif;
+}
+
+:root {
+  --ds-canvas: #eef1f6;
+  --ds-panel: #ffffff;
+  --ds-card: #ffffff;
+  --ds-raised: #f6f8fb;
+  --ds-hairline: #e3e8f0;
+
+  --ds-ink-strong: #0f172a;
+  --ds-ink-muted: #64748b;
+  --ds-ink-subtle: #94a3b8;
+
+  --ds-accent: #7c86ff;
+  --ds-accent-soft: rgb(124 134 255 / 0.12);
+  --ds-brand-from: #615fff;
+  --ds-brand-to: #9810fa;
+
+  --ds-success: #00bc7d;
+  --ds-success-soft: rgb(0 188 125 / 0.15);
+  --ds-warning: #ffb900;
+  --ds-warning-soft: rgb(255 185 0 / 0.15);
+  --ds-danger: #fb2c36;
+  --ds-danger-soft: rgb(251 44 54 / 0.15);
+}
+
+.dark {
+  --ds-canvas: #090e1e;
+  --ds-panel: #101935;
+  --ds-card: #0c112d;
+  --ds-raised: #19284f;
+  --ds-hairline: #1e2939;
+
+  --ds-ink-strong: #ffffff;
+  --ds-ink-muted: #99a1af;
+  --ds-ink-subtle: #5e6778;
+
+  --ds-accent: #7c86ff;
+  --ds-accent-soft: rgb(124 134 255 / 0.15);
+  --ds-brand-from: #615fff;
+  --ds-brand-to: #9810fa;
+
+  --ds-success: #00bc7d;
+  --ds-success-soft: rgb(0 188 125 / 0.15);
+  --ds-warning: #ffb900;
+  --ds-warning-soft: rgb(255 185 0 / 0.15);
+  --ds-danger: #fb2c36;
+  --ds-danger-soft: rgb(251 44 54 / 0.15);
 }
 
 /*
