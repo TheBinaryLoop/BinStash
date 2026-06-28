@@ -1,0 +1,38 @@
+// Copyright (C) 2025-2026  Lukas Eßmann
+// 
+//      This program is free software: you can redistribute it and/or modify
+//      it under the terms of the GNU Affero General Public License as published
+//      by the Free Software Foundation, either version 3 of the License, or
+//      (at your option) any later version.
+// 
+//      This program is distributed in the hope that it will be useful,
+//      but WITHOUT ANY WARRANTY; without even the implied warranty of
+//      MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//      GNU Affero General Public License for more details.
+// 
+//      You should have received a copy of the GNU Affero General Public License
+//      along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+using BinStash.Cli.Versioning;
+
+namespace BinStash.Cli.Auth;
+
+public sealed class AuthHeaderHandler : DelegatingHandler
+{
+    private readonly Func<Task<string>> _authTokenFactory;
+    private readonly string _authScheme;
+
+    public AuthHeaderHandler(Func<Task<string>> authTokenFactory, string authScheme = "Bearer")
+    {
+        _authTokenFactory = authTokenFactory;
+        _authScheme = authScheme;
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var token = await _authTokenFactory();
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(_authScheme, token);
+        request.Headers.TryAddWithoutValidation("X-BinStash-Cli-Version", CliVersion.Value);
+        return await base.SendAsync(request, cancellationToken);
+    }
+}

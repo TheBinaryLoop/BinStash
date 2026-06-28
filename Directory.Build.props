@@ -1,0 +1,35 @@
+<Project>
+
+  <!--
+    Repo-wide build defaults. MSBuild auto-imports the nearest Directory.Build.props
+    walking up from each project, so this applies to every project under the repo
+    root (src/, tests/, tooling/).
+
+    Security: NuGet vulnerability auditing (https://learn.microsoft.com/nuget/concepts/auditing-packages).
+    Audits direct AND transitive packages during restore. High (NU1903) and Critical
+    (NU1904) advisories are promoted to build errors, so they fail both local
+    `dotnet build` and the CI restore. Low (NU1901) and Moderate (NU1902) stay
+    warnings (the Jenkins 'Security Audit' stage flags those by marking the build
+    UNSTABLE).
+
+    To accept an advisory that has no upstream fix yet, add it to the
+    NuGetAuditSuppress group below WITH a comment (why + date), and mirror the URL
+    in the Jenkinsfile 'Security Audit' stage's $suppressed list so the report agrees.
+  -->
+  <PropertyGroup>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1903;NU1904</WarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Advisories accepted because no fixed package version exists yet. Comment each
+      entry with the reason and date; remove once a fix ships. Example:
+
+      <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-xxxx-xxxx-xxxx" />
+    -->
+  </ItemGroup>
+
+</Project>
