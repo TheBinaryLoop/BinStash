@@ -41,6 +41,43 @@ public static class RepositoryEndpoints
 
         MapGroup(group);
 
+        // Repository config and access control have no GraphQL resolver, so the browser
+        // frontend reaches them over REST at the tenant-prefixed path. Expose them there
+        // too, reusing the same handlers and permission filters. Tenant is resolved from
+        // the {tenantId} route value by TenantResolutionMiddleware (route value has the
+        // highest precedence), so the handlers' tenantContext.TenantId is correct.
+        var tenantGroup = app.MapGroup("/api/tenants/{tenantId:guid}/repositories")!
+            .WithTags("Repositories")
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .RequireAuthorization();
+
+        tenantGroup.MapGet("/{repoId:guid}/access", GetRepositoryMemberAccessInfosAsync)!
+            .WithDescription("Get access control information for a repository.")
+            .WithSummary("Get Repository Access Info")
+            .Produces<List<RepositoryAccessDto>>()
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Admin);
+
+        tenantGroup.MapPost("/{repoId:guid}/access", SetRepositoryMemberAccessInfosAsync)!
+            .WithDescription("Set access control information for a repository.")
+            .WithSummary("Set Repository Access Info")
+            .Produces<RepositoryAccessDto>()
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Admin);
+
+        tenantGroup.MapDelete("/{repoId:guid}/access/{subjectType}/{subjectId}", DeleteRepositoryMemberAccessAsync)!
+            .WithDescription("Delete access control information for a repository.")
+            .WithSummary("Delete Repository Access Info")
+            .RequireRepoPermission(RepositoryPermission.Admin);
+
+        tenantGroup.MapGet("/{repoId:guid}/config", GetRepositoryConfigAsync)!
+            .WithDescription("Get the configuration of a repository.")
+            .WithSummary("Get Repository Config")
+            .Produces<RepositoryConfigDto>()
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireRepoPermission(RepositoryPermission.Read);
+
         return group;
     }
 
