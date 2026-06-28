@@ -25,8 +25,9 @@ deduplication, a custom delta-encoded/varint-packed/transpose-compressed binary 
 transparent Zstd compression. It ships as a multi-tenant SaaS server, a CLI client, and a web
 frontend. Dual-licensed **AGPLv3 + commercial** (see `LICENSE.txt` / `LICENSE-COMMERCIAL.md`).
 
-The solution is `BinStash.slnx` (target `net10.0`, `Nullable` + `ImplicitUsings` enabled everywhere;
-platforms `AnyCPU` / `x64`). Projects:
+The solution is `BinStash.slnx` (at the repo root; target `net10.0`, `Nullable` + `ImplicitUsings`
+enabled everywhere; platforms `AnyCPU` / `x64`). The project folders live under `src/` (the six app
+projects), `tests/` (the three test projects), and `tooling/` (`BinStash.StoreMigration`). Projects:
 
 - **`BinStash.Contracts`** — DTOs and wire contracts shared by client and server (`Auth`,
   `ChunkStore`, `Delta`, `Hashing`, `Ingest`, `Release`, `Repo`, `ServiceAccount`, `StorageClass`,
@@ -47,11 +48,12 @@ platforms `AnyCPU` / `x64`). Projects:
 - **`BinStash.Cli`** (AOT-published) — `CliFx` + `Spectre.Console` client. Commands: `auth`,
   `chunk-store`, `repo`, `release`, `analyze`, `test`, and `svn import-tags`. gRPC client for ingest.
 - **`BinStash.StoreMigration`** — console tool over `Infrastructure` internals for store/schema
-  migration. Its `.csproj` is on disk but is **not referenced by `BinStash.slnx`** (the solution's
-  `/Tooling/` folder is empty), so it does not build with the solution.
+  migration. Its `.csproj` lives at `tooling/BinStash.StoreMigration` but is **not referenced by
+  `BinStash.slnx`** (the solution's `/Tooling/` folder is empty), so it does not build with the
+  solution.
 - **`BinStash.Frontend`** — Vue 3 + Vite + Pinia + Tailwind v4 + TypeScript SPA, talking to the
   server over a hybrid of Apollo **GraphQL** (HTTP + `graphql-ws` for subscriptions) and **REST**
-  (`/api`, `/health`). `pnpm build` emits the bundle into `BinStash.Server/wwwroot`. Package manager
+  (`/api`, `/health`). `pnpm build` emits the bundle into `src/BinStash.Server/wwwroot`. Package manager
   is **pnpm** (via corepack); package name `mosaic-vue`.
 - Tests: `BinStash.Core.Tests`, `BinStash.Serializers.Tests`, `BinStash.Server.Tests` — xUnit +
   FluentAssertions; Core adds FsCheck + Verify, Serializers adds Verify, Server uses `Mvc.Testing` +
@@ -68,17 +70,17 @@ platforms `AnyCPU` / `x64`). Projects:
   dotnet test  BinStash.slnx -c Release
   ```
   Or target a single test project, e.g.
-  `dotnet test BinStash.Server.Tests/BinStash.Server.Tests.csproj`.
-- **Frontend** (in `BinStash.Frontend/`):
+  `dotnet test tests/BinStash.Server.Tests/BinStash.Server.Tests.csproj`.
+- **Frontend** (in `src/BinStash.Frontend/`):
   ```
   corepack enable && corepack prepare pnpm@latest --activate
   pnpm install --frozen-lockfile
   pnpm dev      # local dev (vite, mkcert https)
   pnpm build    # production bundle
   ```
-- **EF Core migrations** live in `BinStash.Infrastructure/Data/Migrations`; the server is the
+- **EF Core migrations** live in `src/BinStash.Infrastructure/Data/Migrations`; the server is the
   startup/design-time host (it carries `Microsoft.EntityFrameworkCore.Design`). Add migrations with
-  `dotnet ef migrations add <Name> --project BinStash.Infrastructure --startup-project BinStash.Server`.
+  `dotnet ef migrations add <Name> --project src/BinStash.Infrastructure --startup-project src/BinStash.Server`.
 - **CLI AOT publish** runs the `FixZstdNativeLayout` target to relocate `libzstd` into the
   `runtimes/<rid>/native/` layout `ZstdNetNGX`'s resolver expects — don't break that target.
 - **CI**: `Jenkinsfile` builds the frontend (pnpm), then `dotnet restore`/`build`/`test` (xUnit
@@ -106,5 +108,5 @@ platforms `AnyCPU` / `x64`). Projects:
 - **`ZstdNetNGX` is a custom fork** (`TheBinaryLoop/ZstdNetNGX`) — match existing usage; don't swap in
   upstream ZstdNet.
 - **Don't commit build output** (`bin/`, `obj/`, `node_modules/`, the frontend bundle in
-  `BinStash.Server/wwwroot` — all gitignored).
+  `src/BinStash.Server/wwwroot` — all gitignored).
 - Code style follows `BinStash.sln.DotSettings` (ReSharper); match the surrounding code.

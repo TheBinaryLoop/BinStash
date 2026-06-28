@@ -4,44 +4,44 @@
     <Platform Name="x64" />
   </Configurations>
   <Folder Name="/Tests/">
-    <Project Path="BinStash.Core.Tests/BinStash.Core.Tests.csproj">
+    <Project Path="tests/BinStash.Core.Tests/BinStash.Core.Tests.csproj">
       <BuildType Solution="Release|x64" Project="?" />
       <Platform Solution="Release|x64" Project="?" />
       <Build Solution="Release|x64" Project="false" />
     </Project>
-    <Project Path="BinStash.Serializers.Tests/BinStash.Serializers.Tests.csproj">
+    <Project Path="tests/BinStash.Serializers.Tests/BinStash.Serializers.Tests.csproj">
       <BuildType Solution="Release|x64" Project="?" />
       <Platform Solution="Release|x64" Project="?" />
       <Build Solution="Release|x64" Project="false" />
     </Project>
-    <Project Path="BinStash.Server.Tests/BinStash.Server.Tests.csproj" />
+    <Project Path="tests/BinStash.Server.Tests/BinStash.Server.Tests.csproj" />
   </Folder>
   <Folder Name="/Tooling/" />
-  <Project Path="BinStash.Cli/BinStash.Cli.csproj">
+  <Project Path="src/BinStash.Cli/BinStash.Cli.csproj">
     <BuildType Solution="Release|x64" Project="?" />
     <Platform Solution="Debug|x64" Project="x64" />
     <Platform Solution="Release|x64" Project="?" />
     <Build Solution="Release|x64" Project="false" />
   </Project>
-  <Project Path="BinStash.Contracts/BinStash.Contracts.csproj">
+  <Project Path="src/BinStash.Contracts/BinStash.Contracts.csproj">
     <BuildType Solution="Release|x64" Project="?" />
     <Platform Solution="Debug|x64" Project="x64" />
     <Platform Solution="Release|x64" Project="?" />
     <Build Solution="Release|x64" Project="false" />
   </Project>
-  <Project Path="BinStash.Core/BinStash.Core.csproj">
+  <Project Path="src/BinStash.Core/BinStash.Core.csproj">
     <BuildType Solution="Release|x64" Project="?" />
     <Platform Solution="Debug|x64" Project="x64" />
     <Platform Solution="Release|x64" Project="?" />
     <Build Solution="Release|x64" Project="false" />
   </Project>
-  <Project Path="BinStash.Infrastructure/BinStash.Infrastructure.csproj">
+  <Project Path="src/BinStash.Infrastructure/BinStash.Infrastructure.csproj">
     <BuildType Solution="Release|x64" Project="?" />
     <Platform Solution="Debug|x64" Project="x64" />
     <Platform Solution="Release|x64" Project="?" />
     <Build Solution="Release|x64" Project="false" />
   </Project>
-  <Project Path="BinStash.Server/BinStash.Server.csproj">
+  <Project Path="src/BinStash.Server/BinStash.Server.csproj">
     <BuildType Solution="Release|x64" Project="?" />
     <Platform Solution="Debug|x64" Project="x64" />
     <Platform Solution="Release|x64" Project="?" />

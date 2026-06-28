@@ -29,7 +29,7 @@ pipeline {
 
     stage('Frontend') {
       steps {
-        dir('BinStash.Frontend') {
+        dir('src/BinStash.Frontend') {
           bat 'corepack enable'
           bat 'corepack prepare pnpm@latest --activate'
           bat 'pnpm install --frozen-lockfile'

@@ -8,7 +8,7 @@ riderModule.iml
 bin/
 obj/
 
-BinStash.Server/wwwroot
+src/BinStash.Server/wwwroot
 
 # User-specific files
 *.suo
