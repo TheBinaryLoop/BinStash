@@ -8,6 +8,7 @@
     @open-modal="openSearchModal"
     @close-modal="closeSearchModal"
   />
+  <Toaster />
 </template>
 
 <script setup lang="ts">
@@ -17,6 +18,7 @@ import { useGlobalKeybinds } from '@/composables/useGlobalKeybinds'
 import { useSearchModal } from '@/composables/useSearchModal'
 import { useGlobalSearchConfig } from '@/composables/useGlobalSearchConfig'
 import ModalSearch from '@/components/ModalSearch.vue'
+import Toaster from '@/shared/components/feedback/Toaster.vue'
 import '@/charts/ChartjsConfig'
 
 const auth = useAuthStore()

@@ -1,62 +1,64 @@
 <template>
   <form
     @submit.prevent="onSubmit"
-    class="flex flex-col gap-4 w-full max-w-none"
+    class="flex w-full max-w-none flex-col gap-4"
   >
-    <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100">Step 4: Create Storage Classes</h2>
-    <p class="text-gray-600 dark:text-gray-400">
+    <h2 class="text-xl font-bold text-ink-strong">Step 4: Create Storage Classes</h2>
+    <p class="text-sm text-ink-muted">
       Add one or more storage classes. At least one is required.
     </p>
-    <div class="flex flex-col gap-3 w-full max-w-full">
+    <div class="flex w-full max-w-full flex-col gap-3">
       <div
         v-for="(sc, idx) in storageClasses"
         :key="idx"
-        class="flex flex-row flex-wrap gap-4 items-center bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-lg px-4 py-3 w-full box-border"
+        class="box-border flex w-full flex-row flex-wrap items-end gap-4 rounded-card border border-hairline bg-raised px-4 py-3"
       >
-        <input
+        <BaseInput
           v-model="sc.name"
+          label="Name"
           placeholder="Name"
           required
-          class="flex-1 min-w-40 px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+          class="min-w-40 flex-1"
         />
-        <input
+        <BaseInput
           v-model="sc.displayName"
+          label="Display Name"
           placeholder="Display Name"
           required
-          class="flex-1 min-w-40 px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+          class="min-w-40 flex-1"
         />
-        <input
+        <BaseInput
           v-model="sc.description"
+          label="Description"
           placeholder="Description"
-          class="flex-1 min-w-40 px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+          class="min-w-40 flex-1"
         />
-        <button
-          type="button"
-          @click="remove(idx)"
+        <BaseButton
           v-if="storageClasses.length > 1"
-          class="flex-none px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 cursor-pointer"
+          type="button"
+          variant="ghost"
+          size="sm"
+          class="flex-none text-danger"
+          @click="remove(idx)"
         >
           Remove
-        </button>
+        </BaseButton>
       </div>
     </div>
-    <button
-      type="button"
-      @click="add"
-      class="px-4 py-2 text-sm font-medium bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-md cursor-pointer transition-colors w-fit"
-    >
+    <BaseButton type="button" variant="secondary" size="sm" class="w-fit" @click="add">
       Add Storage Class
-    </button>
-    <div v-if="error" class="text-red-600 dark:text-red-400 text-sm">{{ error }}</div>
-    <button
-      type="submit"
-      :disabled="loading"
-      class="flex items-center justify-center px-6 py-2 text-sm font-medium bg-violet-500 hover:bg-violet-600 text-white rounded-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-    >
-      <Spinner v-if="loading" color="white" class="w-4 h-4 mr-2" />
+    </BaseButton>
+    <div
+      v-if="error"
+      class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+    >{{ error }}</div>
+    <BaseButton type="submit" :loading="loading" :disabled="loading">
       {{ loading ? 'Saving...' : 'Save Storage Classes' }}
-    </button>
-    <div v-if="success" class="text-green-600 dark:text-green-400 text-sm">
+    </BaseButton>
+    <div
+      v-if="success"
+      class="rounded-card border border-success/25 bg-success-soft px-4 py-3 text-sm text-success"
+    >
       Storage classes saved successfully.
     </div>
   </form>
@@ -66,7 +68,7 @@
 import { ref } from 'vue'
 import { useSetupStore } from '@/features/setup/store/setup.store'
 import { createStorageClasses } from '@/features/setup/api/setup.api'
-import Spinner from '@/shared/components/feedback/Spinner.vue'
+import { BaseInput, BaseButton } from '@/shared/components/ui'
 
 const setupStore = useSetupStore()
 const loading = ref(false)

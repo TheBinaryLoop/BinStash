@@ -1,167 +1,126 @@
 <template>
-  <div class="mb-6">
-    <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Members</h1>
-    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage who has access to this tenant workspace.</p>
-  </div>
+  <PageHeader title="Members" description="Manage who has access to this tenant workspace." />
 
-  <!-- Search -->
-  <div class="mb-4 flex items-center gap-3">
-    <div class="relative flex-1 max-w-sm">
-      <IconSearch class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-      <input v-model="search" type="text" placeholder="Search members…"
-        class="form-input w-full pl-9 text-sm" />
+  <div class="space-y-6">
+    <!-- Search -->
+    <div class="max-w-sm">
+      <BaseInput v-model="search" placeholder="Search members…" :prefix-icon="IconSearch" />
     </div>
-  </div>
 
-  <!-- Loading -->
-  <div v-if="loading" class="flex justify-center py-16">
-    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-500"></div>
-  </div>
+    <!-- Error -->
+    <div v-if="error" class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
+      {{ error }}
+    </div>
 
-  <!-- Error -->
-  <div v-else-if="error" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-red-700 dark:text-red-400">
-    {{ error }}
-  </div>
-
-  <!-- Table -->
-  <div v-else class="bg-white dark:bg-gray-800 shadow-sm rounded-xl border border-gray-200 dark:border-gray-700/60 overflow-hidden">
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/30 border-b border-gray-200 dark:border-gray-700/60">
-            <th class="px-4 py-3 text-left">Member</th>
-            <th class="px-4 py-3 text-left">Roles</th>
-            <th class="px-4 py-3 text-left">Joined</th>
-            <th v-if="isAdmin" class="px-4 py-3 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100 dark:divide-gray-700/60">
-          <tr v-if="filtered.length === 0">
-            <td :colspan="isAdmin ? 4 : 3" class="px-4 py-12 text-center text-gray-400">No members found.</td>
-          </tr>
-          <tr v-for="m in filtered" :key="m.id" class="hover:bg-gray-50 dark:hover:bg-gray-700/20 transition-colors">
-            <td class="px-4 py-3">
-              <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center text-violet-600 dark:text-violet-400 font-semibold text-xs shrink-0">
-                  {{ initials(m) }}
-                </div>
-                <div>
-                  <div class="font-medium text-gray-800 dark:text-gray-100">{{ fullName(m) }}</div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400">{{ m.email }}</div>
-                </div>
-              </div>
-            </td>
-            <td class="px-4 py-3">
-              <div class="flex flex-wrap gap-1">
-                <span v-for="r in m.roles" :key="r"
-                  :class="roleClass(r)"
-                  class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium">
-                  {{ r }}
-                </span>
-                <span v-if="!m.roles?.length" class="text-gray-400 text-xs">—</span>
-              </div>
-            </td>
-            <td class="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
-              {{ m.joinedAt ? fmtDate(m.joinedAt) : '—' }}
-            </td>
-            <td v-if="isAdmin" class="px-4 py-3 text-right">
-              <div class="flex items-center justify-end gap-2">
-                <button v-if="m.id !== currentUserId" @click="openEditRoles(m)"
-                  class="text-xs text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300 font-medium">
-                  Edit Roles
-                </button>
-                <button v-if="m.id !== currentUserId" @click="confirmRemove(m)"
-                  class="text-xs text-red-500 hover:text-red-600 dark:text-red-400 font-medium">
-                  Remove
-                </button>
-                <span v-if="m.id === currentUserId" class="text-xs text-gray-400">You</span>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    <!-- Table -->
+    <div v-else class="overflow-hidden rounded-card border border-hairline bg-card">
+      <DataTable :columns="columns" :items="filtered" :loading="loading" row-key="id">
+        <template #cell-member="{ item: m }">
+          <div class="flex items-center gap-3">
+            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent">
+              {{ initials(m) }}
+            </div>
+            <div class="min-w-0">
+              <div class="truncate text-sm font-medium text-ink-strong">{{ fullName(m) }}</div>
+              <div class="truncate text-xs text-ink-muted">{{ m.email }}</div>
+            </div>
+          </div>
+        </template>
+        <template #cell-roles="{ item: m }">
+          <div class="flex flex-wrap gap-1">
+            <BaseBadge
+              v-for="r in m.roles"
+              :key="r"
+              :tone="r === 'TenantAdmin' || r === 'InstanceAdmin' ? 'accent' : 'neutral'"
+            >
+              {{ r }}
+            </BaseBadge>
+            <span v-if="!m.roles?.length" class="text-xs text-ink-subtle">—</span>
+          </div>
+        </template>
+        <template #cell-joined="{ item: m }">
+          <span class="text-xs text-ink-muted">{{ m.joinedAt ? fmtDate(m.joinedAt) : '—' }}</span>
+        </template>
+        <template #cell-actions="{ item: m }">
+          <div class="flex items-center justify-end gap-2">
+            <template v-if="m.id !== currentUserId">
+              <BaseButton variant="ghost" size="sm" @click="openEditRoles(m)">Edit Roles</BaseButton>
+              <BaseButton variant="ghost" size="sm" @click="confirmRemove(m)" class="text-danger hover:text-danger">Remove</BaseButton>
+            </template>
+            <span v-else class="text-xs text-ink-subtle">You</span>
+          </div>
+        </template>
+        <template #empty>
+          <EmptyState :icon="IconUsers" title="No members found" description="Try adjusting your search." />
+        </template>
+      </DataTable>
     </div>
   </div>
 
   <!-- Invite Modal -->
-  <Teleport to="body">
-    <div v-if="showInviteModal" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showInviteModal = false" />
-      <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6 border border-gray-200 dark:border-gray-700">
-        <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">Invite Member</h3>
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email Address</label>
-            <input v-model="invite.email" type="email" class="form-input w-full text-sm" placeholder="user@example.com" />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Role</label>
-            <select v-model="invite.role" class="form-select w-full text-sm">
-              <option value="TenantMember">TenantMember</option>
-              <option value="TenantAdmin">TenantAdmin</option>
-            </select>
-          </div>
-        </div>
-        <div v-if="inviteError" class="mt-3 text-sm text-red-500">{{ inviteError }}</div>
-        <div class="mt-6 flex justify-end gap-3">
-          <button @click="showInviteModal = false" class="btn border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-          <button @click="doInvite" :disabled="inviting" class="btn bg-violet-500 hover:bg-violet-600 text-white disabled:opacity-50">
-            {{ inviting ? 'Sending…' : 'Send Invite' }}
-          </button>
-        </div>
-      </div>
+  <BaseModal v-model:open="showInviteModal" title="Invite Member" size="sm">
+    <div class="space-y-4">
+      <BaseInput v-model="invite.email" type="email" label="Email Address" placeholder="user@example.com" />
+      <BaseSelect
+        v-model="invite.role"
+        label="Role"
+        :options="[
+          { value: 'TenantMember', label: 'TenantMember' },
+          { value: 'TenantAdmin', label: 'TenantAdmin' },
+        ]"
+      />
+      <div v-if="inviteError" class="text-sm text-danger">{{ inviteError }}</div>
     </div>
+    <template #footer>
+      <BaseButton variant="secondary" @click="showInviteModal = false">Cancel</BaseButton>
+      <BaseButton :loading="inviting" @click="doInvite">{{ inviting ? 'Sending…' : 'Send Invite' }}</BaseButton>
+    </template>
+  </BaseModal>
 
-    <!-- Edit Roles Modal -->
-    <div v-if="showEditModal && editTarget" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showEditModal = false" />
-      <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6 border border-gray-200 dark:border-gray-700">
-        <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-1">Edit Roles</h3>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ editTarget.email }}</p>
-        <div class="space-y-2">
-          <label v-for="r in availableRoles" :key="r" class="flex items-center gap-3 cursor-pointer">
-            <input type="radio" :value="r" v-model="editRole" name="member-role" class="form-radio text-violet-500" />
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ r }}</span>
-          </label>
-        </div>
-        <div v-if="editError" class="mt-3 text-sm text-red-500">{{ editError }}</div>
-        <div class="mt-6 flex justify-end gap-3">
-          <button @click="showEditModal = false" class="btn border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-          <button @click="doEditRoles" :disabled="editing" class="btn bg-violet-500 hover:bg-violet-600 text-white disabled:opacity-50">
-            {{ editing ? 'Saving…' : 'Save' }}
-          </button>
-        </div>
-      </div>
+  <!-- Edit Roles Modal -->
+  <BaseModal v-model:open="showEditModal" title="Edit Roles" :description="editTarget?.email" size="sm">
+    <div class="space-y-4">
+      <BaseRadioGroup v-model="editRole" :options="availableRoles.map(r => ({ value: r, label: r }))" />
+      <div v-if="editError" class="text-sm text-danger">{{ editError }}</div>
     </div>
+    <template #footer>
+      <BaseButton variant="secondary" @click="showEditModal = false">Cancel</BaseButton>
+      <BaseButton :loading="editing" @click="doEditRoles">{{ editing ? 'Saving…' : 'Save' }}</BaseButton>
+    </template>
+  </BaseModal>
 
-    <!-- Remove Confirm Modal -->
-    <div v-if="showRemoveModal && removeTarget" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showRemoveModal = false" />
-      <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-sm p-6 border border-gray-200 dark:border-gray-700">
-        <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-2">Remove Member?</h3>
-        <p class="text-sm text-gray-500 dark:text-gray-400">Remove <span class="font-medium text-gray-700 dark:text-gray-200">{{ removeTarget.email }}</span> from this tenant? They will lose all access.</p>
-        <div v-if="removeError" class="mt-3 text-sm text-red-500">{{ removeError }}</div>
-        <div class="mt-6 flex justify-end gap-3">
-          <button @click="showRemoveModal = false" class="btn border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-          <button @click="doRemove" :disabled="removing" class="btn bg-red-500 hover:bg-red-600 text-white disabled:opacity-50">
-            {{ removing ? 'Removing…' : 'Remove' }}
-          </button>
-        </div>
-      </div>
+  <!-- Remove Confirm Modal -->
+  <BaseModal v-model:open="showRemoveModal" title="Remove Member?" size="sm">
+    <div class="space-y-3">
+      <p class="text-sm text-ink-muted">
+        Remove <span class="font-medium text-ink-strong">{{ removeTarget?.email }}</span> from this tenant? They will lose all access.
+      </p>
+      <div v-if="removeError" class="text-sm text-danger">{{ removeError }}</div>
     </div>
-  </Teleport>
+    <template #footer>
+      <BaseButton variant="secondary" @click="showRemoveModal = false">Cancel</BaseButton>
+      <BaseButton variant="danger" :loading="removing" @click="doRemove">{{ removing ? 'Removing…' : 'Remove' }}</BaseButton>
+    </template>
+  </BaseModal>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { IconSearch } from '@tabler/icons-vue'
+import { IconSearch, IconUsers } from '@tabler/icons-vue'
 import {
   listMembers, inviteMember, updateMemberRoles, removeMember,
   type TenantMemberDto,
 } from '../../../api/tenants'
 import { useAuthStore } from '../../../stores/auth'
 import { useTenantStore } from '../../../stores/tenant'
+import {
+  PageHeader, BaseButton, BaseInput, BaseSelect, BaseRadioGroup,
+  BaseModal, BaseBadge, DataTable, EmptyState, type Column,
+} from '@/shared/components/ui'
+import { useToast } from '@/composables/useToast'
+
+const toast = useToast()
 
 const auth = useAuthStore()
 const currentUserId = computed(() => auth.user?.id)
@@ -169,6 +128,13 @@ const isAdmin = computed(() =>
   auth.user?.roles?.includes('InstanceAdmin') ||
   auth.user?.roles?.includes('TenantAdmin'),
 )
+
+const columns = computed<Column[]>(() => [
+  { key: 'member', label: 'Member' },
+  { key: 'roles', label: 'Roles' },
+  { key: 'joined', label: 'Joined' },
+  ...(isAdmin.value ? [{ key: 'actions', label: 'Actions', align: 'right' as const }] : []),
+])
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -213,11 +179,6 @@ function initials(m: TenantMemberDto) {
 function fmtDate(s: string) {
   return new Date(s).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
-function roleClass(r: string) {
-  if (r === 'TenantAdmin' || r === 'InstanceAdmin') return 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400'
-  return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-}
-
 async function load() {
   loading.value = true
   error.value = null
@@ -238,9 +199,11 @@ async function doInvite() {
     await inviteMember({ email: invite.value.email.trim(), roles: [invite.value.role] })
     showInviteModal.value = false
     invite.value = { email: '', role: 'TenantMember' }
+    toast.success('Invitation sent')
     await load()
   } catch (e: any) {
     inviteError.value = e?.message ?? 'Failed to send invitation.'
+    toast.error(inviteError.value)
   } finally {
     inviting.value = false
   }
@@ -262,9 +225,11 @@ async function doEditRoles() {
   try {
     await updateMemberRoles(editTarget.value.id, { roles: [editRole.value] })
     showEditModal.value = false
+    toast.success('Roles updated')
     await load()
   } catch (e: any) {
     editError.value = e?.message ?? 'Failed to update roles.'
+    toast.error(editError.value)
   } finally {
     editing.value = false
   }
@@ -283,9 +248,11 @@ async function doRemove() {
   try {
     await removeMember(removeTarget.value.id)
     showRemoveModal.value = false
+    toast.success('Member removed')
     await load()
   } catch (e: any) {
     removeError.value = e?.message ?? 'Failed to remove member.'
+    toast.error(removeError.value)
   } finally {
     removing.value = false
   }

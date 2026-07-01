@@ -2,284 +2,252 @@
   <div class="space-y-6">
     <!-- Back button + title -->
     <div class="flex items-center gap-3">
-      <button
-        @click="$emit('back')"
-        class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
-      >
-        <IconArrowLeft class="w-4 h-4" />
+      <BaseButton variant="ghost" size="sm" :icon="IconArrowLeft" @click="$emit('back')">
         Back
-      </button>
-      <span class="text-gray-300 dark:text-gray-600">/</span>
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">{{ store?.name ?? '…' }}</h2>
-      <span v-if="store" class="text-xs font-mono bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded">
-        {{ store.type }}
-      </span>
+      </BaseButton>
+      <span class="text-ink-subtle">/</span>
+      <h2 class="text-lg font-semibold text-ink-strong">{{ store?.name ?? '…' }}</h2>
+      <BaseBadge v-if="store" tone="neutral" class="font-mono">{{ store.type }}</BaseBadge>
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="flex items-center gap-3 text-gray-500 dark:text-gray-400 py-8 justify-center">
-      <svg class="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-        <path class="opacity-75 fill-current" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-      </svg>
+    <div v-if="loading" class="flex items-center justify-center gap-3 py-8 text-ink-muted">
+      <Spinner :size="20" color="var(--color-accent)" />
       <span>Loading chunk store…</span>
     </div>
 
     <!-- Error -->
-    <div v-else-if="error" class="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-xl p-4 text-sm text-rose-700 dark:text-rose-400">
+    <div v-else-if="error" class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
       {{ error }}
     </div>
 
     <template v-else-if="store">
       <!-- Inner tab nav -->
-      <div class="flex gap-1 border-b border-gray-200 dark:border-gray-700">
+      <div class="flex gap-1 border-b border-hairline">
         <button
           v-for="tab in tabs"
           :key="tab.id"
           @click="activeTab = tab.id"
-          class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition"
+          class="-mb-px border-b-2 px-4 py-2 text-sm font-medium transition"
           :class="activeTab === tab.id
-            ? 'border-violet-500 text-violet-600 dark:text-violet-400'
-            : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
+            ? 'border-accent text-accent'
+            : 'border-transparent text-ink-muted hover:text-ink-strong'"
         >
           <span class="flex items-center gap-1.5">
-            <component :is="tab.icon" class="w-4 h-4" />
+            <component :is="tab.icon" class="h-4 w-4" />
             {{ tab.label }}
-            <span v-if="tab.id === 'danger'" class="text-xs bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 rounded-full font-semibold">!</span>
+            <BaseBadge v-if="tab.id === 'danger'" tone="danger" size="sm">!</BaseBadge>
           </span>
         </button>
       </div>
 
       <!-- ── Stats tab ── -->
       <div v-if="activeTab === 'stats'" class="space-y-6">
-        <div class="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-xl p-4 text-sm text-amber-700 dark:text-amber-400 flex items-center gap-2">
-          <IconAlertCircle class="w-4 h-4 shrink-0" />
+        <div class="flex items-center gap-2 rounded-card border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning">
+          <IconAlertCircle class="h-4 w-4 shrink-0" />
           Statistics are not yet available from the API. The charts below show placeholder data.
         </div>
 
         <!-- Stat cards -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-4">
-            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-2">Total Chunks</div>
-            <div class="text-2xl font-bold text-gray-800 dark:text-gray-100">{{ stats?.totalChunks ?? '—' }}</div>
-            <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">Placeholder</div>
-          </div>
-          <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-4">
-            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-2">Storage Used</div>
-            <div class="text-2xl font-bold text-gray-800 dark:text-gray-100">—</div>
-            <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">Placeholder</div>
-          </div>
-          <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-4">
-            <div class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-2">Dedup Ratio</div>
-            <div class="text-2xl font-bold text-gray-800 dark:text-gray-100">—</div>
-            <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">Placeholder</div>
-          </div>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <BaseCard density="compact">
+            <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-subtle">Total Chunks</div>
+            <div class="text-2xl font-bold text-ink-strong">{{ stats?.totalChunks ?? '—' }}</div>
+            <div class="mt-1 text-xs text-ink-muted">Placeholder</div>
+          </BaseCard>
+          <BaseCard density="compact">
+            <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-subtle">Storage Used</div>
+            <div class="text-2xl font-bold text-ink-strong">—</div>
+            <div class="mt-1 text-xs text-ink-muted">Placeholder</div>
+          </BaseCard>
+          <BaseCard density="compact">
+            <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-subtle">Dedup Ratio</div>
+            <div class="text-2xl font-bold text-ink-strong">—</div>
+            <div class="mt-1 text-xs text-ink-muted">Placeholder</div>
+          </BaseCard>
         </div>
 
         <!-- Placeholder charts -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
           <!-- Chunks over time -->
-          <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-5">
-            <div class="font-semibold text-gray-800 dark:text-gray-100 mb-1 text-sm">Chunks Ingested (last 7 days)</div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-4">Placeholder data — real stats coming soon</div>
-            <div class="flex items-end gap-1.5 h-24">
+          <BaseCard>
+            <div class="mb-1 text-sm font-semibold text-ink-strong">Chunks Ingested (last 7 days)</div>
+            <div class="mb-4 text-xs text-ink-subtle">Placeholder data — real stats coming soon</div>
+            <div class="flex h-24 items-end gap-1.5">
               <div
                 v-for="(h, i) in dummyBarData"
                 :key="i"
-                class="flex-1 bg-violet-200 dark:bg-violet-500/30 rounded-t"
+                class="flex-1 rounded-t bg-accent-soft"
                 :style="{ height: h + '%' }"
               ></div>
             </div>
-            <div class="flex justify-between text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+            <div class="mt-1.5 flex justify-between text-xs text-ink-subtle">
               <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
             </div>
-          </div>
+          </BaseCard>
 
           <!-- Storage over time -->
-          <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-5">
-            <div class="font-semibold text-gray-800 dark:text-gray-100 mb-1 text-sm">Storage Growth (last 7 days)</div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-4">Placeholder data — real stats coming soon</div>
-            <div class="flex items-end gap-1.5 h-24">
+          <BaseCard>
+            <div class="mb-1 text-sm font-semibold text-ink-strong">Storage Growth (last 7 days)</div>
+            <div class="mb-4 text-xs text-ink-subtle">Placeholder data — real stats coming soon</div>
+            <div class="flex h-24 items-end gap-1.5">
               <div
                 v-for="(h, i) in dummyGrowthData"
                 :key="i"
-                class="flex-1 bg-sky-200 dark:bg-sky-500/30 rounded-t"
+                class="flex-1 rounded-t bg-success-soft"
                 :style="{ height: h + '%' }"
               ></div>
             </div>
-            <div class="flex justify-between text-xs text-gray-400 dark:text-gray-500 mt-1.5">
+            <div class="mt-1.5 flex justify-between text-xs text-ink-subtle">
               <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
             </div>
-          </div>
+          </BaseCard>
         </div>
 
         <!-- Chunker config -->
-        <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-5">
-          <div class="font-semibold text-gray-800 dark:text-gray-100 mb-3 text-sm">Chunker Configuration</div>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+        <BaseCard>
+          <div class="mb-3 text-sm font-semibold text-ink-strong">Chunker Configuration</div>
+          <div class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
             <div>
-              <div class="text-xs text-gray-500 dark:text-gray-400 mb-0.5">Type</div>
-              <div class="font-medium text-gray-800 dark:text-gray-100 font-mono">{{ store.chunker?.type ?? '—' }}</div>
+              <div class="mb-0.5 text-xs text-ink-muted">Type</div>
+              <div class="font-mono font-medium text-ink-strong">{{ store.chunker?.type ?? '—' }}</div>
             </div>
             <div>
-              <div class="text-xs text-gray-500 dark:text-gray-400 mb-0.5">Min Chunk</div>
-              <div class="font-medium text-gray-800 dark:text-gray-100">{{ formatBytes(store.chunker?.minChunkSize) }}</div>
+              <div class="mb-0.5 text-xs text-ink-muted">Min Chunk</div>
+              <div class="font-medium text-ink-strong">{{ formatBytes(store.chunker?.minChunkSize) }}</div>
             </div>
             <div>
-              <div class="text-xs text-gray-500 dark:text-gray-400 mb-0.5">Avg Chunk</div>
-              <div class="font-medium text-gray-800 dark:text-gray-100">{{ formatBytes(store.chunker?.avgChunkSize) }}</div>
+              <div class="mb-0.5 text-xs text-ink-muted">Avg Chunk</div>
+              <div class="font-medium text-ink-strong">{{ formatBytes(store.chunker?.avgChunkSize) }}</div>
             </div>
             <div>
-              <div class="text-xs text-gray-500 dark:text-gray-400 mb-0.5">Max Chunk</div>
-              <div class="font-medium text-gray-800 dark:text-gray-100">{{ formatBytes(store.chunker?.maxChunkSize) }}</div>
+              <div class="mb-0.5 text-xs text-ink-muted">Max Chunk</div>
+              <div class="font-medium text-ink-strong">{{ formatBytes(store.chunker?.maxChunkSize) }}</div>
             </div>
           </div>
-        </div>
+        </BaseCard>
       </div>
 
       <!-- ── Settings tab ── -->
       <div v-else-if="activeTab === 'settings'" class="space-y-5">
-        <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-5">
-          <h3 class="font-semibold text-gray-800 dark:text-gray-100 mb-4 text-sm">Chunk Store Details</h3>
-          <div class="space-y-4 max-w-lg">
+        <BaseCard>
+          <h3 class="mb-4 text-sm font-semibold text-ink-strong">Chunk Store Details</h3>
+          <div class="max-w-lg space-y-4">
             <div>
-              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">ID</label>
-              <div class="font-mono text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 px-3 py-2 rounded-lg select-all">{{ store.id }}</div>
+              <label class="mb-1 block text-xs font-medium text-ink-subtle">ID</label>
+              <div class="select-all rounded-control bg-raised px-3 py-2 font-mono text-xs text-ink-muted">{{ store.id }}</div>
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Name</label>
-              <div class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ store.name }}</div>
+              <label class="mb-1 block text-xs font-medium text-ink-subtle">Name</label>
+              <div class="text-sm font-medium text-ink-strong">{{ store.name }}</div>
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Type</label>
-              <div class="text-sm font-medium text-gray-800 dark:text-gray-100 font-mono">{{ store.type }}</div>
+              <label class="mb-1 block text-xs font-medium text-ink-subtle">Type</label>
+              <div class="font-mono text-sm font-medium text-ink-strong">{{ store.type }}</div>
             </div>
           </div>
-        </div>
+        </BaseCard>
 
-        <div v-if="store.chunker" class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-5">
-          <h3 class="font-semibold text-gray-800 dark:text-gray-100 mb-4 text-sm">Chunker Settings</h3>
-          <div class="grid grid-cols-2 gap-4 max-w-lg text-sm">
+        <BaseCard v-if="store.chunker">
+          <h3 class="mb-4 text-sm font-semibold text-ink-strong">Chunker Settings</h3>
+          <div class="grid max-w-lg grid-cols-2 gap-4 text-sm">
             <div>
-              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Type</label>
-              <div class="font-mono text-gray-800 dark:text-gray-100">{{ store.chunker.type }}</div>
+              <label class="mb-1 block text-xs font-medium text-ink-subtle">Type</label>
+              <div class="font-mono text-ink-strong">{{ store.chunker.type }}</div>
             </div>
             <div v-if="store.chunker.minChunkSize != null">
-              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Min Chunk Size</label>
-              <div class="text-gray-800 dark:text-gray-100">{{ formatBytes(store.chunker.minChunkSize) }}</div>
+              <label class="mb-1 block text-xs font-medium text-ink-subtle">Min Chunk Size</label>
+              <div class="text-ink-strong">{{ formatBytes(store.chunker.minChunkSize) }}</div>
             </div>
             <div v-if="store.chunker.avgChunkSize != null">
-              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Avg Chunk Size</label>
-              <div class="text-gray-800 dark:text-gray-100">{{ formatBytes(store.chunker.avgChunkSize) }}</div>
+              <label class="mb-1 block text-xs font-medium text-ink-subtle">Avg Chunk Size</label>
+              <div class="text-ink-strong">{{ formatBytes(store.chunker.avgChunkSize) }}</div>
             </div>
             <div v-if="store.chunker.maxChunkSize != null">
-              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Max Chunk Size</label>
-              <div class="text-gray-800 dark:text-gray-100">{{ formatBytes(store.chunker.maxChunkSize) }}</div>
+              <label class="mb-1 block text-xs font-medium text-ink-subtle">Max Chunk Size</label>
+              <div class="text-ink-strong">{{ formatBytes(store.chunker.maxChunkSize) }}</div>
             </div>
           </div>
-        </div>
+        </BaseCard>
       </div>
 
       <!-- ── Danger Zone tab ── -->
       <div v-else-if="activeTab === 'danger'" class="space-y-4">
         <!-- Warning banner -->
-        <div class="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-xl p-5 flex items-start gap-3">
-          <IconAlertTriangle class="text-rose-500 w-5 h-5 shrink-0 mt-0.5" />
+        <div class="flex items-start gap-3 rounded-card border border-danger/20 bg-danger-soft p-5">
+          <IconAlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-danger" />
           <div>
-            <h3 class="font-semibold text-rose-800 dark:text-rose-300 text-sm mb-1">Danger Zone</h3>
-            <p class="text-sm text-rose-700 dark:text-rose-400">
+            <h3 class="mb-1 text-sm font-semibold text-danger">Danger Zone</h3>
+            <p class="text-sm text-danger/90">
               These operations are destructive or long-running. They cannot be undone. Proceed with caution.
             </p>
           </div>
         </div>
 
         <!-- Rebuild -->
-        <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-5 border border-rose-200 dark:border-rose-500/30">
+        <div class="rounded-card border border-danger/20 bg-card p-5">
           <div class="flex items-start justify-between gap-4">
             <div>
-              <h4 class="font-semibold text-gray-800 dark:text-gray-100 text-sm">Rebuild Chunk Store</h4>
-              <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              <h4 class="text-sm font-semibold text-ink-strong">Rebuild Chunk Store</h4>
+              <p class="mt-1 text-sm text-ink-muted">
                 Scans the underlying storage and rewrites the pack and index files. Use this to recover from corruption or after manual storage changes.
               </p>
             </div>
-            <button
-              @click="confirmAction('rebuild')"
-              :disabled="actionInProgress"
-              class="shrink-0 btn bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-60"
-            >
+            <BaseButton variant="danger" class="shrink-0" :disabled="actionInProgress" @click="confirmAction('rebuild')">
               Rebuild
-            </button>
+            </BaseButton>
           </div>
         </div>
 
         <!-- Upgrade -->
-        <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-5 border border-rose-200 dark:border-rose-500/30">
+        <div class="rounded-card border border-danger/20 bg-card p-5">
           <div class="flex items-start justify-between gap-4">
             <div>
-              <h4 class="font-semibold text-gray-800 dark:text-gray-100 text-sm">Upgrade Releases</h4>
-              <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              <h4 class="text-sm font-semibold text-ink-strong">Upgrade Releases</h4>
+              <p class="mt-1 text-sm text-ink-muted">
                 Upgrades all releases in this chunk store to the latest format version. This may take a long time on large stores.
               </p>
             </div>
-            <button
-              @click="confirmAction('upgrade')"
-              :disabled="actionInProgress"
-              class="shrink-0 btn bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-60"
-            >
+            <BaseButton variant="danger" class="shrink-0" :disabled="actionInProgress" @click="confirmAction('upgrade')">
               Upgrade
-            </button>
+            </BaseButton>
           </div>
         </div>
 
         <!-- Action result -->
-        <div v-if="actionError" class="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-xl p-3 text-sm text-rose-700 dark:text-rose-400">
+        <div v-if="actionError" class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
           {{ actionError }}
         </div>
-        <div v-if="actionSuccess" class="bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 rounded-xl p-3 text-sm text-green-700 dark:text-green-400 flex items-center gap-2">
-          <IconCircleCheck class="w-4 h-4 shrink-0" />
+        <div v-if="actionSuccess" class="flex items-center gap-2 rounded-card border border-success/25 bg-success-soft px-4 py-3 text-sm text-success">
+          <IconCircleCheck class="h-4 w-4 shrink-0" />
           {{ actionSuccess }}
         </div>
       </div>
     </template>
 
     <!-- Confirm modal -->
-    <div
-      v-if="confirmModal.visible"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm"
-    >
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-10 h-10 rounded-full bg-rose-100 dark:bg-rose-500/20 flex items-center justify-center shrink-0">
-            <IconAlertTriangle class="text-rose-500 w-5 h-5" />
+    <BaseModal v-model:open="confirmModal.visible" size="sm">
+      <template #header>
+        <div class="flex items-center gap-3">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger-soft">
+            <IconAlertTriangle class="h-5 w-5 text-danger" />
           </div>
-          <h3 class="font-semibold text-gray-800 dark:text-gray-100">Confirm {{ confirmModal.action === 'rebuild' ? 'Rebuild' : 'Upgrade' }}</h3>
+          <h3 class="text-base font-semibold text-ink-strong">Confirm {{ confirmModal.action === 'rebuild' ? 'Rebuild' : 'Upgrade' }}</h3>
         </div>
-        <p class="text-sm text-gray-600 dark:text-gray-400 mb-5">
-          Are you sure you want to {{ confirmModal.action === 'rebuild' ? 'rebuild' : 'upgrade' }} this chunk store?
-          This operation may take a long time and cannot be undone.
-        </p>
-        <div class="flex gap-3">
-          <button
-            @click="runAction"
-            :disabled="actionInProgress"
-            class="flex-1 btn bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-60"
-          >
-            <svg v-if="actionInProgress" class="animate-spin w-4 h-4 inline mr-1" viewBox="0 0 24 24" fill="none">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-              <path class="opacity-75 fill-current" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-            </svg>
-            {{ actionInProgress ? 'Running…' : 'Confirm' }}
-          </button>
-          <button
-            @click="confirmModal.visible = false"
-            :disabled="actionInProgress"
-            class="flex-1 btn bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-gray-300 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-60"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
+      </template>
+      <p class="text-sm text-ink-muted">
+        Are you sure you want to {{ confirmModal.action === 'rebuild' ? 'rebuild' : 'upgrade' }} this chunk store?
+        This operation may take a long time and cannot be undone.
+      </p>
+      <template #footer>
+        <BaseButton variant="secondary" :disabled="actionInProgress" @click="confirmModal.visible = false">
+          Cancel
+        </BaseButton>
+        <BaseButton variant="danger" :loading="actionInProgress" :disabled="actionInProgress" @click="runAction">
+          {{ actionInProgress ? 'Running…' : 'Confirm' }}
+        </BaseButton>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -302,9 +270,14 @@ import {
   type ChunkStoreDetailDto,
   type ChunkStoreStatsDto,
 } from '@/api/chunkStores'
+import Spinner from '@/shared/components/feedback/Spinner.vue'
+import { BaseBadge, BaseButton, BaseCard, BaseModal } from '@/shared/components/ui'
+import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ storeId: string }>()
 defineEmits<{ (e: 'back'): void }>()
+
+const toast = useToast()
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -359,8 +332,10 @@ async function runAction() {
       await upgradeChunkStore(props.storeId)
       actionSuccess.value = 'Upgrade completed successfully.'
     }
+    toast.success(actionSuccess.value)
   } catch (e: any) {
     actionError.value = e.message || `Failed to ${confirmModal.action} chunk store.`
+    toast.error(actionError.value || `Failed to ${confirmModal.action} chunk store.`)
   } finally {
     actionInProgress.value = false
     confirmModal.visible = false

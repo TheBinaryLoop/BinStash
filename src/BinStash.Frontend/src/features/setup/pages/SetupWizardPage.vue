@@ -2,43 +2,27 @@
   <div class="flex-1 flex flex-col">
     <!-- Progress bar -->
     <div class="px-4 pt-12 pb-8">
-      <div class="max-w-md mx-auto w-full">
-        <div class="relative">
-          <div
-            class="absolute left-0 top-1/2 -mt-px w-full h-0.5 bg-gray-200 dark:bg-gray-700/60"
-            aria-hidden="true"
-          ></div>
-          <ol class="relative flex justify-between w-full">
-            <li v-for="(step, i) in steps" :key="step.key">
-              <div
-                class="flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold"
-                :class="
-                  i === stepIndex
-                    ? 'bg-violet-500 text-white'
-                    : 'bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700/60'
-                "
-              >
-                {{ i + 1 }}
-              </div>
-            </li>
-          </ol>
-        </div>
+      <div class="mx-auto w-full max-w-3xl">
+        <Stepper :steps="stepLabels" :current="stepIndex" :show-labels="false" />
       </div>
     </div>
 
     <!-- Card -->
     <div class="px-4 py-8 flex-1 flex flex-col">
-      <div
-        class="max-w-none mx-auto w-full bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 flex flex-col gap-4"
-      >
-        <h1 class="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2 text-center">
+      <div class="mx-auto w-full max-w-none rounded-card border border-hairline bg-card p-8 shadow-sm flex flex-col gap-4">
+        <h1 class="mb-2 text-center text-2xl font-bold text-ink-strong">
           BinStash Setup Wizard
         </h1>
 
-        <div v-if="loading" class="setup-loading text-center">Loading...</div>
+        <div v-if="loading" class="flex items-center justify-center py-8">
+          <Spinner :size="24" color="var(--color-accent)" />
+        </div>
 
         <div v-else>
-          <div v-if="error" class="setup-error text-center mb-2">{{ error }}</div>
+          <div
+            v-if="error"
+            class="mb-4 rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-center text-sm text-danger"
+          >{{ error }}</div>
           <component :is="currentStepComponent" />
         </div>
       </div>
@@ -50,6 +34,8 @@
 import { onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSetupStore } from '@/features/setup/store/setup.store'
+import { Stepper } from '@/shared/components/ui'
+import Spinner from '@/shared/components/feedback/Spinner.vue'
 
 import ClaimStep from '@/features/setup/components/steps/ClaimStep.vue'
 import TenancyStep from '@/features/setup/components/steps/TenancyStep.vue'
@@ -76,6 +62,8 @@ const steps = [
   { key: 'review', title: 'Review', component: ReviewStep },
   { key: 'done', title: 'Finish', component: FinishStep },
 ]
+
+const stepLabels = steps.map(s => s.title)
 
 function getStepIndex(status: any): number {
   if (!status) return 0

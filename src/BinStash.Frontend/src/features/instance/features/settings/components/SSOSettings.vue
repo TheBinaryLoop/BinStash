@@ -2,188 +2,166 @@
   <div class="space-y-6">
     <!-- Section header -->
     <div>
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">Single Sign-On (SSO) Configuration</h2>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+      <h2 class="text-lg font-semibold text-ink-strong">Single Sign-On (SSO) Configuration</h2>
+      <p class="mt-0.5 text-sm text-ink-muted">
         Configure a federated authentication provider. Users will be able to sign in using the selected provider.
       </p>
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="flex items-center gap-3 text-gray-500 dark:text-gray-400 py-8 justify-center">
-      <Spinner />
+    <div v-if="loading" class="flex items-center justify-center gap-3 py-8 text-ink-muted">
+      <Spinner :size="20" color="var(--color-accent)" />
       <span>Loading SSO configuration…</span>
     </div>
 
     <!-- Load error -->
     <div
       v-else-if="loadError"
-      class="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-xl p-4 text-sm text-rose-700 dark:text-rose-400"
+      class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
     >
       {{ loadError }}
     </div>
 
     <template v-else>
-      <div class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-6 border border-gray-100 dark:border-gray-700/60 space-y-6">
+      <BaseCard>
+        <div class="space-y-6">
 
-        <!-- Provider selector -->
-        <div>
-          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-            SSO Provider
-          </label>
-          <div class="flex flex-wrap gap-2">
-            <button
-              type="button"
-              @click="config.provider = null"
-              class="px-4 py-2 rounded-lg text-sm font-medium border transition"
-              :class="config.provider === null
-                ? 'bg-violet-500 border-violet-500 text-white'
-                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-500'"
-            >
-              None
-            </button>
-            <button
-              v-for="p in SSO_PROVIDERS"
-              :key="p.id"
-              type="button"
-              @click="config.provider = p.id"
-              class="px-4 py-2 rounded-lg text-sm font-medium border transition"
-              :class="config.provider === p.id
-                ? 'bg-violet-500 border-violet-500 text-white'
-                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-500'"
-            >
-              {{ p.label }}
-            </button>
-          </div>
-          <p class="mt-1.5 text-xs text-gray-400 dark:text-gray-500">
-            Select <strong>None</strong> to disable SSO. Users will authenticate with local credentials only.
-          </p>
-        </div>
-
-        <template v-if="config.provider !== null">
-          <!-- Provider-specific config -->
-          <div class="pt-2 border-t border-gray-100 dark:border-gray-700/60 space-y-2">
-            <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-              {{ activeProviderLabel }} Settings
-            </h3>
-            <LDAPConfigForm
-              v-if="config.provider === 'ldap'"
-              v-model="config.ldap"
-              :tenancyMode="tenancyMode"
-              :tenants="tenants"
-            />
-            <OIDCConfigForm   v-else-if="config.provider === 'oidc'"   v-model="config.oidc" />
-            <EntraIDConfigForm v-else-if="config.provider === 'entra'" v-model="config.entra" />
-            <GoogleConfigForm v-else-if="config.provider === 'google'" v-model="config.google" />
-            <GitHubConfigForm v-else-if="config.provider === 'github'" v-model="config.github" />
-          </div>
-        </template>
-
-        <!-- No-provider notice -->
-        <div
-          v-else
-          class="pt-2 border-t border-gray-100 dark:border-gray-700/60"
-        >
-          <p class="text-sm text-gray-500 dark:text-gray-400 italic">
-            SSO authentication is disabled.
-          </p>
-        </div>
-
-        <!-- Save error -->
-        <div
-          v-if="saveError"
-          class="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 rounded-xl p-3 text-sm text-rose-700 dark:text-rose-400"
-        >
-          {{ saveError }}
-        </div>
-
-        <!-- Actions -->
-        <div class="flex items-center gap-3 pt-2 border-t border-gray-100 dark:border-gray-700/60">
-          <button
-            type="button"
-            @click="save"
-            :disabled="saving"
-            class="btn bg-violet-500 hover:bg-violet-600 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-60 flex items-center gap-2"
-          >
-            <Spinner v-if="saving" class="w-4 h-4" />
-            {{ saving ? 'Saving…' : 'Save' }}
-          </button>
-          <button
-            type="button"
-            @click="reset"
-            :disabled="saving"
-            class="btn bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-60"
-          >
-            Reset
-          </button>
-        </div>
-
-        <!-- ── Test Connection ─────────────────────────────────────────── -->
-        <div
-          v-if="serverSnapshot.provider !== null"
-          class="pt-4 border-t border-gray-100 dark:border-gray-700/60 space-y-3"
-        >
+          <!-- Provider selector -->
           <div>
-            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">Test Connection</h3>
-            <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-              <template v-if="serverSnapshot.provider === 'ldap'">
-                Verify the saved LDAP configuration by performing a test bind against the directory server.
-              </template>
-              <template v-else>
-                Verify the saved {{ activeServerProviderLabel }} configuration by fetching the provider's
-                discovery / metadata endpoint.
-              </template>
+            <label class="mb-1.5 block text-sm font-medium text-ink-strong">
+              SSO Provider
+            </label>
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                @click="config.provider = null"
+                class="h-9 rounded-control border px-4 text-sm font-medium transition"
+                :class="config.provider === null
+                  ? 'border-accent bg-accent text-white'
+                  : 'border-hairline bg-card text-ink-muted hover:bg-raised hover:text-ink-strong'"
+              >
+                None
+              </button>
+              <button
+                v-for="p in SSO_PROVIDERS"
+                :key="p.id"
+                type="button"
+                @click="config.provider = p.id"
+                class="h-9 rounded-control border px-4 text-sm font-medium transition"
+                :class="config.provider === p.id
+                  ? 'border-accent bg-accent text-white'
+                  : 'border-hairline bg-card text-ink-muted hover:bg-raised hover:text-ink-strong'"
+              >
+                {{ p.label }}
+              </button>
+            </div>
+            <p class="mt-1.5 text-xs text-ink-subtle">
+              Select <strong>None</strong> to disable SSO. Users will authenticate with local credentials only.
             </p>
           </div>
-          <div>
-            <button
-              type="button"
-              @click="runTest"
-              :disabled="testing"
-              class="btn bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:border-violet-300 dark:hover:border-violet-500 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-60 flex items-center gap-2"
-            >
-              <Spinner v-if="testing" class="w-4 h-4" />
-              <IconPlugConnected v-else class="w-4 h-4" />
-              {{ testing ? 'Testing…' : 'Test Connection' }}
-            </button>
+
+          <template v-if="config.provider !== null">
+            <!-- Provider-specific config -->
+            <div class="space-y-2 border-t border-hairline pt-4">
+              <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-subtle">
+                {{ activeProviderLabel }} Settings
+              </h3>
+              <LDAPConfigForm
+                v-if="config.provider === 'ldap'"
+                v-model="config.ldap"
+                :tenancyMode="tenancyMode"
+                :tenants="tenants"
+              />
+              <OIDCConfigForm   v-else-if="config.provider === 'oidc'"   v-model="config.oidc" />
+              <EntraIDConfigForm v-else-if="config.provider === 'entra'" v-model="config.entra" />
+              <GoogleConfigForm v-else-if="config.provider === 'google'" v-model="config.google" />
+              <GitHubConfigForm v-else-if="config.provider === 'github'" v-model="config.github" />
+            </div>
+          </template>
+
+          <!-- No-provider notice -->
+          <div v-else class="border-t border-hairline pt-4">
+            <p class="text-sm italic text-ink-muted">
+              SSO authentication is disabled.
+            </p>
           </div>
-          <!-- Test result -->
+
+          <!-- Save error -->
           <div
-            v-if="testResult"
-            class="rounded-lg px-4 py-3 text-sm flex items-start gap-2"
-            :class="testResult.success
-              ? 'bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/30 text-green-700 dark:text-green-400'
-              : 'bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-400'"
+            v-if="saveError"
+            class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
           >
-            <IconCircleCheck v-if="testResult.success" class="w-4 h-4 shrink-0 mt-0.5" />
-            <IconAlertCircle v-else class="w-4 h-4 shrink-0 mt-0.5" />
+            {{ saveError }}
+          </div>
+
+          <!-- Actions -->
+          <div class="flex items-center gap-3 border-t border-hairline pt-4">
+            <BaseButton :loading="saving" :disabled="saving" @click="save">
+              {{ saving ? 'Saving…' : 'Save' }}
+            </BaseButton>
+            <BaseButton variant="secondary" :disabled="saving" @click="reset">
+              Reset
+            </BaseButton>
+          </div>
+
+          <!-- ── Test Connection ──────────────────────────────────────────── -->
+          <div
+            v-if="serverSnapshot.provider !== null"
+            class="space-y-3 border-t border-hairline pt-4"
+          >
             <div>
-              <span v-if="testResult.success">
-                Connection test passed successfully.
-              </span>
-              <template v-else>
-                <span>Connection test failed.</span>
-                <div
-                  v-if="testResult.providerError"
-                  class="mt-1 font-mono text-xs break-all opacity-80"
-                >
-                  {{ testResult.providerError }}
-                </div>
-              </template>
+              <h3 class="text-sm font-medium text-ink-strong">Test Connection</h3>
+              <p class="mt-0.5 text-xs text-ink-subtle">
+                <template v-if="serverSnapshot.provider === 'ldap'">
+                  Verify the saved LDAP configuration by performing a test bind against the directory server.
+                </template>
+                <template v-else>
+                  Verify the saved {{ activeServerProviderLabel }} configuration by fetching the provider's
+                  discovery / metadata endpoint.
+                </template>
+              </p>
+            </div>
+            <div>
+              <BaseButton
+                variant="secondary"
+                :icon="IconPlugConnected"
+                :loading="testing"
+                :disabled="testing"
+                @click="runTest"
+              >
+                {{ testing ? 'Testing…' : 'Test Connection' }}
+              </BaseButton>
+            </div>
+            <!-- Test result -->
+            <div
+              v-if="testResult"
+              class="flex items-start gap-2 rounded-card px-4 py-3 text-sm"
+              :class="testResult.success
+                ? 'border border-success/25 bg-success-soft text-success'
+                : 'border border-danger/20 bg-danger-soft text-danger'"
+            >
+              <IconCircleCheck v-if="testResult.success" class="mt-0.5 h-4 w-4 shrink-0" />
+              <IconAlertCircle v-else class="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <span v-if="testResult.success">
+                  Connection test passed successfully.
+                </span>
+                <template v-else>
+                  <span>Connection test failed.</span>
+                  <div
+                    v-if="testResult.providerError"
+                    class="mt-1 break-all font-mono text-xs opacity-80"
+                  >
+                    {{ testResult.providerError }}
+                  </div>
+                </template>
+              </div>
             </div>
           </div>
+
         </div>
-
-      </div>
+      </BaseCard>
     </template>
-
-    <!-- Success toast -->
-    <div
-      v-if="successMsg"
-      class="fixed bottom-4 right-4 z-50 bg-green-500 text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2"
-    >
-      <IconCircleCheck class="w-4 h-4 shrink-0" />
-      {{ successMsg }}
-    </div>
   </div>
 </template>
 
@@ -191,6 +169,8 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { IconCircleCheck, IconAlertCircle, IconPlugConnected } from '@tabler/icons-vue'
 import Spinner from '@/shared/components/feedback/Spinner.vue'
+import { BaseButton, BaseCard } from '@/shared/components/ui'
+import { useToast } from '@/composables/useToast'
 import LDAPConfigForm from '@/features/instance/features/settings/forms/sso/LDAPConfigForm.vue'
 import OIDCConfigForm from '@/features/instance/features/settings/forms/sso/OIDCConfigForm.vue'
 import EntraIDConfigForm from '@/features/instance/features/settings/forms/sso/EntraIDConfigForm.vue'
@@ -210,6 +190,8 @@ import {
 import { parseApiValidationError } from '@/utils/apiValidation'
 import { listTenantsForMember } from '@/api/tenants'
 import type { TenantSummaryDto } from '@/stores/tenant'
+
+const toast = useToast()
 
 // ── Provider registry ─────────────────────────────────────────────────────────
 // To add a new provider:
@@ -231,7 +213,6 @@ const loading    = ref(true)
 const loadError  = ref<string | null>(null)
 const saving     = ref(false)
 const saveError  = ref<string | null>(null)
-const successMsg = ref<string | null>(null)
 
 const testing    = ref(false)
 const testResult = ref<TestSSOResult | null>(null)
@@ -261,7 +242,7 @@ const activeServerProviderLabel = computed(
   () => SSO_PROVIDERS.find(p => p.id === serverSnapshot.provider)?.label ?? '',
 )
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────────
 
 /** Deep-copies the LDAP config so nested permissionMapping arrays are independent. */
 function deepCopyLdap(src: SSOConfig['ldap']): SSOConfig['ldap'] {
@@ -295,12 +276,7 @@ function takeSnapshot(): SSOConfig {
   }
 }
 
-function showSuccess(msg: string) {
-  successMsg.value = msg
-  setTimeout(() => (successMsg.value = null), 3000)
-}
-
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
+// ── Lifecycle ───────────────────────────────────────────────────────────────────
 
 async function load() {
   loading.value = true
@@ -329,7 +305,7 @@ async function load() {
   }
 }
 
-// ── Actions ───────────────────────────────────────────────────────────────────
+// ── Actions ─────────────────────────────────────────────────────────────────────
 
 function reset() {
   applySnapshot(serverSnapshot)
@@ -365,10 +341,11 @@ async function save() {
     await saveSSOConfig(takeSnapshot())
     serverSnapshot = takeSnapshot()
     testResult.value = null
-    showSuccess('SSO configuration saved.')
+    toast.success('SSO configuration saved.')
   } catch (e: unknown) {
     const parsed = parseApiValidationError(e, 'Failed to save SSO configuration.')
     saveError.value = parsed.generalError
+    toast.error(parsed.generalError || 'Failed to save SSO configuration.')
   } finally {
     saving.value = false
   }
@@ -379,8 +356,14 @@ async function runTest() {
   testing.value = true
   try {
     testResult.value = await testSSOConnection()
+    if (testResult.value?.success) {
+      toast.success('Connection test passed.')
+    } else {
+      toast.error('Connection test failed.')
+    }
   } catch (e: any) {
     testResult.value = { success: false, providerError: e.message || 'Unexpected error.' }
+    toast.error('Connection test failed.')
   } finally {
     testing.value = false
   }

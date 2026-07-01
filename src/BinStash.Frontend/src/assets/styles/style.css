@@ -1,5 +1,4 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=fallback');
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=fallback');
 
 @import 'tailwindcss';
 @import './additional-styles/flatpickr.css';
@@ -121,14 +120,13 @@
   --breakpoint-xs: 480px;
 }
 
-/* ── BinStash redesign tokens (phase2) ────────────────────────────────────
-   Semantic tokens lifted from the designer's Figma file (file
-   9f72i09eKORuUOiaw4Io7y). The design bound no Figma variables, so values are
-   read straight off the frames. Dark values are exact from the design; light
-   values are inferred neutral counterparts. Each token reads a --ds-* custom
-   property so a single utility (e.g. `bg-card`) adapts to the `.dark` class.
-   `inline` makes the generated utilities reference the variable directly so
-   they stay reactive to the runtime theme switch. */
+/* ── BinStash "Clean Studio" design tokens ────────────────────────────────
+   Dark-first, calm and minimal. Each semantic utility (e.g. `bg-card`,
+   `text-ink-muted`, `border-hairline`) reads a `--ds-*` custom property so it
+   adapts automatically to the `.dark` class via CSS-variable inheritance.
+   `@theme inline` makes the generated utilities reference the variable
+   directly so they stay reactive to the runtime theme switch. Dark is the
+   primary palette and the default-on-load theme; light is the secondary. */
 @theme inline {
   --color-canvas: var(--ds-canvas);
   --color-panel: var(--ds-panel);
@@ -141,6 +139,7 @@
   --color-ink-subtle: var(--ds-ink-subtle);
 
   --color-accent: var(--ds-accent);
+  --color-accent-hover: var(--ds-accent-hover);
   --color-accent-soft: var(--ds-accent-soft);
   --color-brand-from: var(--ds-brand-from);
   --color-brand-to: var(--ds-brand-to);
@@ -152,59 +151,64 @@
   --color-danger: var(--ds-danger);
   --color-danger-soft: var(--ds-danger-soft);
 
-  --radius-panel: 36px;
-  --radius-card: 28px;
+  --radius-panel: 16px;
+  --radius-card: 14px;
   --radius-control: 10px;
 
-  --font-montserrat: "Montserrat", "Inter", sans-serif;
+  /* Legacy `font-montserrat` usages now resolve to Inter (single typeface). */
+  --font-montserrat: "Inter", sans-serif;
 }
 
+/* Light mode (secondary): warm-neutral canvas, crisp white cards. */
 :root {
-  --ds-canvas: #eef1f6;
+  --ds-canvas: #f7f7f8;
   --ds-panel: #ffffff;
   --ds-card: #ffffff;
-  --ds-raised: #f6f8fb;
-  --ds-hairline: #e3e8f0;
+  --ds-raised: #f4f4f5;
+  --ds-hairline: #e7e7eb;
 
-  --ds-ink-strong: #0f172a;
-  --ds-ink-muted: #64748b;
-  --ds-ink-subtle: #94a3b8;
+  --ds-ink-strong: #18181b;
+  --ds-ink-muted: #71717a;
+  --ds-ink-subtle: #a1a1aa;
 
-  --ds-accent: #7c86ff;
-  --ds-accent-soft: rgb(124 134 255 / 0.12);
+  --ds-accent: #6d5cff;
+  --ds-accent-hover: #5b49f0;
+  --ds-accent-soft: rgb(109 92 255 / 0.10);
   --ds-brand-from: #615fff;
   --ds-brand-to: #9810fa;
 
-  --ds-success: #00bc7d;
-  --ds-success-soft: rgb(0 188 125 / 0.15);
-  --ds-warning: #ffb900;
-  --ds-warning-soft: rgb(255 185 0 / 0.15);
-  --ds-danger: #fb2c36;
-  --ds-danger-soft: rgb(251 44 54 / 0.15);
+  --ds-success: #16a34a;
+  --ds-success-soft: rgb(22 163 74 / 0.12);
+  --ds-warning: #d97706;
+  --ds-warning-soft: rgb(217 119 6 / 0.12);
+  --ds-danger: #dc2626;
+  --ds-danger-soft: rgb(220 38 38 / 0.12);
 }
 
+/* Dark mode (primary + default on load): soft near-black neutral. */
 .dark {
-  --ds-canvas: #090e1e;
-  --ds-panel: #101935;
-  --ds-card: #0c112d;
-  --ds-raised: #19284f;
-  --ds-hairline: #1e2939;
+  --ds-canvas: #0a0a0b;
+  --ds-panel: #151518;
+  --ds-card: #151518;
+  --ds-raised: #1d1d21;
+  --ds-hairline: #2a2a30;
 
-  --ds-ink-strong: #ffffff;
-  --ds-ink-muted: #99a1af;
-  --ds-ink-subtle: #5e6778;
+  --ds-ink-strong: #fafafa;
+  --ds-ink-muted: #a1a1aa;
+  --ds-ink-subtle: #71717a;
 
-  --ds-accent: #7c86ff;
-  --ds-accent-soft: rgb(124 134 255 / 0.15);
+  --ds-accent: #7c6cff;
+  --ds-accent-hover: #6d5cff;
+  --ds-accent-soft: rgb(124 108 255 / 0.16);
   --ds-brand-from: #615fff;
   --ds-brand-to: #9810fa;
 
-  --ds-success: #00bc7d;
-  --ds-success-soft: rgb(0 188 125 / 0.15);
-  --ds-warning: #ffb900;
-  --ds-warning-soft: rgb(255 185 0 / 0.15);
-  --ds-danger: #fb2c36;
-  --ds-danger-soft: rgb(251 44 54 / 0.15);
+  --ds-success: #22c55e;
+  --ds-success-soft: rgb(34 197 94 / 0.16);
+  --ds-warning: #f59e0b;
+  --ds-warning-soft: rgb(245 158 11 / 0.16);
+  --ds-danger: #f87171;
+  --ds-danger-soft: rgb(248 113 113 / 0.16);
 }
 
 /*

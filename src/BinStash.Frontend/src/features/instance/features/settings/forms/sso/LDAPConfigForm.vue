@@ -2,64 +2,57 @@
   <div class="space-y-4">
     <!-- URL -->
     <div>
-      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-        LDAP URL <span class="text-rose-500">*</span>
-      </label>
-      <input
-        :value="modelValue.url"
-        @input="update('url', ($event.target as HTMLInputElement).value)"
+      <BaseInput
+        :model-value="modelValue.url"
+        @update:model-value="update('url', String($event ?? ''))"
+        label="LDAP URL"
+        required
         type="text"
         placeholder="ldap://server.example.com:389 or ldaps://…"
-        class="form-input w-full text-sm"
       />
-      <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+      <p class="mt-1 text-xs text-ink-subtle">
         Use <code class="font-mono">ldaps://</code> for encrypted connections (port 636 is typical).
       </p>
     </div>
 
     <!-- Bind DN + Bind Password row -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div>
-        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-          Bind DN
-        </label>
-        <input
-          :value="modelValue.bindDN"
-          @input="update('bindDN', ($event.target as HTMLInputElement).value)"
+        <BaseInput
+          :model-value="modelValue.bindDN"
+          @update:model-value="update('bindDN', String($event ?? ''))"
+          label="Bind DN"
           type="text"
           placeholder="cn=admin,dc=example,dc=com"
           autocomplete="off"
-          class="form-input w-full text-sm"
         />
-        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+        <p class="mt-1 text-xs text-ink-subtle">
           Leave blank to use anonymous bind.
         </p>
       </div>
       <div>
-        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-          Bind Password
-        </label>
-        <div class="relative">
-          <input
-            :value="modelValue.bindPassword"
-            @input="update('bindPassword', ($event.target as HTMLInputElement).value)"
-            :type="showPassword ? 'text' : 'password'"
-            placeholder="••••••••"
-            autocomplete="new-password"
-            class="form-input w-full text-sm pr-10"
-          />
-          <button
-            type="button"
-            @click="showPassword = !showPassword"
-            class="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-            tabindex="-1"
-          >
-            <IconEye v-if="!showPassword" class="w-4 h-4" />
-            <IconEyeOff v-else class="w-4 h-4" />
-          </button>
-        </div>
-        <p v-if="isMasked(modelValue.bindPassword)" class="mt-1 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-          <IconLock class="w-3.5 h-3.5 shrink-0" />
+        <BaseInput
+          :model-value="modelValue.bindPassword"
+          @update:model-value="update('bindPassword', String($event ?? ''))"
+          label="Bind Password"
+          :type="showPassword ? 'text' : 'password'"
+          placeholder="••••••••"
+          autocomplete="new-password"
+        >
+          <template #suffix>
+            <button
+              type="button"
+              @click="showPassword = !showPassword"
+              class="flex items-center px-1 text-ink-subtle transition hover:text-ink-strong"
+              tabindex="-1"
+            >
+              <IconEye v-if="!showPassword" class="h-4 w-4" />
+              <IconEyeOff v-else class="h-4 w-4" />
+            </button>
+          </template>
+        </BaseInput>
+        <p v-if="isMasked(modelValue.bindPassword)" class="mt-1 flex items-center gap-1 text-xs text-warning">
+          <IconLock class="h-3.5 w-3.5 shrink-0" />
           A password is saved. Enter a new value to replace it, or leave as-is.
         </p>
       </div>
@@ -67,66 +60,58 @@
 
     <!-- Base DN -->
     <div>
-      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-        Base DN <span class="text-rose-500">*</span>
-      </label>
-      <input
-        :value="modelValue.baseDN"
-        @input="update('baseDN', ($event.target as HTMLInputElement).value)"
+      <BaseInput
+        :model-value="modelValue.baseDN"
+        @update:model-value="update('baseDN', String($event ?? ''))"
+        label="Base DN"
+        required
         type="text"
         placeholder="dc=example,dc=com"
-        class="form-input w-full text-sm"
       />
-      <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+      <p class="mt-1 text-xs text-ink-subtle">
         The root directory node where user searches begin.
       </p>
     </div>
 
     <!-- User Filter -->
     <div>
-      <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-        User Filter
-      </label>
-      <input
-        :value="modelValue.userFilter"
-        @input="update('userFilter', ($event.target as HTMLInputElement).value)"
+      <BaseInput
+        :model-value="modelValue.userFilter"
+        @update:model-value="update('userFilter', String($event ?? ''))"
+        label="User Filter"
         type="text"
         placeholder="(objectClass=person)"
-        class="form-input w-full text-sm font-mono"
       />
-      <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+      <p class="mt-1 text-xs text-ink-subtle">
         LDAP filter applied when searching for users. Use <code class="font-mono">{username}</code> as a placeholder for the login name.
       </p>
     </div>
 
     <!-- ── Permission Mapping ──────────────────────────────────────────────── -->
-    <div class="pt-4 border-t border-gray-100 dark:border-gray-700/60 space-y-5">
+    <div class="space-y-5 border-t border-hairline pt-4">
 
       <!-- Section header -->
       <div>
-        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-0.5">
+        <h3 class="mb-0.5 text-xs font-semibold uppercase tracking-wide text-ink-subtle">
           Permission Mapping
         </h3>
-        <p class="text-xs text-gray-400 dark:text-gray-500">
+        <p class="text-xs text-ink-subtle">
           Map LDAP group memberships to application roles. Users that belong to a listed group
           DN receive the corresponding role automatically upon sign-in.
         </p>
       </div>
 
       <!-- Single-tenant hint -->
-      <p v-if="tenancyMode === 'Single'" class="flex items-start gap-1.5 text-xs text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30 rounded-lg px-3 py-2">
-        <IconInfoCircle class="w-3.5 h-3.5 shrink-0 mt-0.5" />
+      <p v-if="tenancyMode === 'Single'" class="flex items-start gap-1.5 rounded-control border border-accent/25 bg-accent-soft px-3 py-2 text-xs text-accent">
+        <IconInfoCircle class="mt-0.5 h-3.5 w-3.5 shrink-0" />
         Running in <strong class="mx-0.5">single-tenant</strong> mode — tenant role mappings apply to the configured default tenant automatically.
       </p>
 
       <!-- ── Instance Administrators ──────────────────────────────────────── -->
       <div class="space-y-2">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300">
-            <IconShield class="w-3 h-3" />
-            Instance Admin
-          </span>
-          <span class="text-xs text-gray-400 dark:text-gray-500">full control over the entire instance</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <BaseBadge tone="accent" variant="soft" :icon="IconShield">Instance Admin</BaseBadge>
+          <span class="text-xs text-ink-subtle">full control over the entire instance</span>
         </div>
 
         <div v-if="instanceAdminRows.length > 0" class="space-y-2">
@@ -135,53 +120,47 @@
             :key="row.id"
             class="flex items-center gap-2"
           >
-            <input
-              v-model="row.groupDN"
-              @input="emitMapping"
-              type="text"
-              placeholder="cn=instance-admins,dc=example,dc=com"
-              class="form-input flex-1 text-sm font-mono"
-            />
-            <button
-              type="button"
-              @click="removeInstanceAdminRow(row.id)"
-              class="p-1.5 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 transition rounded shrink-0"
+            <div class="flex-1">
+              <BaseInput
+                :model-value="row.groupDN"
+                @update:model-value="(v) => { row.groupDN = String(v ?? ''); emitMapping() }"
+                type="text"
+                placeholder="cn=instance-admins,dc=example,dc=com"
+              />
+            </div>
+            <BaseButton
+              variant="ghost"
+              size="sm"
+              icon-only
+              :icon="IconX"
               title="Remove"
-            >
-              <IconX class="w-4 h-4" />
-            </button>
+              class="shrink-0"
+              @click="removeInstanceAdminRow(row.id)"
+            />
           </div>
         </div>
-        <p v-else class="text-xs text-gray-400 dark:text-gray-500 italic">
+        <p v-else class="text-xs italic text-ink-subtle">
           No groups configured — InstanceAdmin cannot be granted via SSO.
         </p>
 
-        <button
-          type="button"
-          @click="addInstanceAdminRow"
-          class="flex items-center gap-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 transition"
-        >
-          <IconPlus class="w-3.5 h-3.5" />
+        <BaseButton variant="subtle" size="sm" :icon="IconPlus" @click="addInstanceAdminRow">
           Add group
-        </button>
+        </BaseButton>
       </div>
 
       <!-- ── Tenant Administrators ─────────────────────────────────────────── -->
       <div class="space-y-2">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
-            <IconBuildingCommunity class="w-3 h-3" />
-            Tenant Admin
-          </span>
-          <span class="text-xs text-gray-400 dark:text-gray-500">admin rights within a tenant</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <BaseBadge tone="warning" variant="soft" :icon="IconBuildingCommunity">Tenant Admin</BaseBadge>
+          <span class="text-xs text-ink-subtle">admin rights within a tenant</span>
         </div>
 
         <!-- No tenants warning (multi-tenant only) -->
         <div
           v-if="tenancyMode === 'Multi' && effectiveTenants.length === 0"
-          class="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg px-3 py-2"
+          class="flex items-center gap-2 rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-xs text-warning"
         >
-          <IconAlertTriangle class="w-3.5 h-3.5 shrink-0" />
+          <IconAlertTriangle class="h-3.5 w-3.5 shrink-0" />
           No tenants found. Create a tenant before configuring tenant role mappings.
         </div>
 
@@ -190,67 +169,62 @@
             <div
               v-for="row in tenantAdminRows"
               :key="row.id"
-              class="flex items-center gap-2 flex-wrap sm:flex-nowrap"
+              class="flex flex-wrap items-center gap-2 sm:flex-nowrap"
             >
-              <input
-                v-model="row.groupDN"
-                @input="emitMapping"
-                type="text"
-                placeholder="cn=tenant-admins,dc=example,dc=com"
-                class="form-input flex-1 min-w-0 text-sm font-mono"
-              />
-              <select
-                v-if="tenancyMode === 'Multi'"
-                v-model="row.tenantId"
-                @change="emitMapping"
-                class="form-select text-sm w-full sm:w-44 shrink-0"
-              >
-                <option value="" disabled>Select tenant…</option>
-                <option v-for="t in effectiveTenants" :key="t.tenantId" :value="t.tenantId">
-                  {{ t.name }}
-                </option>
-              </select>
-              <button
-                type="button"
-                @click="removeTenantAdminRow(row.id)"
-                class="p-1.5 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 transition rounded shrink-0"
+              <div class="min-w-0 flex-1">
+                <BaseInput
+                  :model-value="row.groupDN"
+                  @update:model-value="(v) => { row.groupDN = String(v ?? ''); emitMapping() }"
+                  type="text"
+                  placeholder="cn=tenant-admins,dc=example,dc=com"
+                />
+              </div>
+              <div v-if="tenancyMode === 'Multi'" class="w-full shrink-0 sm:w-44">
+                <BaseSelect
+                  :model-value="row.tenantId"
+                  @update:model-value="(v) => { row.tenantId = String(v ?? ''); emitMapping() }"
+                  placeholder="Select tenant…"
+                >
+                  <option value="" disabled>Select tenant…</option>
+                  <option v-for="t in effectiveTenants" :key="t.tenantId" :value="t.tenantId">
+                    {{ t.name }}
+                  </option>
+                </BaseSelect>
+              </div>
+              <BaseButton
+                variant="ghost"
+                size="sm"
+                icon-only
+                :icon="IconX"
                 title="Remove"
-              >
-                <IconX class="w-4 h-4" />
-              </button>
+                class="shrink-0"
+                @click="removeTenantAdminRow(row.id)"
+              />
             </div>
           </div>
-          <p v-else class="text-xs text-gray-400 dark:text-gray-500 italic">
+          <p v-else class="text-xs italic text-ink-subtle">
             No groups configured — TenantAdmin cannot be granted via SSO.
           </p>
 
-          <button
-            type="button"
-            @click="addTenantAdminRow"
-            class="flex items-center gap-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 transition"
-          >
-            <IconPlus class="w-3.5 h-3.5" />
+          <BaseButton variant="subtle" size="sm" :icon="IconPlus" @click="addTenantAdminRow">
             Add group
-          </button>
+          </BaseButton>
         </template>
       </div>
 
       <!-- ── Tenant Members ────────────────────────────────────────────────── -->
       <div class="space-y-2">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300">
-            <IconUsers class="w-3 h-3" />
-            Tenant Member
-          </span>
-          <span class="text-xs text-gray-400 dark:text-gray-500">regular member access within a tenant</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <BaseBadge tone="accent" variant="soft" :icon="IconUsers">Tenant Member</BaseBadge>
+          <span class="text-xs text-ink-subtle">regular member access within a tenant</span>
         </div>
 
         <!-- No tenants warning (multi-tenant only) -->
         <div
           v-if="tenancyMode === 'Multi' && effectiveTenants.length === 0"
-          class="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-lg px-3 py-2"
+          class="flex items-center gap-2 rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-xs text-warning"
         >
-          <IconAlertTriangle class="w-3.5 h-3.5 shrink-0" />
+          <IconAlertTriangle class="h-3.5 w-3.5 shrink-0" />
           No tenants found. Create a tenant before configuring tenant role mappings.
         </div>
 
@@ -259,48 +233,46 @@
             <div
               v-for="row in tenantMemberRows"
               :key="row.id"
-              class="flex items-center gap-2 flex-wrap sm:flex-nowrap"
+              class="flex flex-wrap items-center gap-2 sm:flex-nowrap"
             >
-              <input
-                v-model="row.groupDN"
-                @input="emitMapping"
-                type="text"
-                placeholder="cn=tenant-members,dc=example,dc=com"
-                class="form-input flex-1 min-w-0 text-sm font-mono"
-              />
-              <select
-                v-if="tenancyMode === 'Multi'"
-                v-model="row.tenantId"
-                @change="emitMapping"
-                class="form-select text-sm w-full sm:w-44 shrink-0"
-              >
-                <option value="" disabled>Select tenant…</option>
-                <option v-for="t in effectiveTenants" :key="t.tenantId" :value="t.tenantId">
-                  {{ t.name }}
-                </option>
-              </select>
-              <button
-                type="button"
-                @click="removeTenantMemberRow(row.id)"
-                class="p-1.5 text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 transition rounded shrink-0"
+              <div class="min-w-0 flex-1">
+                <BaseInput
+                  :model-value="row.groupDN"
+                  @update:model-value="(v) => { row.groupDN = String(v ?? ''); emitMapping() }"
+                  type="text"
+                  placeholder="cn=tenant-members,dc=example,dc=com"
+                />
+              </div>
+              <div v-if="tenancyMode === 'Multi'" class="w-full shrink-0 sm:w-44">
+                <BaseSelect
+                  :model-value="row.tenantId"
+                  @update:model-value="(v) => { row.tenantId = String(v ?? ''); emitMapping() }"
+                  placeholder="Select tenant…"
+                >
+                  <option value="" disabled>Select tenant…</option>
+                  <option v-for="t in effectiveTenants" :key="t.tenantId" :value="t.tenantId">
+                    {{ t.name }}
+                  </option>
+                </BaseSelect>
+              </div>
+              <BaseButton
+                variant="ghost"
+                size="sm"
+                icon-only
+                :icon="IconX"
                 title="Remove"
-              >
-                <IconX class="w-4 h-4" />
-              </button>
+                class="shrink-0"
+                @click="removeTenantMemberRow(row.id)"
+              />
             </div>
           </div>
-          <p v-else class="text-xs text-gray-400 dark:text-gray-500 italic">
+          <p v-else class="text-xs italic text-ink-subtle">
             No groups configured — TenantMember cannot be granted via SSO.
           </p>
 
-          <button
-            type="button"
-            @click="addTenantMemberRow"
-            class="flex items-center gap-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300 transition"
-          >
-            <IconPlus class="w-3.5 h-3.5" />
+          <BaseButton variant="subtle" size="sm" :icon="IconPlus" @click="addTenantMemberRow">
             Add group
-          </button>
+          </BaseButton>
         </template>
       </div>
 
@@ -323,6 +295,7 @@ import {
   IconAlertTriangle,
   IconInfoCircle,
 } from '@tabler/icons-vue'
+import { BaseInput, BaseSelect, BaseButton, BaseBadge } from '@/shared/components/ui'
 import {
   MASKED_VALUE,
   type SSOLDAPConfig,

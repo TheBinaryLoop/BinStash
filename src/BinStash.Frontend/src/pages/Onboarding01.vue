@@ -1,81 +1,70 @@
 <template>
-  <main class="bg-white dark:bg-gray-900 min-h-dvh">
-    <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+  <main class="min-h-dvh bg-canvas">
+    <div class="mx-auto max-w-2xl px-4 py-10 sm:px-6 lg:px-8">
       <div class="mb-8">
-        <h1 class="text-3xl text-gray-800 dark:text-gray-100 font-bold">Complete your onboarding</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mt-2">
+        <Stepper :steps="['Workspace', 'Type', 'Details', 'Done']" :current="0" />
+      </div>
+
+      <div class="mb-8">
+        <h1 class="text-3xl font-bold text-ink-strong">Complete your onboarding</h1>
+        <p class="mt-2 text-sm text-ink-muted">
           Before you can manage repositories and releases, set up your company workspace.
         </p>
       </div>
 
       <div v-if="error" class="mb-6">
-        <div class="bg-rose-500/20 text-rose-700 dark:text-rose-200 px-3 py-2 rounded-lg">
-          <span class="text-sm">{{ error }}</span>
+        <div class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
+          {{ error }}
         </div>
       </div>
 
-      <div v-if="isLoading" class="mb-6">
-        <div class="bg-slate-500/20 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-lg">
-          <span class="text-sm">Loading onboarding state…</span>
-        </div>
+      <div v-if="isLoading" class="flex items-center justify-center py-12">
+        <Spinner :size="24" color="var(--color-accent)" />
       </div>
 
-      <div v-else class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs p-6 sm:p-8">
+      <div v-else class="rounded-card border border-hairline bg-card p-6 shadow-sm sm:p-8">
         <div v-if="hasTenants" class="space-y-4">
-          <div class="text-sm text-gray-600 dark:text-gray-300">
+          <div class="text-sm text-ink-muted">
             Your account is already linked to a company workspace. Continue to pick your tenant.
           </div>
-          <button
-            type="button"
-            class="btn bg-violet-500 hover:bg-violet-600 text-white"
-            @click="goNext"
-          >
-            Continue
-          </button>
+          <BaseButton @click="goNext">Continue</BaseButton>
         </div>
 
         <form v-else @submit.prevent="submit" class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium mb-1" for="tenant-name">Company name</label>
-            <input
+          <FormField label="Company name" for-id="tenant-name">
+            <BaseInput
               id="tenant-name"
-              class="form-input w-full"
-              type="text"
               v-model.trim="tenantName"
-              :disabled="busy"
-              @input="onNameInput"
-              required
-            />
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium mb-1" for="tenant-slug">Company slug</label>
-            <input
-              id="tenant-slug"
-              class="form-input w-full font-mono"
               type="text"
-              v-model.trim="tenantSlug"
               :disabled="busy"
-              @input="slugEdited = true"
               required
+              @input="onNameInput"
             />
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Lowercase letters, numbers, and hyphens only.
-            </p>
-          </div>
+          </FormField>
+
+          <FormField
+            label="Company slug"
+            for-id="tenant-slug"
+            hint="Lowercase letters, numbers, and hyphens only."
+          >
+            <BaseInput
+              id="tenant-slug"
+              v-model.trim="tenantSlug"
+              type="text"
+              class="font-mono"
+              :disabled="busy"
+              required
+              @input="slugEdited = true"
+            />
+          </FormField>
 
           <div class="pt-2">
-            <button
-              type="submit"
-              class="btn bg-violet-500 hover:bg-violet-600 text-white"
-              :disabled="busy"
-            >
-              <span v-if="!busy">Create company workspace</span>
-              <span v-else>Creating workspace…</span>
-            </button>
+            <BaseButton type="submit" :loading="busy" :disabled="busy">
+              {{ busy ? 'Creating workspace…' : 'Create company workspace' }}
+            </BaseButton>
           </div>
 
-          <p v-if="tenancyMode === 'Single'" class="text-xs text-gray-500 dark:text-gray-400">
+          <p v-if="tenancyMode === 'Single'" class="text-xs text-ink-subtle">
             This instance is configured for single-tenant mode. This workspace will be used as your default company.
           </p>
         </form>
@@ -90,6 +79,8 @@ import { useRouter } from 'vue-router'
 import { fetchTenancyConfig, type TenancyMode } from '../api/instance'
 import { createTenant, listTenantsForMember } from '../api/tenants'
 import { useTenantStore } from '../stores/tenant'
+import { Stepper, FormField, BaseInput, BaseButton } from '@/shared/components/ui'
+import Spinner from '@/shared/components/feedback/Spinner.vue'
 
 const router = useRouter()
 const tenantStore = useTenantStore()

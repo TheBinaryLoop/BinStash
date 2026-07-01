@@ -1,5 +1,5 @@
 <template>
-  <div class="font-montserrat">
+  <div>
   <!-- Page header -->
   <div class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
     <div>
@@ -11,13 +11,7 @@
       </p>
     </div>
     <div v-if="isTenantAdmin" class="flex items-center gap-3">
-      <router-link
-        :to="`/t/${tenantId}/repositories`"
-        class="inline-flex h-9 items-center gap-2 rounded-full bg-accent px-4 text-sm font-medium text-white shadow-sm transition hover:brightness-110"
-      >
-        <IconGitBranch class="h-4 w-4 shrink-0" />
-        <span>Repositories</span>
-      </router-link>
+      <BaseButton :to="`/t/${tenantId}/repositories`" :icon="IconGitBranch">Repositories</BaseButton>
     </div>
   </div>
 
@@ -25,7 +19,7 @@
   <div class="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
 
     <!-- Repositories card -->
-    <div class="rounded-card border border-hairline bg-raised p-5">
+    <div class="rounded-card border border-hairline bg-card p-5">
       <div class="mb-4 flex items-center gap-3">
         <div class="flex size-10 items-center justify-center rounded-full bg-accent-soft text-accent">
           <IconGitBranch class="size-5" />
@@ -46,7 +40,7 @@
     </div>
 
     <!-- Releases card -->
-    <div class="rounded-card border border-hairline bg-raised p-5">
+    <div class="rounded-card border border-hairline bg-card p-5">
       <div class="mb-4 flex items-center gap-3">
         <div class="flex size-10 items-center justify-center rounded-full bg-success-soft text-success">
           <IconPackage class="size-5" />
@@ -61,7 +55,7 @@
     </div>
 
     <!-- Members card (admin only) -->
-    <div v-if="isTenantAdmin" class="rounded-card border border-hairline bg-raised p-5">
+    <div v-if="isTenantAdmin" class="rounded-card border border-hairline bg-card p-5">
       <div class="mb-4 flex items-center gap-3">
         <div class="flex size-10 items-center justify-center rounded-full bg-accent-soft text-accent">
           <IconUsers class="size-5" />
@@ -79,7 +73,7 @@
     </div>
 
     <!-- Storage class card -->
-    <div class="rounded-card border border-hairline bg-raised p-5">
+    <div class="rounded-card border border-hairline bg-card p-5">
       <div class="mb-4 flex items-center gap-3">
         <div class="flex size-10 items-center justify-center rounded-full bg-accent-soft text-accent">
           <IconDatabase class="size-5" />
@@ -108,10 +102,7 @@
       >
         <!-- Loading -->
         <div v-if="releasesLoading" class="p-8 flex items-center justify-center">
-          <svg class="animate-spin w-6 h-6 text-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-            <path class="opacity-75 fill-current" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-          </svg>
+          <Spinner :size="24" color="var(--color-accent)" />
         </div>
 
         <!-- Error -->
@@ -122,11 +113,12 @@
         </div>
 
         <!-- Empty -->
-        <div v-else-if="recentReleases.length === 0" class="p-8 text-center">
-          <IconPackage class="mx-auto mb-3 h-10 w-10 text-ink-subtle" />
-          <div class="text-sm font-medium text-ink-muted">No releases yet</div>
-          <div class="mt-1 text-xs text-ink-subtle">Releases will appear here once created</div>
-        </div>
+        <EmptyState
+          v-else-if="recentReleases.length === 0"
+          :icon="IconPackage"
+          title="No releases yet"
+          description="Releases will appear here once created"
+        />
 
         <!-- List -->
         <div v-else class="divide-y divide-hairline">
@@ -168,17 +160,12 @@
             v-if="recentReleases.length > recentReleasesPageSize"
             class="border-t border-hairline px-5 py-4"
           >
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div class="text-xs text-ink-muted">
-                Showing {{ recentReleasesRangeStart }}-{{ recentReleasesRangeEnd }} of {{ recentReleases.length }} recent releases
-              </div>
-              <PaginationNumeric
-                v-model="recentReleasesPage"
-                :total-items="recentReleases.length"
-                :page-size="recentReleasesPageSize"
-                :max-buttons="5"
-              />
-            </div>
+            <BasePagination
+              v-model="recentReleasesPage"
+              :total-items="recentReleases.length"
+              :page-size="recentReleasesPageSize"
+              :max-buttons="5"
+            />
           </div>
         </div>
       </DashboardCard>
@@ -219,8 +206,8 @@
             :icon="IconGitBranch"
             title="Browse Repositories"
             subtitle="View and manage your repos"
-            icon-bg-class="bg-amber-500/15"
-            icon-color-class="text-amber-400"
+            icon-bg-class="bg-accent-soft"
+            icon-color-class="text-accent"
             icon-hover-bg-class="group-hover:bg-[#BB6A00]"
           />
 
@@ -230,9 +217,9 @@
             :icon="IconUsers"
             title="Manage Members"
             subtitle="Invite and manage team"
-            icon-bg-class="bg-emerald-500/15"
-            icon-color-class="text-emerald-400"
-            icon-hover-bg-class="group-hover:bg-emerald-500"
+            icon-bg-class="bg-accent-soft"
+            icon-color-class="text-accent"
+            icon-hover-bg-class="group-hover:bg-accent"
           />
 
           <DashboardCardAction
@@ -241,9 +228,9 @@
             :icon="IconRobot"
             title="Service Accounts"
             subtitle="Manage API access"
-            icon-bg-class="bg-sky-500/15"
-            icon-color-class="text-sky-400"
-            icon-hover-bg-class="group-hover:bg-sky-500"
+            icon-bg-class="bg-accent-soft"
+            icon-color-class="text-accent"
+            icon-hover-bg-class="group-hover:bg-accent"
           />
 
           <DashboardCardAction
@@ -252,9 +239,9 @@
             :icon="IconArrowsTransferDown"
             title="Switch Tenant"
             subtitle="Change your active workspace"
-            icon-bg-class="bg-violet-500/15"
-            icon-color-class="text-violet-400"
-            icon-hover-bg-class="group-hover:bg-violet-500"
+            icon-bg-class="bg-accent-soft"
+            icon-color-class="text-accent"
+            icon-hover-bg-class="group-hover:bg-accent"
           />
         </div>
       </DashboardCard>
@@ -263,22 +250,17 @@
       <DashboardCard title="Repositories" :icon="IconGitBranch">
         <!-- Loading -->
         <div v-if="reposLoading" class="p-8 flex items-center justify-center">
-          <svg class="animate-spin w-6 h-6 text-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-            <path class="opacity-75 fill-current" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-          </svg>
+          <Spinner :size="24" color="var(--color-accent)" />
         </div>
 
         <!-- Empty -->
-        <div v-else-if="repos.length === 0" class="p-8 text-center">
-          <IconGitBranch class="mx-auto mb-3 h-10 w-10 text-ink-subtle" />
-          <div class="text-sm font-medium text-ink-muted">No repositories yet</div>
-          <router-link
-            v-if="isTenantAdmin"
-            :to="`/t/${tenantId}/repositories`"
-            class="mt-3 inline-flex items-center gap-1 text-xs font-medium text-accent transition hover:brightness-110"
-          >Create one →</router-link>
-        </div>
+        <EmptyState
+          v-else-if="repos.length === 0"
+          :icon="IconGitBranch"
+          title="No repositories yet"
+        >
+          <BaseButton v-if="isTenantAdmin" :to="`/t/${tenantId}/repositories`" size="sm" :icon="IconGitBranch">Create one</BaseButton>
+        </EmptyState>
 
         <!-- List -->
         <div v-else class="divide-y divide-hairline">
@@ -319,9 +301,10 @@ import { useTenantStore } from '@/stores/tenant'
 import { useAuthStore } from '@/stores/auth'
 import { useTenantSettingsStore } from '@/stores/tenantSettings'
 import { listRepositoriesWithReleaseStats } from '@/api/repositories'
-import PaginationNumeric from '@/components/PaginationNumeric.vue'
 import DashboardCard from '@/shared/components/data-display/DashboardCard.vue'
 import DashboardCardAction from '@/shared/components/data-display/DashboardCardAction.vue'
+import Spinner from '@/shared/components/feedback/Spinner.vue'
+import { BasePagination, StatCard, PageHeader, BaseButton, EmptyState } from '@/shared/components/ui'
 import {
   IconGitBranch,
   IconPackage,
@@ -349,9 +332,14 @@ export default {
     IconChevronRight,
     IconAlertCircleFilled,
     IconArrowsTransferDown,
-    PaginationNumeric,
     DashboardCard,
     DashboardCardAction,
+    Spinner,
+    BasePagination,
+    StatCard,
+    PageHeader,
+    BaseButton,
+    EmptyState,
   },
   setup() {
     const RECENT_RELEASES_HISTORY_LIMIT = 50
@@ -459,16 +447,16 @@ export default {
 
     function releaseStatusClass(rel) {
       const status = getReleaseStatus(rel)
-      if (status === 'failed') return 'bg-rose-500/10 text-rose-500'
-      if (status === 'running') return 'bg-amber-500/10 text-amber-500'
-      return 'bg-emerald-500/10 text-emerald-500'
+      if (status === 'failed') return 'bg-danger-soft text-danger'
+      if (status === 'running') return 'bg-warning-soft text-warning'
+      return 'bg-success-soft text-success'
     }
 
     function releaseStatusDotClass(rel) {
       const status = getReleaseStatus(rel)
-      if (status === 'failed') return 'bg-rose-500'
-      if (status === 'running') return 'bg-amber-500'
-      return 'bg-emerald-500'
+      if (status === 'failed') return 'bg-danger'
+      if (status === 'running') return 'bg-warning'
+      return 'bg-success'
     }
 
     function releaseStatusIcon(rel) {

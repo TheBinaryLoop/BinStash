@@ -9,23 +9,26 @@
         <div class="px-4 sm:px-6 lg:px-8 py-8 w-full max-w-384 mx-auto space-y-6">
 
           <!-- Breadcrumb -->
-          <nav class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-            <router-link to="/chunk-stores" class="hover:text-violet-500 transition">Chunk Stores</router-link>
-            <IconChevronRight class="w-4 h-4 text-gray-300 dark:text-gray-600 shrink-0" />
-            <span class="text-gray-700 dark:text-gray-200 font-medium truncate">{{ chunkStore?.name ?? '...' }}</span>
-          </nav>
+          <Breadcrumbs
+            :items="[
+              { label: 'Chunk Stores', to: '/chunk-stores' },
+              { label: chunkStore?.name ?? '…' },
+            ]"
+          />
 
           <!-- Loading skeleton -->
-          <div v-if="loading" class="animate-pulse space-y-6">
-            <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 p-6 space-y-4">
-              <div class="h-3 w-32 rounded bg-gray-200 dark:bg-gray-700" />
-              <div class="h-10 w-64 rounded bg-gray-200 dark:bg-gray-700" />
-              <div class="h-16 rounded-xl bg-gray-200 dark:bg-gray-700" />
-            </div>
+          <div v-if="loading" class="space-y-6">
+            <BaseCard accent>
+              <div class="space-y-4">
+                <Skeleton width="8rem" height="0.75rem" />
+                <Skeleton width="16rem" height="2.5rem" />
+                <Skeleton width="100%" height="4rem" rounded="card" />
+              </div>
+            </BaseCard>
           </div>
 
           <!-- Error state -->
-          <div v-else-if="loadError" class="rounded-2xl border border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/10 px-5 py-4 text-sm text-rose-700 dark:text-rose-300">
+          <div v-else-if="loadError" class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
             {{ loadError }}
           </div>
 
@@ -33,259 +36,208 @@
           <template v-else-if="chunkStore">
 
             <!-- Header card -->
-            <section class="overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs">
-              <div class="h-1 bg-linear-to-r from-teal-400 via-violet-500 to-indigo-500" />
-              <div class="p-5 lg:p-6">
-                <div class="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                  <div class="min-w-0 space-y-4">
-                    <div class="flex items-start gap-3">
-                      <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-teal-100 text-teal-600 dark:bg-teal-500/20 dark:text-teal-300">
-                        <IconDatabase class="h-5.5 w-5.5" />
-                      </div>
-                      <div class="min-w-0">
-                        <h1 class="truncate text-2xl font-bold text-gray-900 dark:text-white">{{ chunkStore.name }}</h1>
-                        <p class="mt-1.5 text-sm text-gray-500 dark:text-gray-400">
-                          {{ chunkStore.type }} chunk store
-                          <span v-if="chunkStore.backendSettings?.localPath"> &middot; {{ chunkStore.backendSettings.localPath }}</span>
-                        </p>
-                      </div>
-                    </div>
+            <BaseCard accent>
+              <div class="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                <div class="flex items-start gap-3 min-w-0">
+                  <div class="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+                    <IconDatabase class="size-6" />
                   </div>
-                  <div class="flex items-center gap-2">
-                    <button
-                      type="button"
-                      class="btn bg-violet-500 text-white hover:bg-violet-600 disabled:opacity-50"
-                      :disabled="isUpgrading || upgradeStarting"
-                      @click="startUpgrade"
-                    >
-                      <span v-if="upgradeStarting">Starting...</span>
-                      <span v-else-if="isUpgrading">Upgrade running...</span>
-                      <span v-else class="inline-flex items-center gap-2">
-                        <IconArrowUp class="h-4 w-4" />
-                        Upgrade Releases
-                      </span>
-                    </button>
+                  <div class="min-w-0">
+                    <h1 class="truncate text-2xl font-bold text-ink-strong">{{ chunkStore.name }}</h1>
+                    <p class="mt-1.5 text-sm text-ink-muted">
+                      {{ chunkStore.type }} chunk store
+                      <span v-if="chunkStore.backendSettings?.localPath"> &middot; {{ chunkStore.backendSettings.localPath }}</span>
+                    </p>
                   </div>
                 </div>
+                <div class="flex items-center gap-2">
+                  <BaseButton
+                    :icon="IconArrowUp"
+                    :loading="upgradeStarting"
+                    :disabled="isUpgrading || upgradeStarting"
+                    @click="startUpgrade"
+                  >
+                    <span v-if="isUpgrading">Upgrade running…</span>
+                    <span v-else>Upgrade Releases</span>
+                  </BaseButton>
+                </div>
               </div>
-            </section>
+            </BaseCard>
 
             <!-- Upgrade error -->
-            <div v-if="upgradeError" class="rounded-2xl border border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/10 px-5 py-4 text-sm text-rose-700 dark:text-rose-300">
+            <div v-if="upgradeError" class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
               {{ upgradeError }}
             </div>
 
             <!-- Real-time upgrade progress -->
-            <section v-if="activeProgress || activeJob" class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs overflow-hidden">
-              <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4 flex items-center justify-between">
+            <BaseCard v-if="activeProgress || activeJob" :padded="false">
+              <template #header>
                 <div class="flex items-center gap-2">
-                  <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-300">
+                  <div class="flex size-8 items-center justify-center rounded-full bg-accent-soft text-accent">
                     <IconArrowUp class="h-4 w-4" />
                   </div>
-                  <h2 class="font-semibold text-gray-900 dark:text-white">Upgrade Progress</h2>
+                  <h2 class="font-semibold text-ink-strong">Upgrade Progress</h2>
                 </div>
+              </template>
+              <template #actions>
                 <div class="flex items-center gap-3">
-                  <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold" :class="statusBadgeClasses(currentStatus)">
-                    {{ currentStatus }}
-                  </span>
-                  <button
+                  <BaseBadge :tone="statusTone(currentStatus)">{{ currentStatus }}</BaseBadge>
+                  <BaseButton
                     v-if="currentStatus === 'Running' || currentStatus === 'Pending'"
-                    type="button"
-                    class="btn text-sm border-rose-200 text-rose-600 hover:border-rose-300 hover:text-rose-700 dark:border-rose-500/30 dark:text-rose-400"
+                    variant="danger"
+                    size="sm"
+                    :loading="isCancelling"
                     :disabled="isCancelling"
                     @click="cancelJob"
                   >
-                    {{ isCancelling ? 'Cancelling...' : 'Cancel' }}
-                  </button>
+                    Cancel
+                  </BaseButton>
                 </div>
-              </div>
+              </template>
               <div class="p-5 space-y-5">
                 <!-- Progress bar -->
-                <div>
-                  <div class="flex items-center justify-between text-sm mb-2">
-                    <span class="text-gray-600 dark:text-gray-300">
-                      {{ currentProcessed }} / {{ currentTotal }} releases
-                    </span>
-                    <span class="font-medium text-gray-900 dark:text-white">{{ progressPercent }}%</span>
-                  </div>
-                  <div class="w-full h-3 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      class="h-full rounded-full transition-all duration-300 ease-out"
-                      :class="progressBarColor"
-                      :style="{ width: `${progressPercent}%` }"
-                    />
-                  </div>
-                </div>
+                <ProgressBar
+                  :value="progressPercent"
+                  :tone="progressTone"
+                  :label="`${currentProcessed} / ${currentTotal} releases`"
+                  show-value
+                />
 
                 <!-- Stats grid -->
                 <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                  <div class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                    <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Processed</div>
-                    <div class="mt-1 text-lg font-bold text-gray-900 dark:text-white">{{ currentProcessed }}</div>
-                  </div>
-                  <div class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                    <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Skipped</div>
-                    <div class="mt-1 text-lg font-bold text-gray-900 dark:text-white">{{ currentSkipped }}</div>
-                  </div>
-                  <div class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                    <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Failed</div>
-                    <div class="mt-1 text-lg font-bold" :class="currentFailed > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-gray-900 dark:text-white'">{{ currentFailed }}</div>
-                  </div>
-                  <div class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                    <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Bytes saved</div>
-                    <div class="mt-1 text-lg font-bold" :class="currentBytesSaved > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-white'">{{ formatBytes(currentBytesSaved) }}</div>
-                  </div>
+                  <StatCard label="Processed" :value="currentProcessed" tone="accent" />
+                  <StatCard label="Skipped" :value="currentSkipped" tone="neutral" />
+                  <StatCard label="Failed" :value="currentFailed" :tone="currentFailed > 0 ? 'danger' : 'neutral'" />
+                  <StatCard label="Bytes saved" :value="formatBytes(currentBytesSaved)" :tone="currentBytesSaved > 0 ? 'success' : 'neutral'" />
                 </div>
 
                 <!-- Timing -->
-                <div v-if="currentStartedAt || currentCompletedAt" class="flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
+                <div v-if="currentStartedAt || currentCompletedAt" class="flex flex-wrap gap-4 text-xs text-ink-subtle">
                   <span v-if="currentStartedAt">Started: {{ formatDateTime(currentStartedAt) }}</span>
                   <span v-if="currentCompletedAt">Completed: {{ formatDateTime(currentCompletedAt) }}</span>
                 </div>
               </div>
-            </section>
+            </BaseCard>
 
             <!-- Tabs -->
-            <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 p-1 shadow-xs">
-              <nav class="flex flex-wrap gap-1">
-                <button
-                  v-for="tab in tabs"
-                  :key="tab.key"
-                  type="button"
-                  class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition"
-                  :class="activeTab === tab.key
-                    ? 'bg-violet-500 text-white shadow-xs'
-                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/60 dark:hover:text-gray-100'"
-                  @click="activeTab = tab.key"
-                >
-                  <component :is="tab.icon" class="h-4 w-4" />
-                  {{ tab.label }}
-                </button>
-              </nav>
-            </div>
+            <Tabs :tabs="tabItems" v-model="activeTab" />
 
             <!-- Overview tab -->
             <section v-if="activeTab === 'overview'" class="grid grid-cols-1 gap-6 xl:grid-cols-3">
               <div class="space-y-6 xl:col-span-2">
-                <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs overflow-hidden">
-                  <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                    <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Store details</h2>
-                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Core metadata and storage configuration.</p>
+                <BaseCard>
+                  <template #header>
+                    <div>
+                      <h2 class="text-lg font-semibold text-ink-strong">Store details</h2>
+                      <p class="mt-1 text-sm text-ink-muted">Core metadata and storage configuration.</p>
+                    </div>
+                  </template>
+                  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div class="rounded-control border border-hairline p-4">
+                      <div class="text-xs uppercase tracking-wide text-ink-subtle">Store ID</div>
+                      <div class="mt-2 break-all font-mono text-xs text-ink-muted">{{ chunkStore.id }}</div>
+                    </div>
+                    <div class="rounded-control border border-hairline p-4">
+                      <div class="text-xs uppercase tracking-wide text-ink-subtle">Type</div>
+                      <div class="mt-2 text-sm font-medium text-ink-strong">{{ chunkStore.type }}</div>
+                    </div>
+                    <div v-if="chunkStore.backendSettings?.localPath" class="rounded-control border border-hairline p-4 sm:col-span-2">
+                      <div class="text-xs uppercase tracking-wide text-ink-subtle">Storage path</div>
+                      <div class="mt-2 break-all font-mono text-xs text-ink-muted">{{ chunkStore.backendSettings.localPath }}</div>
+                    </div>
                   </div>
-                  <div class="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                      <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Store ID</div>
-                      <div class="mt-2 break-all font-mono text-xs text-gray-700 dark:text-gray-200">{{ chunkStore.id }}</div>
-                    </div>
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                      <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Type</div>
-                      <div class="mt-2 text-sm font-medium text-gray-900 dark:text-white">{{ chunkStore.type }}</div>
-                    </div>
-                    <div v-if="chunkStore.backendSettings?.localPath" class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4 sm:col-span-2">
-                      <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Storage path</div>
-                      <div class="mt-2 break-all font-mono text-xs text-gray-700 dark:text-gray-200">{{ chunkStore.backendSettings.localPath }}</div>
-                    </div>
-                  </div>
-                </div>
+                </BaseCard>
 
                 <!-- Chunker configuration -->
-                <div v-if="chunkStore.chunker" class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs overflow-hidden">
-                  <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                    <h3 class="font-semibold text-gray-900 dark:text-white">Chunker configuration</h3>
+                <BaseCard v-if="chunkStore.chunker">
+                  <template #header>
+                    <h3 class="font-semibold text-ink-strong">Chunker configuration</h3>
+                  </template>
+                  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                    <div class="rounded-control border border-hairline p-4">
+                      <div class="text-xs uppercase tracking-wide text-ink-subtle">Algorithm</div>
+                      <div class="mt-1 text-sm font-semibold text-ink-strong">{{ chunkStore.chunker.type }}</div>
+                    </div>
+                    <div v-if="chunkStore.chunker.minChunkSize != null" class="rounded-control border border-hairline p-4">
+                      <div class="text-xs uppercase tracking-wide text-ink-subtle">Min chunk</div>
+                      <div class="mt-1 text-sm font-semibold text-ink-strong">{{ formatBytes(chunkStore.chunker.minChunkSize) }}</div>
+                    </div>
+                    <div v-if="chunkStore.chunker.avgChunkSize != null" class="rounded-control border border-hairline p-4">
+                      <div class="text-xs uppercase tracking-wide text-ink-subtle">Avg chunk</div>
+                      <div class="mt-1 text-sm font-semibold text-ink-strong">{{ formatBytes(chunkStore.chunker.avgChunkSize) }}</div>
+                    </div>
+                    <div v-if="chunkStore.chunker.maxChunkSize != null" class="rounded-control border border-hairline p-4">
+                      <div class="text-xs uppercase tracking-wide text-ink-subtle">Max chunk</div>
+                      <div class="mt-1 text-sm font-semibold text-ink-strong">{{ formatBytes(chunkStore.chunker.maxChunkSize) }}</div>
+                    </div>
                   </div>
-                  <div class="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 xl:grid-cols-4">
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                      <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Algorithm</div>
-                      <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ chunkStore.chunker.type }}</div>
-                    </div>
-                    <div v-if="chunkStore.chunker.minChunkSize != null" class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                      <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Min chunk</div>
-                      <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ formatBytes(chunkStore.chunker.minChunkSize) }}</div>
-                    </div>
-                    <div v-if="chunkStore.chunker.avgChunkSize != null" class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                      <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Avg chunk</div>
-                      <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ formatBytes(chunkStore.chunker.avgChunkSize) }}</div>
-                    </div>
-                    <div v-if="chunkStore.chunker.maxChunkSize != null" class="rounded-xl border border-gray-200 dark:border-gray-700/60 bg-gray-50/80 dark:bg-gray-900/30 p-4">
-                      <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Max chunk</div>
-                      <div class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ formatBytes(chunkStore.chunker.maxChunkSize) }}</div>
-                    </div>
-                  </div>
-                </div>
+                </BaseCard>
               </div>
 
               <!-- Sidebar highlights -->
               <div class="space-y-6">
-                <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs overflow-hidden">
-                  <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4">
-                    <h3 class="font-semibold text-gray-900 dark:text-white">Stats</h3>
-                  </div>
-                  <div class="space-y-4 p-5">
-                    <div class="rounded-xl bg-gray-50 p-4 dark:bg-gray-900/30">
-                      <div class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">Total chunks</div>
-                      <div class="mt-1 text-lg font-bold text-gray-900 dark:text-white">
-                        <span v-if="statsLoading" class="text-gray-400">...</span>
-                        <span v-else-if="stats">{{ stats.totalChunks.toLocaleString() }}</span>
-                        <span v-else>--</span>
-                      </div>
+                <BaseCard>
+                  <template #header>
+                    <h3 class="font-semibold text-ink-strong">Stats</h3>
+                  </template>
+                  <div class="rounded-control border border-hairline p-4">
+                    <div class="text-xs uppercase tracking-wide text-ink-subtle">Total chunks</div>
+                    <div class="mt-1 text-lg font-bold text-ink-strong">
+                      <span v-if="statsLoading" class="text-ink-subtle">…</span>
+                      <span v-else-if="stats">{{ stats.totalChunks.toLocaleString() }}</span>
+                      <span v-else>--</span>
                     </div>
                   </div>
-                </div>
+                </BaseCard>
               </div>
             </section>
 
             <!-- Jobs tab -->
             <section v-if="activeTab === 'jobs'">
-              <div class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs overflow-hidden">
-                <div class="border-b border-gray-200 dark:border-gray-700/60 px-5 py-4 flex items-center justify-between">
+              <BaseCard :padded="false">
+                <template #header>
                   <div>
-                    <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Upgrade jobs</h2>
-                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">All upgrade jobs for this chunk store.</p>
+                    <h2 class="text-lg font-semibold text-ink-strong">Upgrade jobs</h2>
+                    <p class="mt-1 text-sm text-ink-muted">All upgrade jobs for this chunk store.</p>
                   </div>
-                  <button
-                    type="button"
-                    class="btn border-gray-200 hover:border-gray-300 dark:border-gray-700/60 dark:hover:border-gray-600 text-sm"
-                    :disabled="jobsLoading"
-                    @click="loadJobs"
-                  >
+                </template>
+                <template #actions>
+                  <BaseButton variant="secondary" size="sm" :loading="jobsLoading" :disabled="jobsLoading" @click="loadJobs">
                     Refresh
-                  </button>
-                </div>
+                  </BaseButton>
+                </template>
 
                 <div v-if="jobsLoading" class="flex items-center justify-center py-16">
-                  <div class="h-8 w-8 animate-spin rounded-full border-2 border-violet-500/20 border-t-violet-500" />
+                  <Spinner :size="32" color="var(--color-accent)" />
                 </div>
 
-                <div v-else-if="jobs.length === 0" class="px-6 py-16 text-center">
-                  <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-400 dark:bg-gray-700/50 dark:text-gray-500">
-                    <IconArrowUp class="h-7 w-7" />
-                  </div>
-                  <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">No upgrade jobs</h3>
-                  <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Start an upgrade to see job history here.</p>
-                </div>
+                <EmptyState
+                  v-else-if="jobs.length === 0"
+                  :icon="IconArrowUp"
+                  title="No upgrade jobs"
+                  description="Start an upgrade to see job history here."
+                />
 
-                <div v-else class="divide-y divide-gray-100 dark:divide-gray-700/60">
+                <div v-else class="divide-y divide-hairline">
                   <article v-for="job in jobs" :key="job.id" class="px-5 py-4">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div class="min-w-0">
                         <div class="flex items-center gap-2">
-                          <span class="text-sm font-semibold text-gray-900 dark:text-white truncate">Job {{ job.id.slice(0, 8) }}...</span>
-                          <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold" :class="statusBadgeClasses(job.status)">
-                            {{ job.status }}
-                          </span>
+                          <span class="text-sm font-semibold text-ink-strong truncate">Job {{ job.id.slice(0, 8) }}…</span>
+                          <BaseBadge :tone="statusTone(job.status)">{{ job.status }}</BaseBadge>
                         </div>
-                        <div class="mt-1 flex flex-wrap gap-3 text-xs text-gray-500 dark:text-gray-400">
+                        <div class="mt-1 flex flex-wrap gap-3 text-xs text-ink-muted">
                           <span>v{{ job.targetSerializerVersion }}</span>
                           <span>{{ job.processedReleases }}/{{ job.totalReleases }} releases</span>
-                          <span v-if="job.failedReleases > 0" class="text-rose-500">{{ job.failedReleases }} failed</span>
-                          <span v-if="job.bytesSaved > 0" class="text-emerald-500">{{ formatBytes(job.bytesSaved) }} saved</span>
+                          <span v-if="job.failedReleases > 0" class="text-danger">{{ job.failedReleases }} failed</span>
+                          <span v-if="job.bytesSaved > 0" class="text-success">{{ formatBytes(job.bytesSaved) }} saved</span>
                           <span>Created {{ formatDateTime(job.createdAt) }}</span>
                         </div>
                       </div>
                     </div>
                   </article>
                 </div>
-              </div>
+              </BaseCard>
             </section>
           </template>
         </div>
@@ -299,6 +251,19 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Sidebar from '@/features/instance/components/InstanceSidebar.vue'
 import Header from '@/shared/components/navigation/Header.vue'
+import Tabs from '@/shared/components/navigation/Tabs.vue'
+import Spinner from '@/shared/components/feedback/Spinner.vue'
+import {
+  Breadcrumbs,
+  BaseCard,
+  BaseButton,
+  BaseBadge,
+  StatCard,
+  ProgressBar,
+  Skeleton,
+  EmptyState,
+} from '@/shared/components/ui'
+import { useToast } from '@/composables/useToast'
 import {
   getChunkStore,
   getChunkStoreStats,
@@ -321,6 +286,7 @@ import {
 } from '@tabler/icons-vue'
 
 const route = useRoute()
+const toast = useToast()
 const storeId = computed(() => route.params.id as string)
 
 const sidebarOpen = ref(false)
@@ -339,6 +305,7 @@ const tabs = [
   { key: 'overview', label: 'Overview', icon: IconInfoCircle },
   { key: 'jobs', label: 'Upgrade Jobs', icon: IconHistory },
 ]
+const tabItems = tabs.map((t) => ({ id: t.key, label: t.label, icon: t.icon }))
 const activeTab = ref('overview')
 
 // -- Upgrade --
@@ -375,12 +342,12 @@ const progressPercent = computed(() => {
   return Math.round((currentProcessed.value / total) * 100)
 })
 
-const progressBarColor = computed(() => {
+const progressTone = computed<'accent' | 'success' | 'warning' | 'danger'>(() => {
   const s = currentStatus.value
-  if (s === 'Failed') return 'bg-rose-500'
-  if (s === 'Cancelled') return 'bg-amber-500'
-  if (s === 'Completed') return 'bg-emerald-500'
-  return 'bg-violet-500'
+  if (s === 'Failed') return 'danger'
+  if (s === 'Cancelled') return 'warning'
+  if (s === 'Completed') return 'success'
+  return 'accent'
 })
 
 // -- Actions --
@@ -432,8 +399,10 @@ async function startUpgrade() {
     const job = await upgradeChunkStore(storeId.value)
     activeJob.value = job
     subscribeProgress(job.id)
+    toast.success('Upgrade started')
   } catch (e) {
     upgradeError.value = e instanceof Error ? e.message : 'Could not start upgrade.'
+    toast.error(upgradeError.value)
   } finally {
     upgradeStarting.value = false
   }
@@ -445,8 +414,10 @@ async function cancelJob() {
   isCancelling.value = true
   try {
     await cancelBackgroundJob(jobId)
+    toast.success('Job cancelled')
   } catch (e) {
     upgradeError.value = e instanceof Error ? e.message : 'Could not cancel job.'
+    toast.error(upgradeError.value)
   } finally {
     isCancelling.value = false
   }
@@ -473,20 +444,20 @@ function formatDateTime(iso: string | null | undefined): string {
   })
 }
 
-function statusBadgeClasses(status: string): string {
+function statusTone(status: string): 'neutral' | 'accent' | 'success' | 'warning' | 'danger' {
   switch (status) {
     case 'Completed':
-      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300'
+      return 'success'
     case 'Running':
-      return 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300'
+      return 'accent'
     case 'Pending':
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300'
+      return 'warning'
     case 'Failed':
-      return 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300'
+      return 'danger'
     case 'Cancelled':
-      return 'bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300'
+      return 'neutral'
     default:
-      return 'bg-gray-100 text-gray-600 dark:bg-gray-700/60 dark:text-gray-300'
+      return 'neutral'
   }
 }
 

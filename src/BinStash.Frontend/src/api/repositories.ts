@@ -8,6 +8,7 @@ export type RepositorySummaryDto = {
   name: string
   description?: string | null
   storageClass: string
+  createdAt?: string | null
   chunker?: {
     type: string
     minChunkSize?: number | null
@@ -112,6 +113,7 @@ function toRepositorySummaryDto(x: any): RepositorySummaryDto {
     name: x.name,
     description: x.description ?? null,
     storageClass: x.storageClass,
+    createdAt: x.createdAt ?? null,
     chunker: x.chunker
       ? {
           type: x.chunker.type,
@@ -157,6 +159,7 @@ const REPOSITORY_SUMMARY_FIELDS = gql`
     name
     description
     storageClass
+    createdAt
     chunker {
       type
       minChunkSize

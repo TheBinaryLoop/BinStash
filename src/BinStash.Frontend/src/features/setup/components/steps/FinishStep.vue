@@ -8,15 +8,15 @@
     </div>
 
     <div class="text-center">
-      <p class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-1">Setup Complete!</p>
-      <p class="text-sm text-gray-500 dark:text-gray-400">
+      <p class="mb-1 text-lg font-semibold text-ink-strong">Setup Complete!</p>
+      <p class="text-sm text-ink-muted">
         Redirecting to login in
-        <span class="font-bold text-green-600 dark:text-green-400">{{ countdown }}</span>
+        <span class="font-bold text-success">{{ countdown }}</span>
         second{{ countdown !== 1 ? 's' : '' }}…
       </p>
     </div>
 
-    <div v-if="error" class="text-red-600 dark:text-red-400 text-sm mt-2">{{ error }}</div>
+    <div v-if="error" class="mt-2 text-sm text-danger">{{ error }}</div>
   </div>
 </template>
 
@@ -78,7 +78,7 @@ onUnmounted(() => {
 
 /* Circle draw animation */
 .checkmark-circle {
-  stroke: #22c55e;
+  stroke: var(--color-success);
   stroke-width: 3;
   stroke-dasharray: 166;
   stroke-dashoffset: 166;
@@ -88,7 +88,7 @@ onUnmounted(() => {
 
 /* Checkmark draw animation */
 .checkmark-check {
-  stroke: #22c55e;
+  stroke: var(--color-success);
   stroke-width: 3.5;
   stroke-linecap: round;
   stroke-linejoin: round;

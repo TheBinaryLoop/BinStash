@@ -46,125 +46,91 @@
 
             <form @submit.prevent="onSubmit">
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-sm font-medium mb-1" for="first-name">First name</label>
-                  <input
-                    id="first-name"
-                    class="form-input w-full"
-                    type="text"
-                    v-model.trim="firstName"
-                    :disabled="isSubmitting"
-                    required
-                  />
-                </div>
-                <div>
-                  <label class="block text-sm font-medium mb-1" for="last-name">Last name</label>
-                  <input
-                    id="last-name"
-                    class="form-input w-full"
-                    type="text"
-                    v-model.trim="lastName"
-                    :disabled="isSubmitting"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div class="mt-4">
-                <label class="block text-sm font-medium mb-1" for="middle-name">Middle name (optional)</label>
-                <input
-                  id="middle-name"
-                  class="form-input w-full"
+                <BaseInput
+                  v-model.trim="firstName"
+                  label="First name"
                   type="text"
-                  v-model.trim="middleName"
-                  :disabled="isSubmitting"
-                />
-              </div>
-
-              <div class="mt-4">
-                <label class="block text-sm font-medium mb-1" for="email">Email address</label>
-                <div class="relative">
-                  <input
-                    id="email"
-                    class="form-input w-full"
-                    :class="isInvitationEmailLocked ? 'bg-gray-100 dark:bg-gray-700 border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-300 cursor-not-allowed pr-10' : ''"
-                    type="email"
-                    autocomplete="email"
-                    v-model.trim="email"
-                    :disabled="isSubmitting || isInvitationEmailLocked"
-                    required
-                  />
-                </div>
-                <p v-if="isInvitationEmailLocked" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  This email is fixed by the invitation and cannot be changed.
-                </p>
-              </div>
-
-              <div class="mt-4">
-                <label class="block text-sm font-medium mb-1" for="password">Password</label>
-                <input
-                  id="password"
-                  class="form-input w-full"
-                  type="password"
-                  autocomplete="new-password"
-                  minlength="8"
-                  v-model="password"
                   :disabled="isSubmitting"
                   required
                 />
-                <p class="mt-1 text-xs" :class="password.length === 0 ? 'text-gray-500 dark:text-gray-400' : (isPasswordLongEnough ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')">
+                <BaseInput
+                  v-model.trim="lastName"
+                  label="Last name"
+                  type="text"
+                  :disabled="isSubmitting"
+                  required
+                />
+              </div>
+
+              <div class="mt-4">
+                <BaseInput
+                  v-model.trim="middleName"
+                  label="Middle name (optional)"
+                  type="text"
+                  :disabled="isSubmitting"
+                />
+              </div>
+
+              <div class="mt-4">
+                <BaseInput
+                  v-model.trim="email"
+                  label="Email address"
+                  type="email"
+                  autocomplete="email"
+                  :disabled="isSubmitting || isInvitationEmailLocked"
+                  :hint="isInvitationEmailLocked ? 'This email is fixed by the invitation and cannot be changed.' : undefined"
+                  required
+                />
+              </div>
+
+              <div class="mt-4">
+                <BaseInput
+                  v-model="password"
+                  label="Password"
+                  type="password"
+                  autocomplete="new-password"
+                  :disabled="isSubmitting"
+                  required
+                />
+                <p class="mt-1 text-xs" :class="password.length === 0 ? 'text-ink-muted' : (isPasswordLongEnough ? 'text-success' : 'text-danger')">
                   {{ password.length === 0 ? 'Use at least 8 characters.' : (isPasswordLongEnough ? 'Password length looks good.' : 'Password must be at least 8 characters.') }}
                 </p>
               </div>
 
               <div class="mt-4">
-                <label class="block text-sm font-medium mb-1" for="confirm-password">Confirm password</label>
-                <input
-                  id="confirm-password"
-                  class="form-input w-full"
+                <BaseInput
+                  v-model="confirmPassword"
+                  label="Confirm password"
                   type="password"
                   autocomplete="new-password"
-                  minlength="8"
-                  v-model="confirmPassword"
                   :disabled="isSubmitting"
                   required
                 />
-                <p v-if="confirmPassword.length > 0" class="mt-1 text-xs" :class="passwordsMatch ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'">
+                <p v-if="confirmPassword.length > 0" class="mt-1 text-xs" :class="passwordsMatch ? 'text-success' : 'text-danger'">
                   {{ passwordsMatch ? 'Passwords match.' : 'Passwords do not match.' }}
                 </p>
               </div>
 
               <div class="mt-4">
-                <label class="flex items-center">
-                  <input
-                    type="checkbox"
-                    class="form-checkbox"
-                    v-model="acceptTerms"
-                    :disabled="isSubmitting"
-                  />
-                  <span class="text-sm ml-2 text-gray-600 dark:text-gray-400">
-                    I agree to the terms and privacy policy.
-                  </span>
-                </label>
+                <BaseCheckbox
+                  v-model="acceptTerms"
+                  label="I agree to the terms and privacy policy."
+                  :disabled="isSubmitting"
+                />
               </div>
 
               <div class="mt-6">
-                <button
-                  class="btn w-full bg-violet-500 text-white hover:bg-violet-600 dark:bg-violet-500 dark:hover:bg-violet-600"
-                  type="submit"
-                  :disabled="!canSubmit"
-                >
-                  <span v-if="!isSubmitting">Create account</span>
-                  <span v-else>Creating account…</span>
-                </button>
+                <BaseButton type="submit" block :loading="isSubmitting" :disabled="!canSubmit">
+                  {{ isSubmitting ? 'Creating account…' : 'Create account' }}
+                </BaseButton>
               </div>
             </form>
 
-            <div class="pt-5 mt-6 border-t border-gray-200 dark:border-gray-700/60">
-              <div class="text-sm">
+            <div class="pt-5 mt-6 border-t border-hairline">
+              <div class="text-sm text-ink-muted">
                 Already have an account?
                 <router-link
-                  class="font-medium text-violet-500 hover:text-violet-600 dark:hover:text-violet-400"
+                  class="font-medium text-accent transition hover:brightness-110"
                   :to="signinLink"
                 >
                   Sign In
@@ -176,55 +142,43 @@
           <div
             v-else
             key="signup-success"
-            class="relative overflow-hidden rounded-xl border border-emerald-200/70 dark:border-emerald-700/40 bg-linear-to-br from-emerald-50 via-white to-violet-50 dark:from-emerald-900/20 dark:via-gray-800 dark:to-violet-900/10 p-6 sm:p-7"
+            class="relative overflow-hidden rounded-card border border-success/25 bg-success-soft p-6 sm:p-7"
           >
-            <div class="pointer-events-none absolute -top-16 -right-16 h-40 w-40 rounded-full bg-violet-400/20 blur-2xl"></div>
-            <div class="pointer-events-none absolute -bottom-14 -left-14 h-36 w-36 rounded-full bg-emerald-400/20 blur-2xl"></div>
+            <div class="pointer-events-none absolute -top-16 -right-16 h-40 w-40 rounded-full bg-accent/20 blur-2xl"></div>
+            <div class="pointer-events-none absolute -bottom-14 -left-14 h-36 w-36 rounded-full bg-success/20 blur-2xl"></div>
 
             <div class="relative z-10">
               <div class="mb-4 flex items-center gap-3">
-                <div class="relative flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/15">
-                  <span class="absolute inline-flex h-full w-full rounded-full bg-emerald-400/40 animate-ping"></span>
-                  <svg class="relative h-6 w-6 text-emerald-600 dark:text-emerald-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7" />
-                  </svg>
+                <div class="relative flex h-12 w-12 items-center justify-center rounded-full bg-success/15">
+                  <span class="absolute inline-flex h-full w-full rounded-full bg-success/40 animate-ping"></span>
+                  <IconCheck class="relative h-6 w-6 text-success" />
                 </div>
                 <div>
-                  <p class="text-lg font-semibold text-gray-900 dark:text-gray-100">Account created successfully</p>
-                  <p class="text-sm text-gray-600 dark:text-gray-300">{{ successMessage }}</p>
+                  <p class="text-lg font-semibold text-ink-strong">Account created successfully</p>
+                  <p class="text-sm text-ink-muted">{{ successMessage }}</p>
                 </div>
               </div>
 
-              <div class="rounded-lg border border-white/60 dark:border-gray-700/80 bg-white/80 dark:bg-gray-800/80 backdrop-blur px-4 py-3 mb-4">
-                <p class="text-xs uppercase tracking-wide font-semibold text-gray-500 dark:text-gray-400 mb-2">Next steps</p>
+              <div class="rounded-control border border-hairline bg-card/80 backdrop-blur px-4 py-3 mb-4">
+                <p class="text-xs uppercase tracking-wide font-semibold text-ink-subtle mb-2">Next steps</p>
                 <ol class="space-y-2.5">
                   <li class="flex gap-3" v-for="step in successSteps" :key="step.title">
-                    <span class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-[11px] font-semibold text-violet-700 dark:text-violet-300">{{ step.index }}</span>
-                    <span class="text-sm text-gray-700 dark:text-gray-200">
-                      <span class="font-medium">{{ step.title }}:</span>
+                    <span class="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent">{{ step.index }}</span>
+                    <span class="text-sm text-ink-muted">
+                      <span class="font-medium text-ink-strong">{{ step.title }}:</span>
                       {{ step.description }}
                     </span>
                   </li>
                 </ol>
               </div>
 
-              <p v-if="registeredEmail" class="text-xs text-gray-500 dark:text-gray-400 mb-4">
-                Verification email sent to <span class="font-medium text-gray-700 dark:text-gray-200">{{ registeredEmail }}</span>
+              <p v-if="registeredEmail" class="text-xs text-ink-muted mb-4">
+                Verification email sent to <span class="font-medium text-ink-strong">{{ registeredEmail }}</span>
               </p>
 
               <div class="flex flex-col sm:flex-row gap-3">
-                <router-link
-                  class="btn bg-violet-500 text-white hover:bg-violet-600 dark:bg-violet-500 dark:hover:bg-violet-600 text-center"
-                  :to="signinLink"
-                >
-                  Continue to Sign In
-                </router-link>
-                <router-link
-                  class="btn bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-center"
-                  to="/"
-                >
-                  Back to Home
-                </router-link>
+                <BaseButton :to="signinLink">Continue to Sign In</BaseButton>
+                <BaseButton variant="secondary" to="/">Back to Home</BaseButton>
               </div>
             </div>
         </div>
@@ -238,9 +192,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiFetch, throwForStatus } from '../../../shared/api/http'
 import { previewTenantInvitation, type InvitationPreviewDto } from '../../../api/tenants'
+import { IconCheck } from '@tabler/icons-vue'
 import AuthCard from '@/shared/components/auth/AuthCard.vue'
 import AuthPageHeader from '@/shared/components/auth/AuthPageHeader.vue'
 import AuthAlert from '@/shared/components/auth/AuthAlert.vue'
+import { BaseInput, BaseCheckbox, BaseButton } from '@/shared/components/ui'
 
 const route = useRoute()
 

@@ -4,13 +4,9 @@
     <!-- ── Detail view ──────────────────────────────────────────────────── -->
     <template v-if="selectedSection">
       <!-- Back button -->
-      <button
-        @click="goBack"
-        class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-violet-600 dark:hover:text-violet-400 transition font-medium"
-      >
-        <IconArrowLeft class="w-4 h-4" />
+      <BaseButton variant="ghost" size="sm" :icon="IconArrowLeft" @click="goBack">
         Back to General Settings
-      </button>
+      </BaseButton>
 
       <!-- Live sections -->
       <EmailSettings v-if="selectedSection === 'email'" />
@@ -19,28 +15,21 @@
       <DomainSettings v-else-if="selectedSection === 'domain'" />
 
       <!-- Coming-soon sections: generic detail placeholder -->
-      <div
-        v-else
-        class="bg-white dark:bg-gray-800 shadow-xs rounded-xl p-10 text-center border border-dashed border-gray-300 dark:border-gray-600"
-      >
-        <div class="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center mx-auto mb-3">
-          <component :is="currentSectionIcon" class="text-gray-400 w-6 h-6" />
-        </div>
-        <p class="text-gray-600 dark:text-gray-400 font-medium">
-          {{ currentSectionLabel }} — Coming Soon
-        </p>
-        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1 max-w-sm mx-auto">
-          {{ currentSectionDescription }}
-        </p>
-      </div>
+      <BaseCard v-else>
+        <EmptyState
+          :icon="currentSectionIcon"
+          :title="`${currentSectionLabel} — Coming Soon`"
+          :description="currentSectionDescription"
+        />
+      </BaseCard>
     </template>
 
     <!-- ── List view ────────────────────────────────────────────────────── -->
     <template v-else>
       <!-- Section heading -->
       <div>
-        <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">General Settings</h2>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+        <h2 class="text-lg font-semibold text-ink-strong">General Settings</h2>
+        <p class="mt-0.5 text-sm text-ink-muted">
           Configure instance-wide behaviour, email delivery, branding, and authentication.
         </p>
       </div>
@@ -52,47 +41,34 @@
           :key="section.id"
           @click="section.available ? openSection(section.id) : undefined"
           :disabled="!section.available"
-          class="group text-left bg-white dark:bg-gray-800 rounded-xl p-5 border transition"
+          class="group rounded-card border bg-card p-5 text-left transition"
           :class="section.available
-            ? 'border-gray-200 dark:border-gray-700 hover:border-violet-300 dark:hover:border-violet-500/50 hover:shadow-sm cursor-pointer'
-            : 'border-dashed border-gray-300 dark:border-gray-600 opacity-60 cursor-default'"
+            ? 'border-hairline hover:border-accent/40 hover:shadow-sm cursor-pointer'
+            : 'border-hairline border-dashed opacity-60 cursor-default'"
         >
           <div class="flex items-start gap-3">
-            <!-- Icon badge -->
+            <!-- Icon tile -->
             <div
-              class="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
-              :class="section.available
-                ? 'bg-violet-50 dark:bg-violet-500/10'
-                : 'bg-gray-100 dark:bg-gray-700'"
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+              :class="section.available ? 'bg-accent-soft text-accent' : 'bg-raised text-ink-subtle'"
             >
-              <component
-                :is="section.icon"
-                class="w-5 h-5"
-                :class="section.available
-                  ? 'text-violet-500'
-                  : 'text-gray-400'"
-              />
+              <component :is="section.icon" class="h-5 w-5" />
             </div>
 
             <!-- Text -->
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 mb-0.5">
+            <div class="min-w-0 flex-1">
+              <div class="mb-0.5 flex items-center gap-2">
                 <h3
-                  class="font-medium text-sm"
+                  class="text-sm font-medium"
                   :class="section.available
-                    ? 'text-gray-800 dark:text-gray-100 group-hover:text-violet-600 dark:group-hover:text-violet-400 transition'
-                    : 'text-gray-500 dark:text-gray-400'"
+                    ? 'text-ink-strong transition group-hover:text-accent'
+                    : 'text-ink-muted'"
                 >
                   {{ section.label }}
                 </h3>
-                <span
-                  v-if="!section.available"
-                  class="text-[10px] font-semibold tracking-wide uppercase px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500"
-                >
-                  Soon
-                </span>
+                <BaseBadge v-if="!section.available" tone="neutral" size="sm">Soon</BaseBadge>
               </div>
-              <p class="text-xs text-gray-500 dark:text-gray-500 leading-relaxed">
+              <p class="text-xs leading-relaxed text-ink-subtle">
                 {{ section.description }}
               </p>
             </div>
@@ -100,7 +76,7 @@
             <!-- Chevron for available sections -->
             <IconChevronRight
               v-if="section.available"
-              class="shrink-0 w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-violet-400 dark:group-hover:text-violet-500 transition mt-0.5"
+              class="mt-0.5 h-4 w-4 shrink-0 text-ink-subtle transition group-hover:text-accent"
             />
           </div>
         </button>
@@ -123,6 +99,7 @@ import {
   IconSubtask,
   IconUsers,
 } from '@tabler/icons-vue'
+import { BaseButton, BaseBadge, BaseCard, EmptyState } from '@/shared/components/ui'
 import EmailSettings from './EmailSettings.vue'
 import TenancySettings from './TenancySettings.vue'
 import SSOSettings from './SSOSettings.vue'

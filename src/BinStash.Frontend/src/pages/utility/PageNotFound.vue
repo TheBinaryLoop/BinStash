@@ -16,7 +16,7 @@
     />
 
     <!-- Content area -->
-    <div class="relative flex flex-col flex-1 overflow-y-auto overflow-x-hidden bg-white dark:bg-gray-900">
+    <div class="relative flex flex-col flex-1 overflow-y-auto overflow-x-hidden bg-canvas text-ink-strong">
       
       <!-- Site header -->
       <Header :sidebarOpen="sidebarOpen" @toggle-sidebar="sidebarOpen = !sidebarOpen" variant="v3" />
@@ -31,8 +31,8 @@
                 <img class="dark:hidden" src="../../images//404-illustration.svg" width="176" height="176" alt="404 illustration" />
                 <img class="hidden dark:block" src="../../images//404-illustration-dark.svg" width="176" height="176" alt="404 illustration dark" />                
               </div>
-              <div class="mb-6">Hmm...this page doesn't exist. Try searching for something else!</div>
-              <router-link to="/" class="btn bg-gray-900 text-gray-100 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-800 dark:hover:bg-white">Back To Dashboard</router-link>
+              <div class="mb-6 text-ink-muted">Hmm...this page doesn't exist. Try searching for something else!</div>
+              <BaseButton to="/">Back To Dashboard</BaseButton>
             </div>
 
           </div>
@@ -50,6 +50,7 @@ import { ref, computed } from 'vue'
 import InstanceSidebar from '@/features/instance/components/InstanceSidebar.vue'
 import TenantSidebar from '@/features/tenants/components/TenantSidebar.vue'
 import Header from '@/shared/components/navigation/Header.vue'
+import { BaseButton } from '@/shared/components/ui'
 import { useTenantStore } from '../../stores/tenant'
 import { useAuthStore } from '../../stores/auth'
 import { useRoute } from 'vue-router'
@@ -60,6 +61,7 @@ export default {
     InstanceSidebar,
     TenantSidebar,
     Header,
+    BaseButton,
   },
   setup() {
     const sidebarOpen = ref(false)

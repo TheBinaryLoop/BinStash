@@ -3,67 +3,57 @@
     <!-- Leave tenant (for members) -->
     <div
       v-if="!isAdmin"
-      class="bg-white dark:bg-gray-800 rounded-xl border border-orange-200 dark:border-orange-800/50 shadow-sm overflow-hidden"
+      class="overflow-hidden rounded-card border border-warning/25 bg-card"
     >
-      <div class="px-5 py-4 border-b border-orange-200 dark:border-orange-800/50">
-        <h2 class="font-semibold text-orange-700 dark:text-orange-400">Leave Tenant</h2>
+      <div class="border-b border-warning/25 px-5 py-4">
+        <h2 class="font-semibold text-warning">Leave Tenant</h2>
       </div>
-      <div class="p-5 flex items-center justify-between gap-4">
-        <p class="text-sm text-gray-600 dark:text-gray-400">
+      <div class="flex items-center justify-between gap-4 p-5">
+        <p class="text-sm text-ink-muted">
           You will lose access to all repositories in this tenant. This cannot be undone.
         </p>
-        <button
-          @click="showLeaveModal = true"
-          class="shrink-0 btn border border-orange-200 dark:border-orange-800 text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 text-sm"
-        >
+        <BaseButton variant="secondary" size="sm" class="shrink-0 text-warning" @click="showLeaveModal = true">
           Leave Tenant
-        </button>
+        </BaseButton>
       </div>
     </div>
 
     <!-- Danger zone (admin only) -->
     <div
       v-if="isAdmin"
-      class="bg-white dark:bg-gray-800 rounded-xl border border-red-200 dark:border-red-800/50 shadow-sm overflow-hidden"
+      class="overflow-hidden rounded-card border border-danger/25 bg-card"
     >
-      <div class="px-5 py-4 border-b border-red-200 dark:border-red-800/50">
-        <h2 class="font-semibold text-red-600 dark:text-red-400 flex items-center gap-2">
-          <IconAlertTriangle class="w-4 h-4" />
+      <div class="border-b border-danger/25 px-5 py-4">
+        <h2 class="flex items-center gap-2 font-semibold text-danger">
+          <IconAlertTriangle class="h-4 w-4" />
           Danger Zone
         </h2>
       </div>
-      <div class="p-5 space-y-4">
+      <div class="space-y-4 p-5">
         <div v-if="!isInstanceAdmin" class="flex items-center justify-between gap-4">
           <div>
-            <p class="text-sm font-medium text-gray-800 dark:text-gray-100">Leave Tenant</p>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Remove yourself from this tenant. Another admin must be present.</p>
+            <p class="text-sm font-medium text-ink-strong">Leave Tenant</p>
+            <p class="mt-0.5 text-xs text-ink-muted">Remove yourself from this tenant. Another admin must be present.</p>
           </div>
-          <button
-            @click="showLeaveModal = true"
-            class="shrink-0 btn border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 text-sm"
-          >
+          <BaseButton variant="secondary" size="sm" class="shrink-0 text-danger" @click="showLeaveModal = true">
             Leave
-          </button>
+          </BaseButton>
         </div>
       </div>
     </div>
 
-    <Teleport to="body">
-      <div v-if="showLeaveModal" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showLeaveModal = false" />
-        <div class="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-sm p-6 border border-gray-200 dark:border-gray-700">
-          <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-2">Leave Tenant?</h3>
-          <p class="text-sm text-gray-500 dark:text-gray-400">You will lose access to <span class="font-medium text-gray-700 dark:text-gray-200">{{ tenantName }}</span> and all its repositories.</p>
-          <div v-if="leaveError" class="mt-3 text-sm text-red-500">{{ leaveError }}</div>
-          <div class="mt-6 flex justify-end gap-3">
-            <button @click="showLeaveModal = false" class="btn border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
-            <button @click="doLeave" :disabled="leaving" class="btn bg-red-500 hover:bg-red-600 text-white disabled:opacity-50">
-              {{ leaving ? 'Leaving…' : 'Leave' }}
-            </button>
-          </div>
-        </div>
+    <BaseModal v-model:open="showLeaveModal" title="Leave Tenant?" size="sm">
+      <div class="space-y-3">
+        <p class="text-sm text-ink-muted">
+          You will lose access to <span class="font-medium text-ink-strong">{{ tenantName }}</span> and all its repositories.
+        </p>
+        <div v-if="leaveError" class="text-sm text-danger">{{ leaveError }}</div>
       </div>
-    </Teleport>
+      <template #footer>
+        <BaseButton variant="secondary" @click="showLeaveModal = false">Cancel</BaseButton>
+        <BaseButton variant="danger" :loading="leaving" @click="doLeave">{{ leaving ? 'Leaving…' : 'Leave' }}</BaseButton>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -74,6 +64,10 @@ import { IconAlertTriangle } from '@tabler/icons-vue'
 import { leaveTenant } from '@/api/tenants'
 import { useAuthStore } from '@/stores/auth'
 import { useTenantStore } from '@/stores/tenant'
+import { BaseButton, BaseModal } from '@/shared/components/ui'
+import { useToast } from '@/composables/useToast'
+
+const toast = useToast()
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -95,10 +89,12 @@ async function doLeave() {
   leaveError.value = null
   try {
     await leaveTenant()
+    toast.success('You left the tenant')
     tenantStore.setCurrentTenant(null)
     router.push('/select-tenant')
   } catch (e: any) {
     leaveError.value = e?.message ?? 'Failed to leave tenant.'
+    toast.error(leaveError.value)
   } finally {
     leaving.value = false
   }

@@ -1,5 +1,5 @@
 <template>
-  <main class="font-montserrat min-h-dvh bg-canvas text-ink-strong">
+  <main class="min-h-dvh bg-canvas text-ink-strong">
     <div class="flex min-h-dvh">
       <!-- Form column -->
       <div class="flex w-full flex-col md:w-1/2">

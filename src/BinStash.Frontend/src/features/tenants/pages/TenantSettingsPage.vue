@@ -1,13 +1,5 @@
 <template>
-  <!-- Page header -->
-  <div class="mb-6">
-    <h1 class="text-2xl md:text-3xl text-gray-800 dark:text-gray-100 font-bold">
-      Tenant Settings
-    </h1>
-    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-      View and manage settings for this workspace.
-    </p>
-  </div>
+  <PageHeader title="Tenant Settings" description="View and manage settings for this workspace." />
 
   <!-- Top-level tab bar -->
   <Tabs
@@ -25,6 +17,7 @@ import { useRoute } from 'vue-router'
 import { IconAdjustmentsHorizontal } from '@tabler/icons-vue'
 import Tabs from '@/shared/components/navigation/Tabs.vue'
 import type { TabItem } from '@/shared/components/navigation/Tabs.vue'
+import { PageHeader } from '@/shared/components/ui'
 
 import GeneralSettings from '@/features/tenants/features/settings/components/GeneralSettings.vue'
 

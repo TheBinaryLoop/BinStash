@@ -22,44 +22,31 @@
 
       <form @submit.prevent="onSubmit">
         <div class="space-y-4">
-          <div>
-            <label class="mb-1.5 block text-sm font-medium text-ink-strong" for="email">Email Address</label>
-            <input
-              id="email"
-              class="h-11 w-full rounded-2xl border border-hairline bg-transparent px-4 text-sm text-ink-strong outline-none transition placeholder:text-ink-muted focus:border-accent disabled:opacity-50"
-              type="email"
-              autocomplete="email"
-              v-model.trim="email"
-              :disabled="isSubmitting"
-              required
-            />
-          </div>
+          <BaseInput
+            v-model.trim="email"
+            label="Email Address"
+            type="email"
+            autocomplete="email"
+            :disabled="isSubmitting"
+            required
+          />
 
-          <div>
-            <label class="mb-1.5 block text-sm font-medium text-ink-strong" for="password">Password</label>
-            <input
-              id="password"
-              class="h-11 w-full rounded-2xl border border-hairline bg-transparent px-4 text-sm text-ink-strong outline-none transition placeholder:text-ink-muted focus:border-accent disabled:opacity-50"
-              type="password"
-              autocomplete="current-password"
-              v-model="password"
-              :disabled="isSubmitting"
-              required
-            />
-          </div>
+          <BaseInput
+            v-model="password"
+            label="Password"
+            type="password"
+            autocomplete="current-password"
+            :disabled="isSubmitting"
+            required
+          />
         </div>
 
-        <div class="mt-4 flex items-center">
-          <input
-            id="stay-signed-in"
-            type="checkbox"
-            class="size-4 rounded border-hairline text-accent focus:ring-accent"
+        <div class="mt-4">
+          <BaseCheckbox
             v-model="staySignedIn"
+            label="Stay signed in"
             :disabled="isSubmitting"
           />
-          <label for="stay-signed-in" class="ml-2 text-sm text-ink-muted">
-            Stay signed in
-          </label>
         </div>
 
         <div class="mt-6 flex items-center justify-between gap-3">
@@ -67,14 +54,9 @@
             Forgot Password?
           </router-link>
 
-          <button
-            class="inline-flex items-center rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white whitespace-nowrap transition hover:brightness-110 disabled:opacity-50"
-            type="submit"
-            :disabled="isSubmitting"
-          >
-            <span v-if="!isSubmitting">Sign In</span>
-            <span v-else>Signing in…</span>
-          </button>
+          <BaseButton type="submit" :loading="isSubmitting">
+            {{ isSubmitting ? 'Signing in…' : 'Sign In' }}
+          </BaseButton>
         </div>
       </form>
 
@@ -102,6 +84,7 @@ import { useTenantStore } from '../../../stores/tenant'
 import AuthCard from '@/shared/components/auth/AuthCard.vue'
 import AuthPageHeader from '@/shared/components/auth/AuthPageHeader.vue'
 import AuthAlert from '@/shared/components/auth/AuthAlert.vue'
+import { BaseInput, BaseCheckbox, BaseButton } from '@/shared/components/ui'
 
 const auth = useAuthStore()
 const tenant = useTenantStore()

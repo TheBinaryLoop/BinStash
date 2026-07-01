@@ -1,5 +1,5 @@
 <template>
-  <main class="bg-white dark:bg-gray-900 min-h-dvh">
+  <main class="bg-canvas text-ink-strong min-h-dvh">
     <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
 
       <!-- Logo + Theme Toggle -->
@@ -35,36 +35,31 @@
       </div>
 
       <div class="mb-8">
-        <h1 class="text-3xl text-gray-800 dark:text-gray-100 font-bold">You've been invited!</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mt-2">
+        <h1 class="text-3xl font-bold tracking-tight text-ink-strong">You've been invited!</h1>
+        <p class="text-sm text-ink-muted mt-2">
           Review your invitation below and accept or decline it.
         </p>
       </div>
 
       <!-- Error -->
       <div v-if="error" class="mb-6">
-        <div class="bg-rose-500/20 text-rose-700 dark:text-rose-200 px-3 py-2 rounded-lg">
-          <span class="text-sm">{{ error }}</span>
+        <div class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
+          {{ error }}
         </div>
       </div>
 
       <!-- Declined state -->
-      <div v-if="declined" class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs p-6 sm:p-8 text-center space-y-4">
+      <div v-if="declined" class="rounded-card border border-hairline bg-card shadow-xs p-6 sm:p-8 text-center space-y-4">
         <div class="text-4xl">🚫</div>
-        <p class="text-gray-700 dark:text-gray-300 text-sm">You declined the invitation.</p>
-        <router-link to="/" class="btn bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 text-sm">
-          Go to Dashboard
-        </router-link>
+        <p class="text-ink-muted text-sm">You declined the invitation.</p>
+        <BaseButton variant="secondary" to="/">Go to Dashboard</BaseButton>
       </div>
 
       <template v-else>
         <!-- Loading -->
-        <div v-if="isLoading" class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs p-6 sm:p-8">
-          <div class="flex items-center gap-3 text-gray-500 dark:text-gray-400 text-sm">
-            <svg class="animate-spin h-4 w-4 text-violet-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-            </svg>
+        <div v-if="isLoading" class="rounded-card border border-hairline bg-card shadow-xs p-6 sm:p-8">
+          <div class="flex items-center gap-3 text-ink-muted text-sm">
+            <Spinner :size="16" :thickness="2" color="var(--color-accent)" />
             Loading invitation details…
           </div>
         </div>
@@ -72,92 +67,84 @@
         <!-- Not authenticated -->
         <div
           v-else-if="!isAuthed"
-          class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs p-6 sm:p-8 space-y-6"
+          class="rounded-card border border-hairline bg-card shadow-xs p-6 sm:p-8 space-y-6"
         >
           <!-- Invitation summary -->
           <div class="flex items-start gap-4">
-            <div class="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center shrink-0">
-              <IconBuildingSkyscraper class="w-6 h-6 text-violet-500" />
+            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-accent-soft text-accent shrink-0">
+              <IconBuildingSkyscraper class="w-6 h-6" />
             </div>
             <div>
-              <p class="text-gray-800 dark:text-gray-100 font-semibold text-base">
+              <p class="text-ink-strong font-semibold text-base">
                 {{ preview?.tenantName ?? 'A workspace' }}
               </p>
-              <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+              <p class="text-sm text-ink-muted mt-0.5">
                 You are invited to join as
-                <span class="font-medium text-gray-700 dark:text-gray-300">{{ preview?.role ?? 'a member' }}</span>.
+                <span class="font-medium text-ink-strong">{{ preview?.role ?? 'a member' }}</span>.
               </p>
-              <p v-if="preview?.invitedEmail" class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+              <p v-if="preview?.invitedEmail" class="text-xs text-ink-subtle mt-1">
                 Invitation sent to {{ preview.invitedEmail }}
               </p>
-              <p v-if="expiresAtFormatted" class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+              <p v-if="expiresAtFormatted" class="text-xs text-ink-subtle mt-1">
                 Expires {{ expiresAtFormatted }}
               </p>
             </div>
           </div>
 
-          <p class="text-sm text-gray-600 dark:text-gray-400">
+          <p class="text-sm text-ink-muted">
             If you already have an account, sign in first and then choose whether to accept this invitation.
             If you create a new account, this invitation will be linked during signup automatically.
           </p>
 
           <div class="flex flex-col sm:flex-row gap-3">
-            <router-link
-              :to="{ path: '/signin', query: { redirect: currentPath, tenantId, invitationCode } }"
-              class="btn bg-violet-500 hover:bg-violet-600 text-white text-sm text-center"
-            >
+            <BaseButton :to="{ path: '/signin', query: { redirect: currentPath, tenantId, invitationCode } }">
               Sign In
-            </router-link>
-            <router-link
-              :to="{ path: '/signup', query: { tenantId, invitationCode } }"
-              class="btn bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm text-center"
-            >
+            </BaseButton>
+            <BaseButton variant="secondary" :to="{ path: '/signup', query: { tenantId, invitationCode } }">
               Create an Account
-            </router-link>
+            </BaseButton>
           </div>
         </div>
 
         <!-- Authenticated: show full invitation details + actions -->
         <div
           v-else
-          class="rounded-2xl border border-gray-200 dark:border-gray-700/60 bg-white dark:bg-gray-800 shadow-xs p-6 sm:p-8 space-y-6"
+          class="rounded-card border border-hairline bg-card shadow-xs p-6 sm:p-8 space-y-6"
         >
           <!-- Workspace header -->
           <div class="flex items-start gap-4">
-            <div class="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center shrink-0">
-              <IconBuildingSkyscraper class="w-6 h-6 text-violet-500" />
+            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-accent-soft text-accent shrink-0">
+              <IconBuildingSkyscraper class="w-6 h-6" />
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-gray-800 dark:text-gray-100 font-semibold text-lg truncate">
+              <p class="text-ink-strong font-semibold text-lg truncate">
                 {{ preview?.tenantName ?? tenantId }}
               </p>
-              <p v-if="preview?.tenantSlug" class="text-xs text-gray-400 dark:text-gray-500 font-mono mt-0.5">
+              <p v-if="preview?.tenantSlug" class="text-xs text-ink-subtle font-mono mt-0.5">
                 {{ preview.tenantSlug }}
               </p>
             </div>
           </div>
 
           <!-- Invitation details panel -->
-          <div class="rounded-xl bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-700 px-4 py-3 space-y-2.5">
-            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Invitation details</p>
+          <div class="rounded-control border border-hairline bg-raised px-4 py-3 space-y-2.5">
+            <p class="text-xs font-semibold uppercase tracking-wide text-ink-subtle">Invitation details</p>
 
             <div class="flex items-center justify-between">
-              <span class="text-sm text-gray-600 dark:text-gray-300">Your role</span>
-              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
-                {{ preview?.role ?? 'Member' }}
-              </span>
+              <span class="text-sm text-ink-muted">Your role</span>
+              <BaseBadge tone="accent">{{ preview?.role ?? 'Member' }}</BaseBadge>
             </div>
 
             <div v-if="preview?.invitedEmail" class="flex items-center justify-between">
-              <span class="text-sm text-gray-600 dark:text-gray-300">Invited email</span>
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ preview.invitedEmail }}</span>
+              <span class="text-sm text-ink-muted">Invited email</span>
+              <span class="text-sm font-medium text-ink-strong">{{ preview.invitedEmail }}</span>
             </div>
 
             <div v-if="expiresAtFormatted" class="flex items-center justify-between">
-              <span class="text-sm text-gray-600 dark:text-gray-300">Expires</span>
+              <span class="text-sm text-ink-muted">Expires</span>
               <span
                 class="text-sm font-medium"
-                :class="isExpiringSoon ? 'text-amber-600 dark:text-amber-400' : 'text-gray-700 dark:text-gray-200'"
+                :class="isExpiringSoon ? 'text-warning' : 'text-ink-strong'"
               >
                 {{ expiresAtFormatted }}
               </span>
@@ -166,29 +153,12 @@
 
           <!-- Actions -->
           <div class="flex flex-col sm:flex-row gap-3 pt-2">
-            <button
-              type="button"
-              class="btn bg-violet-500 hover:bg-violet-600 text-white text-sm"
-              :disabled="isAccepting"
-              @click="onAccept"
-            >
-              <span v-if="!isAccepting">Accept Invitation</span>
-              <span v-else class="flex items-center gap-2">
-                <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                </svg>
-                Accepting…
-              </span>
-            </button>
-            <button
-              type="button"
-              class="btn bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm"
-              :disabled="isAccepting"
-              @click="onDecline"
-            >
+            <BaseButton :loading="isAccepting" :disabled="isAccepting" @click="onAccept">
+              {{ isAccepting ? 'Accepting…' : 'Accept Invitation' }}
+            </BaseButton>
+            <BaseButton variant="secondary" :disabled="isAccepting" @click="onDecline">
               Decline
-            </button>
+            </BaseButton>
           </div>
         </div>
       </template>
@@ -204,6 +174,8 @@ import { IconBuildingSkyscraper } from '@tabler/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { useTenantStore } from '../stores/tenant'
 import ThemeToggle from '../components/ThemeToggle.vue'
+import Spinner from '@/shared/components/feedback/Spinner.vue'
+import { BaseButton, BaseBadge } from '@/shared/components/ui'
 import {
   acceptTenantInvitation,
   previewTenantInvitation,

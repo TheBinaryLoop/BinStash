@@ -1,13 +1,9 @@
 <template>
   <!-- Page header -->
-  <div class="mb-6">
-    <h1 class="text-2xl md:text-3xl text-gray-800 dark:text-gray-100 font-bold">
-      Instance Settings
-    </h1>
-    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-      Configure global storage, chunk stores, and instance-wide settings.
-    </p>
-  </div>
+  <PageHeader
+    title="Instance Settings"
+    description="Configure global storage, chunk stores, and instance-wide settings."
+  />
 
   <!-- Top-level tab bar -->
   <Tabs
@@ -32,6 +28,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import Tabs from '@/shared/components/navigation/Tabs.vue'
 import type { TabItem } from '@/shared/components/navigation/Tabs.vue'
+import { PageHeader } from '@/shared/components/ui'
 
 import GeneralSettings from '@/features/instance/features/settings/components/GeneralSettings.vue'
 import ChunkStoresSettings from '@/features/instance/features/settings/components/ChunkStoresSettings.vue'

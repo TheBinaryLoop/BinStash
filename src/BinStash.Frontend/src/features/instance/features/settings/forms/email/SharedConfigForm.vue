@@ -1,41 +1,32 @@
 <template>
   <div class="space-y-4">
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <div>
-        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-          From Email <span class="text-rose-500">*</span>
-        </label>
-        <input
-          :value="modelValue.fromEmail"
-          @input="update('fromEmail', ($event.target as HTMLInputElement).value)"
-          type="email"
-          placeholder="e.g. noreply@example.com"
-          class="form-input w-full text-sm"
-          :class="errors?.fromEmail ? 'border-rose-300 dark:border-rose-500/60 focus:border-rose-400 focus:ring-rose-200' : ''"
-        />
-        <p v-if="errors?.fromEmail" class="mt-1 text-xs text-rose-600 dark:text-rose-400">{{ errors.fromEmail }}</p>
-        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">The address shown in the "From" field of all outgoing email.</p>
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-          Support Email <span class="text-rose-500">*</span>
-        </label>
-        <input
-          :value="modelValue.supportEmail"
-          @input="update('supportEmail', ($event.target as HTMLInputElement).value)"
-          type="email"
-          placeholder="e.g. support@example.com"
-          class="form-input w-full text-sm"
-          :class="errors?.supportEmail ? 'border-rose-300 dark:border-rose-500/60 focus:border-rose-400 focus:ring-rose-200' : ''"
-        />
-        <p v-if="errors?.supportEmail" class="mt-1 text-xs text-rose-600 dark:text-rose-400">{{ errors.supportEmail }}</p>
-        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">Shown as the reply-to / support contact in email footers.</p>
-      </div>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <BaseInput
+        :model-value="modelValue.fromEmail"
+        @update:model-value="update('fromEmail', String($event ?? ''))"
+        label="From Email"
+        required
+        type="email"
+        placeholder="e.g. noreply@example.com"
+        :error="errors?.fromEmail ?? undefined"
+        hint="The address shown in the &quot;From&quot; field of all outgoing email."
+      />
+      <BaseInput
+        :model-value="modelValue.supportEmail"
+        @update:model-value="update('supportEmail', String($event ?? ''))"
+        label="Support Email"
+        required
+        type="email"
+        placeholder="e.g. support@example.com"
+        :error="errors?.supportEmail ?? undefined"
+        hint="Shown as the reply-to / support contact in email footers."
+      />
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
+import { BaseInput } from '@/shared/components/ui'
 import type { SharedEmailConfig } from '@/api/instance'
 
 const props = defineProps<{

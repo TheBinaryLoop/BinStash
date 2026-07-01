@@ -1,41 +1,52 @@
 <template>
-  <form @submit.prevent="onSubmit" class="flex flex-col gap-4 w-full max-w-none">
-    <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100">Step 5: Create Storage Defaults</h2>
-    <p class="text-gray-600 dark:text-gray-400">
+  <form @submit.prevent="onSubmit" class="flex w-full max-w-none flex-col gap-4">
+    <h2 class="text-xl font-bold text-ink-strong">Step 5: Create Storage Defaults</h2>
+    <p class="text-sm text-ink-muted">
       Map each storage class to a unique chunk store, then choose one default mapping and set enabled state.
     </p>
 
-    <div v-if="loadingInitial" class="text-gray-500 dark:text-gray-400 text-sm">Loading setup data...</div>
+    <div v-if="loadingInitial" class="flex items-center gap-2 text-sm text-ink-muted">
+      <Spinner :size="18" color="var(--color-accent)" />
+      Loading setup data...
+    </div>
 
     <template v-else>
-      <div v-if="!storageClasses.length" class="text-red-600 dark:text-red-400 text-sm">
+      <div
+        v-if="!storageClasses.length"
+        class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+      >
         No storage classes found. Create storage classes first.
       </div>
-      <div v-else-if="!chunkStores.length" class="text-red-600 dark:text-red-400 text-sm">
+      <div
+        v-else-if="!chunkStores.length"
+        class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+      >
         No chunk stores found. Create at least one chunk store first.
       </div>
-      <div v-else-if="chunkStores.length < storageClasses.length" class="text-red-600 dark:text-red-400 text-sm">
+      <div
+        v-else-if="chunkStores.length < storageClasses.length"
+        class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+      >
         A unique 1:1 mapping requires at least as many chunk stores as storage classes.
       </div>
-      <div v-else class="flex flex-col gap-3 w-full">
+      <div v-else class="flex w-full flex-col gap-3">
         <div
           v-for="(mapping, idx) in mappings"
           :key="mapping.storageClassName"
-          class="flex flex-row flex-wrap gap-4 items-center bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-lg px-4 py-3 w-full box-border"
+          class="box-border flex w-full flex-row flex-wrap items-center gap-4 rounded-card border border-hairline bg-raised px-4 py-3"
         >
           <div class="min-w-32">
-            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Storage Class</label>
-            <div class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ mapping.storageClassName }}</div>
+            <label class="mb-1 block text-xs font-medium text-ink-subtle">Storage Class</label>
+            <div class="text-sm font-medium text-ink-strong">{{ mapping.storageClassName }}</div>
           </div>
 
-          <div class="flex-1 min-w-48">
-            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Chunk Store</label>
-            <select
+          <div class="min-w-48 flex-1">
+            <label class="mb-1 block text-xs font-medium text-ink-subtle">Chunk Store</label>
+            <BaseSelect
               v-model="mapping.chunkStoreId"
-              @change="onChunkStoreChange(idx)"
-              class="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
               :disabled="loading"
               required
+              @change="onChunkStoreChange(idx)"
             >
               <option value="" disabled>Select chunk store</option>
               <option
@@ -45,53 +56,50 @@
               >
                 {{ cs.name }}
               </option>
-            </select>
+            </BaseSelect>
           </div>
 
           <div class="min-w-24">
-            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Default</label>
-            <label class="inline-flex items-center gap-2 cursor-pointer">
+            <label class="mb-1 block text-xs font-medium text-ink-subtle">Default</label>
+            <label class="inline-flex cursor-pointer items-center gap-2">
               <input
                 type="radio"
                 name="default-storage-mapping"
                 :checked="mapping.isDefault"
                 @change="setDefault(idx)"
                 :disabled="loading"
-                class="accent-violet-500"
+                class="accent-accent"
               />
-              <span class="text-sm text-gray-700 dark:text-gray-300">Default</span>
+              <span class="text-sm text-ink-muted">Default</span>
             </label>
           </div>
 
           <div class="min-w-24">
-            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Enabled</label>
-            <label class="inline-flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                v-model="mapping.isEnabled"
-                :disabled="loading"
-                class="accent-violet-500"
-              />
-              <span class="text-sm text-gray-700 dark:text-gray-300">{{ mapping.isEnabled ? 'True' : 'False' }}</span>
-            </label>
+            <label class="mb-1 block text-xs font-medium text-ink-subtle">Enabled</label>
+            <BaseSwitch
+              v-model="mapping.isEnabled"
+              :disabled="loading"
+              :label="mapping.isEnabled ? 'True' : 'False'"
+            />
           </div>
         </div>
       </div>
     </template>
 
-    <div v-if="error" class="text-red-600 dark:text-red-400 text-sm">{{ error }}</div>
-    <div v-if="success" class="text-green-600 dark:text-green-400 text-sm">
+    <div
+      v-if="error"
+      class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+    >{{ error }}</div>
+    <div
+      v-if="success"
+      class="rounded-card border border-success/25 bg-success-soft px-4 py-3 text-sm text-success"
+    >
       Storage defaults saved successfully.
     </div>
 
-<button
-      type="submit"
-      :disabled="loading"
-      class="flex items-center justify-center px-6 py-2 text-sm font-medium bg-violet-500 hover:bg-violet-600 text-white rounded-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-    >
-      <Spinner v-if="loading" color="white" class="w-4 h-4 mr-2" />
+    <BaseButton type="submit" :loading="loading" :disabled="loading">
       {{ loading ? 'Saving...' : 'Save Storage Defaults' }}
-    </button>
+    </BaseButton>
   </form>
 </template>
 
@@ -99,6 +107,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useSetupStore } from '@/features/setup/store/setup.store'
 import { createStorageDefaults } from '@/features/setup/api/setup.api'
+import { BaseSelect, BaseSwitch, BaseButton } from '@/shared/components/ui'
 import Spinner from '@/shared/components/feedback/Spinner.vue'
 
 interface MappingFormModel {
@@ -133,20 +142,16 @@ function initializeMappings() {
       existing?.chunkStoreId && chunkStores.value.some(cs => cs.id === existing.chunkStoreId)
         ? existing.chunkStoreId
         : ''
-
     if (selectedChunkStoreId && usedChunkStoreIds.has(selectedChunkStoreId)) {
       selectedChunkStoreId = ''
     }
-
     if (!selectedChunkStoreId) {
       const available = chunkStores.value.find(cs => !usedChunkStoreIds.has(cs.id))
       selectedChunkStoreId = available?.id ?? ''
     }
-
     if (selectedChunkStoreId) {
       usedChunkStoreIds.add(selectedChunkStoreId)
     }
-
     nextMappings.push({
       storageClassName: sc.name,
       chunkStoreId: selectedChunkStoreId,
@@ -158,7 +163,6 @@ function initializeMappings() {
   const defaultIndexes = nextMappings
     .map((m, i) => (m.isDefault ? i : -1))
     .filter(i => i >= 0)
-
   if (defaultIndexes.length === 0 && nextMappings.length > 0) {
     nextMappings[0].isDefault = true
   } else if (defaultIndexes.length > 1) {
@@ -244,13 +248,10 @@ onMounted(async () => {
 async function onSubmit() {
   error.value = null
   success.value = false
-
   if (!canSubmit.value) {
-    error.value =
-      'Each storage class must map to a unique chunk store, with exactly one default mapping.'
+    error.value = 'Each storage class must map to a unique chunk store, with exactly one default mapping.'
     return
   }
-
   loading.value = true
   try {
     await createStorageDefaults(

@@ -1,232 +1,39 @@
 <template>
-  <div class="min-w-fit">
-    <!-- Sidebar backdrop (mobile only) -->
-    <div
-      class="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-sm lg:hidden lg:z-auto transition-opacity duration-200"
-      :class="sidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'"
-      aria-hidden="true"
-    ></div>
+  <SidebarShell :sidebar-open="sidebarOpen" home-to="/instance" @close-sidebar="emit('close-sidebar')">
+    <template #badge>
+      <SidebarBadge label="Instance Admin" tone="accent" :icon="IconShieldHalfFilled" />
+    </template>
 
-    <!-- Sidebar -->
-    <div
-      id="sidebar"
-      ref="sidebar"
-      class="flex lg:flex! flex-col absolute z-40 left-0 top-0 lg:static lg:left-auto lg:top-auto lg:translate-x-0 h-dvh overflow-y-scroll lg:overflow-y-auto no-scrollbar shrink-0 bg-white dark:bg-[#090E1E] text-slate-900 dark:text-white transition-all duration-200 ease-in-out border-r border-slate-200 dark:border-white/5"
-      :class="[
-        sidebarOpen ? 'translate-x-0' : '-translate-x-64',
-        'w-[212px] lg:w-[72px] lg:sidebar-expanded:w-[212px]!'
-      ]"
-    >
-      <!-- Top: Logo + Collapse toggle -->
-      <div class="flex items-center px-5 py-5 lg:sidebar-expanded:px-5 lg:px-0 lg:justify-center lg:sidebar-expanded:justify-between">
-        <!-- Mobile close button -->
-        <button
-          ref="trigger"
-          class="lg:hidden text-slate-500 transition hover:text-slate-700 dark:text-slate-400 dark:hover:text-white mr-3"
-          @click.stop="$emit('close-sidebar')"
-          aria-controls="sidebar"
-          :aria-expanded="sidebarOpen"
-        >
-          <span class="sr-only">Close sidebar</span>
-          <svg class="w-6 h-6 fill-current" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path d="M10.7 18.7l1.4-1.4L7.8 13H20v-2H7.8l4.3-4.3-1.4-1.4L4 12z" />
-          </svg>
-        </button>
+    <SidebarSection title="Instance">
+      <SidebarItem to="/instance" :icon="IconLayoutDashboard" label="Overview" exact />
+      <SidebarItem to="/instance/tenants" :icon="IconBuildingSkyscraper" label="Tenants" />
+      <SidebarItem to="/instance/users" :icon="IconUsers" label="Users" />
+    </SidebarSection>
 
-        <router-link class="block shrink-0" to="/instance">
-          <div class="flex h-8 w-8 items-center justify-center rounded-[10px] bg-linear-to-br from-[#615FFF] to-[#9810FA] shadow-lg shadow-violet-500/20">
-            <svg class="h-5 w-5 fill-white" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-              <path d="M31.956 14.8C31.372 6.92 25.08.628 17.2.044V5.76a9.04 9.04 0 0 0 9.04 9.04h5.716ZM14.8 26.24v5.716C6.92 31.372.63 25.08.044 17.2H5.76a9.04 9.04 0 0 1 9.04 9.04Zm11.44-9.04h5.716c-.584 7.88-6.876 14.172-14.756 14.756V26.24a9.04 9.04 0 0 1 9.04-9.04ZM.044 14.8C.63 6.92 6.92.628 14.8.044V5.76a9.04 9.04 0 0 1-9.04 9.04H.044Z" />
-            </svg>
-          </div>
-        </router-link>
-      </div>
+    <SidebarSection title="Storage">
+      <SidebarItem to="/chunk-stores" :icon="IconDatabase" label="Chunk Stores" />
+    </SidebarSection>
 
-      <!-- Instance Admin badge (expanded only) -->
-      <div class="px-5 mb-6 lg:px-0 lg:sidebar-expanded:px-5 overflow-hidden">
-        <span
-          class="inline-flex max-w-full items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-400 dark:text-violet-300 transition duration-200 truncate lg:opacity-0 lg:sidebar-expanded:opacity-100 lg:h-0 lg:sidebar-expanded:h-auto lg:overflow-hidden"
-        >
-          <svg class="h-2.5 w-2.5 shrink-0 fill-current" viewBox="0 0 16 16">
-            <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0Zm3.5 7.5-4 4a.75.75 0 0 1-1.06 0l-2-2a.75.75 0 1 1 1.06-1.06L7 9.94l3.47-3.47a.75.75 0 1 1 1.06 1.06Z" />
-          </svg>
-          <span class="truncate">Instance Admin</span>
-        </span>
-      </div>
-
-      <!-- Navigation -->
-      <nav class="flex-1 space-y-6 px-3 lg:px-2 lg:sidebar-expanded:px-3">
-        <!-- Instance group -->
-        <div>
-          <h3 class="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
-            <span class="hidden lg:block lg:sidebar-expanded:hidden text-center" aria-hidden="true">•••</span>
-            <span class="lg:hidden lg:sidebar-expanded:block">Instance</span>
-          </h3>
-          <ul class="space-y-0.5">
-            <router-link to="/instance" custom v-slot="{ href, navigate, isExactActive }">
-              <li>
-                <a
-                  class="group flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition lg:justify-center lg:sidebar-expanded:justify-start"
-                  :class="isExactActive
-                    ? 'bg-[#19284F] text-white'
-                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5'"
-                  :href="href"
-                  @click="navigate"
-                >
-                  <IconDashboard
-                    class="shrink-0 h-5 w-5"
-                    :class="isExactActive ? 'text-[#7C86FF]' : 'text-slate-400 dark:text-slate-500'" />
-                  <span class="lg:hidden lg:sidebar-expanded:inline whitespace-nowrap">Overview</span>
-                </a>
-              </li>
-            </router-link>
-
-            <router-link to="/instance/tenants" custom v-slot="{ href, navigate, isActive }">
-              <li>
-                <a
-                  class="group flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition lg:justify-center lg:sidebar-expanded:justify-start"
-                  :class="isActive
-                    ? 'bg-[#19284F] text-white'
-                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5'"
-                  :href="href"
-                  @click="navigate"
-                >
-                  <IconBuildingSkyscraper
-                    class="shrink-0 h-5 w-5"
-                    :class="isActive ? 'text-[#7C86FF]' : 'text-slate-400 dark:text-slate-500'" />
-                  <span class="lg:hidden lg:sidebar-expanded:inline whitespace-nowrap">Tenants</span>
-                </a>
-              </li>
-            </router-link>
-
-            <router-link to="/instance/users" custom v-slot="{ href, navigate, isActive }">
-              <li>
-                <a
-                  class="group flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition lg:justify-center lg:sidebar-expanded:justify-start"
-                  :class="isActive
-                    ? 'bg-[#19284F] text-white'
-                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5'"
-                  :href="href"
-                  @click="navigate"
-                >
-                  <IconUser
-                    class="shrink-0 h-5 w-5"
-                    :class="isActive ? 'text-[#7C86FF]' : 'text-slate-400 dark:text-slate-500'" />
-                  <span class="lg:hidden lg:sidebar-expanded:inline whitespace-nowrap">Users</span>
-                </a>
-              </li>
-            </router-link>
-          </ul>
-        </div>
-
-        <!-- Account group -->
-        <div>
-          <h3 class="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
-            <span class="hidden lg:block lg:sidebar-expanded:hidden text-center" aria-hidden="true">•••</span>
-            <span class="lg:hidden lg:sidebar-expanded:block">Account</span>
-          </h3>
-          <ul class="space-y-0.5">
-            <router-link to="/instance/settings" custom v-slot="{ href, navigate, isActive }">
-              <li>
-                <a
-                  class="group flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition lg:justify-center lg:sidebar-expanded:justify-start"
-                  :class="isActive
-                    ? 'bg-[#19284F] text-white'
-                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/5'"
-                  :href="href"
-                  @click="navigate"
-                >
-                  <IconAdjustmentsHorizontal
-                    class="shrink-0 h-5 w-5"
-                    :class="isActive ? 'text-[#7C86FF]' : 'text-slate-400 dark:text-slate-500'" />
-                  <span class="lg:hidden lg:sidebar-expanded:inline whitespace-nowrap">Settings</span>
-                </a>
-              </li>
-            </router-link>
-          </ul>
-        </div>
-      </nav>
-
-      <!-- Bottom section -->
-      <div class="mt-auto px-3 pb-5 lg:px-2 lg:sidebar-expanded:px-3">
-        <!-- Collapse/Expand toggle -->
-        <button
-          class="mt-2 hidden lg:flex w-full items-center justify-center rounded-xl py-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:text-slate-500 dark:hover:bg-white/5 dark:hover:text-white"
-          @click.prevent="sidebarExpanded = !sidebarExpanded"
-        >
-          <span class="sr-only">{{ sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar' }}</span>
-          <IconChevronsLeft v-if="sidebarExpanded" class="h-5 w-5" />
-          <IconChevronsRight v-else class="h-5 w-5" />
-        </button>
-      </div>
-    </div>
-  </div>
+    <SidebarSection title="Account">
+      <SidebarItem to="/instance/settings" :icon="IconAdjustmentsHorizontal" label="Settings" />
+    </SidebarSection>
+  </SidebarShell>
 </template>
 
-<script>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+<script setup lang="ts">
+import SidebarShell from '@/shared/components/navigation/SidebarShell.vue'
+import SidebarSection from '@/shared/components/navigation/SidebarSection.vue'
+import SidebarItem from '@/shared/components/navigation/SidebarItem.vue'
+import SidebarBadge from '@/shared/components/navigation/SidebarBadge.vue'
 import {
-  IconDashboard,
-  IconUser,
+  IconLayoutDashboard,
   IconBuildingSkyscraper,
+  IconUsers,
+  IconDatabase,
   IconAdjustmentsHorizontal,
-  IconChevronsLeft,
-  IconChevronsRight,
+  IconShieldHalfFilled,
 } from '@tabler/icons-vue'
-import {
-  sidebarExpandedState,
-  setSidebarExpanded,
-} from '@/utils/sidebarExpanded'
 
-export default {
-  name: 'InstanceSidebar',
-  props: ['sidebarOpen', 'variant'],
-  emits: ['close-sidebar'],
-  components: {
-    IconDashboard,
-    IconUser,
-    IconBuildingSkyscraper,
-    IconAdjustmentsHorizontal,
-    IconChevronsLeft,
-    IconChevronsRight,
-  },
-  setup(props, { emit }) {
-    const trigger = ref(null)
-    const sidebar = ref(null)
-
-    const sidebarExpanded = sidebarExpandedState
-
-    const clickHandler = ({ target }) => {
-      if (!sidebar.value || !trigger.value) return
-      if (!props.sidebarOpen || sidebar.value.contains(target) || trigger.value.contains(target)) return
-      emit('close-sidebar')
-    }
-
-    const keyHandler = ({ keyCode }) => {
-      if (!props.sidebarOpen || keyCode !== 27) return
-      emit('close-sidebar')
-    }
-
-    onMounted(() => {
-      document.addEventListener('click', clickHandler)
-      document.addEventListener('keydown', keyHandler)
-      setSidebarExpanded(sidebarExpanded.value)
-    })
-
-    onUnmounted(() => {
-      document.removeEventListener('click', clickHandler)
-      document.removeEventListener('keydown', keyHandler)
-    })
-
-    watch(sidebarExpanded, () => {
-      setSidebarExpanded(sidebarExpanded.value)
-    })
-
-    return {
-      trigger,
-      sidebar,
-      sidebarExpanded,
-    }
-  },
-}
+defineProps<{ sidebarOpen: boolean }>()
+const emit = defineEmits<{ (e: 'close-sidebar'): void }>()
 </script>

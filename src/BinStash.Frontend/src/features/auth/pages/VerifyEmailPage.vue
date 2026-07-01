@@ -9,76 +9,42 @@
       <Transition name="status-swap" mode="out-in">
         <div v-if="status.kind === 'verifying'" key="verifying">
           <div class="mb-4">
-            <div class="bg-slate-500/20 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-lg">
-              <span class="text-sm">Verifying your email…</span>
-            </div>
+            <AuthAlert tone="info">Verifying your email…</AuthAlert>
           </div>
 
           <div class="h-10 flex items-center">
-            <div class="h-5 w-5 rounded-full border-2 border-violet-500 border-t-transparent animate-spin"></div>
+            <Spinner :size="20" :thickness="2" color="var(--color-accent)" />
           </div>
         </div>
 
         <div v-else-if="status.kind === 'success'" key="success">
           <div class="mb-4">
-            <div class="bg-emerald-500/20 text-emerald-700 dark:text-emerald-200 px-3 py-2 rounded-lg">
-              <span class="text-sm">{{ status.message }}</span>
-            </div>
+            <AuthAlert tone="success" :message="status.message" />
           </div>
 
           <div class="space-y-3">
-            <router-link
-              class="btn w-full bg-violet-500 text-white hover:bg-violet-600 dark:bg-violet-500 dark:hover:bg-violet-600 text-center"
-              :to="signinLink"
-            >
-              Continue to sign in
-            </router-link>
-            <router-link
-              class="btn w-full border-gray-200 hover:border-gray-300 dark:border-gray-700/60 dark:hover:border-gray-600 text-gray-800 dark:text-gray-100"
-              to="/"
-            >
-              Back to home
-            </router-link>
+            <BaseButton block :to="signinLink">Continue to sign in</BaseButton>
+            <BaseButton block variant="secondary" to="/">Back to home</BaseButton>
           </div>
         </div>
 
         <div v-else-if="status.kind === 'error'" key="error">
           <div class="mb-4">
-            <div class="bg-rose-500/20 text-rose-700 dark:text-rose-200 px-3 py-2 rounded-lg">
-              <span class="text-sm">{{ status.message }}</span>
-            </div>
+            <AuthAlert tone="error" :message="status.message" />
           </div>
 
           <div class="space-y-3">
-            <button
-              class="btn w-full bg-violet-500 text-white hover:bg-violet-600 dark:bg-violet-500 dark:hover:bg-violet-600"
-              type="button"
-              @click="verifyFromLink"
-            >
-              Try again
-            </button>
-            <router-link
-              class="btn w-full border-gray-200 hover:border-gray-300 dark:border-gray-700/60 dark:hover:border-gray-600 text-gray-800 dark:text-gray-100"
-              :to="signinLink"
-            >
-              Back to sign in
-            </router-link>
+            <BaseButton block type="button" @click="verifyFromLink">Try again</BaseButton>
+            <BaseButton block variant="secondary" :to="signinLink">Back to sign in</BaseButton>
           </div>
         </div>
 
         <div v-else key="idle">
           <div class="mb-4">
-            <div class="bg-sky-500/20 text-sky-700 dark:text-sky-200 px-3 py-2 rounded-lg">
-              <span class="text-sm">This verification link is incomplete or invalid.</span>
-            </div>
+            <AuthAlert tone="info" message="This verification link is incomplete or invalid." />
           </div>
 
-          <router-link
-            class="btn w-full border-gray-200 hover:border-gray-300 dark:border-gray-700/60 dark:hover:border-gray-600 text-gray-800 dark:text-gray-100"
-            :to="signinLink"
-          >
-            Back to sign in
-          </router-link>
+          <BaseButton block variant="secondary" :to="signinLink">Back to sign in</BaseButton>
         </div>
       </Transition>
     </AuthCard>
@@ -91,6 +57,9 @@ import { useRoute } from 'vue-router'
 import { apiFetch, throwForStatus } from '@/shared/api/http'
 import AuthCard from '@/shared/components/auth/AuthCard.vue'
 import AuthPageHeader from '@/shared/components/auth/AuthPageHeader.vue'
+import AuthAlert from '@/shared/components/auth/AuthAlert.vue'
+import Spinner from '@/shared/components/feedback/Spinner.vue'
+import { BaseButton } from '@/shared/components/ui'
 
 const CONFIRM_ENDPOINT = '/api/auth/confirmEmail'
 

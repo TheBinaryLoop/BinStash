@@ -1,83 +1,63 @@
 <template>
   <div class="flex flex-col gap-4">
     <template v-if="existingChunkstores.length > 0 && !showForm">
-      <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100">Step 4: Configure Local Chunkstore</h2>
-      <p class="text-gray-600 dark:text-gray-400">
+      <h2 class="text-xl font-bold text-ink-strong">Step 4: Configure Local Chunkstore</h2>
+      <p class="text-sm text-ink-muted">
         The following chunkstores are already configured:
       </p>
-      <ul class="list-disc ml-5 text-gray-700 dark:text-gray-300">
+      <ul class="ml-5 list-disc text-sm text-ink-muted">
         <li v-for="store in existingChunkstores" :key="store.id">
-          <strong>{{ store.name }}</strong>
-          <span class="text-gray-500 dark:text-gray-400">({{ store.id }})</span>
+          <strong class="text-ink-strong">{{ store.name }}</strong>
+          <span class="text-ink-subtle">({{ store.id }})</span>
         </li>
       </ul>
       <div class="mt-4 flex gap-3">
-        <button
-          class="px-6 py-2 text-sm font-medium bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 rounded-md cursor-pointer transition-colors"
-          @click="handleAddAnother"
-        >
+        <BaseButton variant="secondary" @click="handleAddAnother">
           Add another chunkstore
-        </button>
-        <button
-          class="px-6 py-2 text-sm font-medium bg-violet-500 hover:bg-violet-600 text-white rounded-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          @click="handleContinue"
-        >
+        </BaseButton>
+        <BaseButton @click="handleContinue">
           Continue
-        </button>
+        </BaseButton>
       </div>
     </template>
     <form v-else @submit.prevent="onSubmit" class="flex flex-col gap-4">
-      <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100">Step 3: Configure Local Chunkstore</h2>
-      <p class="text-gray-600 dark:text-gray-400">
+      <h2 class="text-xl font-bold text-ink-strong">Step 3: Configure Local Chunkstore</h2>
+      <p class="text-sm text-ink-muted">
         Configure the local chunkstore for BinStash. You can use the default name and path or customize them.
       </p>
-      <div class="flex flex-col gap-1">
-        <label for="chunkstore-name" class="text-sm font-medium text-gray-700 dark:text-gray-300">Chunkstore Name</label>
-        <input
-          id="chunkstore-name"
-          v-model="name"
-          type="text"
-          required
-          :disabled="loading"
-          autocomplete="off"
-          class="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-        />
+      <BaseInput
+        v-model="name"
+        label="Chunkstore Name"
+        type="text"
+        required
+        :disabled="loading"
+        autocomplete="off"
+      />
+      <BaseSelect v-model="type" label="Chunkstore Type">
+        <option :value="-1" disabled>- Select a type -</option>
+        <option v-for="chunkstoreType in enabledChunkStoreTypes" :key="chunkstoreType.value" :value="chunkstoreType.value">{{ chunkstoreType.name }}</option>
+      </BaseSelect>
+      <BaseInput
+        v-model="localPath"
+        label="Local Path"
+        type="text"
+        required
+        :disabled="loading"
+        autocomplete="off"
+      />
+      <div
+        v-if="chunkStoreId"
+        class="rounded-card border border-success/25 bg-success-soft px-4 py-3 text-sm text-success"
+      >
+        Chunkstore created! ID: <code class="rounded bg-raised px-1 py-0.5 font-mono text-xs">{{ chunkStoreId }}</code>
       </div>
-      <div class="flex flex-col gap-1">
-        <label for="chunkstore-type" class="text-sm font-medium text-gray-700 dark:text-gray-300">Chunkstore Type</label>
-        <select
-          id="chunkstore-type"
-          v-model="type"
-          class="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
-        >
-          <option selected disabled>- Select a type -</option>
-          <option v-for="chunkstoreType in enabledChunkStoreTypes" :value="chunkstoreType.value">{{ chunkstoreType.name }}</option>
-        </select>
-      </div>
-      <div class="flex flex-col gap-1">
-        <label for="chunkstore-path" class="text-sm font-medium text-gray-700 dark:text-gray-300">Local Path</label>
-        <input
-          id="chunkstore-path"
-          v-model="localPath"
-          type="text"
-          required
-          :disabled="loading"
-          autocomplete="off"
-          class="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-        />
-      </div>
-      <div v-if="chunkStoreId" class="text-green-600 dark:text-green-400 text-sm">
-        Chunkstore created! ID: <code class="font-mono text-xs bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded">{{ chunkStoreId }}</code>
-      </div>
-      <div v-if="error" class="text-red-600 dark:text-red-400 text-sm">{{ error }}</div>
-<button
-      type="submit"
-      :disabled="loading"
-      class="flex items-center justify-center px-6 py-2 text-sm font-medium bg-violet-500 hover:bg-violet-600 text-white rounded-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-    >
-      <Spinner v-if="loading" color="white" class="w-4 h-4 mr-2" />
-      {{ loading ? 'Creating...' : 'Create Chunkstore' }}
-    </button>
+      <div
+        v-if="error"
+        class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+      >{{ error }}</div>
+      <BaseButton type="submit" :loading="loading" :disabled="loading">
+        {{ loading ? 'Creating...' : 'Create Chunkstore' }}
+      </BaseButton>
     </form>
   </div>
 </template>
@@ -87,7 +67,7 @@ import { ref, onMounted } from 'vue'
 import { useSetupStore } from '@/features/setup/store/setup.store'
 import { listChunkStores, createChunkStore as createApiChunkStore, getEnabledChunkStoreTypes, setChunkStoreDone } from '@/features/setup/api/setup.api'
 import { ChunkStoreSummaryDto } from '@/api/chunkStores'
-import Spinner from '@/shared/components/feedback/Spinner.vue'
+import { BaseInput, BaseSelect, BaseButton } from '@/shared/components/ui'
 
 const setupStore = useSetupStore()
 const name = ref('local')

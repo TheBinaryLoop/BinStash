@@ -12,174 +12,123 @@
       <!-- Header + Add button -->
       <div class="flex items-center justify-between">
         <div>
-          <h2 class="text-lg font-semibold text-slate-900 dark:text-white">Chunk Stores</h2>
-          <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+          <h2 class="text-lg font-semibold text-ink-strong">Chunk Stores</h2>
+          <p class="mt-0.5 text-sm text-ink-muted">
             Manage the underlying storage backends that hold deduplicated chunk data.
           </p>
         </div>
-        <button
-          @click="showAddForm = true"
-          class="inline-flex items-center gap-2 rounded-full bg-[#7C86FF] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#7C86FF]/20 transition hover:bg-[#6d78ff]"
-        >
-          <IconPlus class="w-4 h-4" />
+        <BaseButton :icon="IconPlus" @click="showAddForm = true">
           Add Chunk Store
-        </button>
+        </BaseButton>
       </div>
 
       <!-- Loading -->
-      <div v-if="loading" class="flex items-center gap-3 text-slate-500 dark:text-slate-400 py-8 justify-center">
-        <Spinner />
+      <div v-if="loading" class="flex items-center justify-center gap-3 py-8 text-ink-muted">
+        <Spinner :size="20" color="var(--color-accent)" />
         <span>Loading chunk stores…</span>
       </div>
 
       <!-- Error -->
-      <div v-else-if="error" class="rounded-[28px] border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-400">
+      <div v-else-if="error" class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger">
         {{ error }}
       </div>
 
       <template v-else>
         <!-- Add form -->
-        <div v-if="showAddForm" class="rounded-[28px] border border-[#7C86FF]/30 bg-white p-5 shadow-sm dark:border-[#7C86FF]/20 dark:bg-[#0F172D]">
-          <h3 class="font-semibold text-slate-900 dark:text-white mb-4">New Chunk Store</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Name <span class="text-rose-500">*</span></label>
-              <input
+        <BaseCard v-if="showAddForm" accent>
+          <template #header>
+            <h3 class="font-semibold text-ink-strong">New Chunk Store</h3>
+          </template>
+          <div class="space-y-4">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <BaseInput
                 v-model="newStore.name"
-                type="text"
+                label="Name"
+                required
                 placeholder="e.g. primary-store"
-                class="form-input w-full text-sm"
               />
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Type <span class="text-rose-500">*</span></label>
-              <select v-model.number="newStore.typeValue" class="form-select w-full text-sm">
+              <BaseSelect
+                v-model.number="newStore.typeValue"
+                label="Type"
+                required
+              >
                 <option :value="-1" disabled>— Select a type —</option>
                 <option v-for="t in chunkStoreTypes" :key="t.value" :value="t.value">{{ t.name }}</option>
-              </select>
-            </div>
-            <div class="sm:col-span-2">
-              <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Local Path <span class="text-rose-500">*</span></label>
-              <input
-                v-model="newStore.localPath"
-                type="text"
-                placeholder="e.g. /data/chunks/primary"
-                class="form-input w-full text-sm"
-              />
-            </div>
-          </div>
-
-          <!-- Chunker (optional) -->
-          <div class="mt-4">
-            <button
-              type="button"
-              @click="showChunkerConfig = !showChunkerConfig"
-              class="text-xs font-medium text-[#7C86FF] hover:underline flex items-center gap-1"
-            >
-              <IconChevronDown class="w-3.5 h-3.5 transition" :class="showChunkerConfig ? 'rotate-180' : ''" />
-              {{ showChunkerConfig ? 'Hide' : 'Show' }} Chunker Configuration (optional)
-            </button>
-            <div v-if="showChunkerConfig" class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-slate-50 dark:bg-white/[0.03] rounded-2xl">
-              <div>
-                <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Chunker Type</label>
-                <input v-model="newChunker.type" type="text" placeholder="e.g. cdc" class="form-input w-full text-sm" />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Min Chunk Size (bytes)</label>
-                <input v-model.number="newChunker.minChunkSize" type="number" placeholder="e.g. 65536" class="form-input w-full text-sm" />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Avg Chunk Size (bytes)</label>
-                <input v-model.number="newChunker.avgChunkSize" type="number" placeholder="e.g. 262144" class="form-input w-full text-sm" />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Max Chunk Size (bytes)</label>
-                <input v-model.number="newChunker.maxChunkSize" type="number" placeholder="e.g. 1048576" class="form-input w-full text-sm" />
+              </BaseSelect>
+              <div class="sm:col-span-2">
+                <BaseInput
+                  v-model="newStore.localPath"
+                  label="Local Path"
+                  required
+                  placeholder="e.g. /data/chunks/primary"
+                />
               </div>
             </div>
-          </div>
 
-          <div v-if="addError" class="mt-3 text-xs text-rose-600 dark:text-rose-400">{{ addError }}</div>
+            <!-- Chunker (optional) -->
+            <div>
+              <button
+                type="button"
+                @click="showChunkerConfig = !showChunkerConfig"
+                class="flex items-center gap-1 text-xs font-medium text-accent hover:underline"
+              >
+                <IconChevronDown class="h-3.5 w-3.5 transition" :class="showChunkerConfig ? 'rotate-180' : ''" />
+                {{ showChunkerConfig ? 'Hide' : 'Show' }} Chunker Configuration (optional)
+              </button>
+              <div v-if="showChunkerConfig" class="mt-3 grid grid-cols-1 gap-4 rounded-card bg-raised p-4 sm:grid-cols-2">
+                <BaseInput v-model="newChunker.type" label="Chunker Type" placeholder="e.g. cdc" />
+                <BaseInput v-model.number="newChunker.minChunkSize" type="number" label="Min Chunk Size (bytes)" placeholder="e.g. 65536" />
+                <BaseInput v-model.number="newChunker.avgChunkSize" type="number" label="Avg Chunk Size (bytes)" placeholder="e.g. 262144" />
+                <BaseInput v-model.number="newChunker.maxChunkSize" type="number" label="Max Chunk Size (bytes)" placeholder="e.g. 1048576" />
+              </div>
+            </div>
 
-          <div class="flex items-center gap-3 mt-4">
-            <button
-              @click="saveNewStore"
-              :disabled="saving"
-              class="inline-flex items-center gap-2 rounded-full bg-[#7C86FF] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#7C86FF]/20 transition hover:bg-[#6d78ff] disabled:opacity-60"
-            >
-              <Spinner v-if="saving" class="w-4 h-4" />
-              {{ saving ? 'Saving…' : 'Save' }}
-            </button>
-            <button
-              @click="cancelAdd"
-              class="rounded-full border border-slate-200 dark:border-white/10 px-4 py-2.5 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/[0.03] transition"
-            >
-              Cancel
-            </button>
+            <div v-if="addError" class="text-xs text-danger">{{ addError }}</div>
+
+            <div class="flex items-center gap-3">
+              <BaseButton :loading="saving" :disabled="saving" @click="saveNewStore">
+                {{ saving ? 'Saving…' : 'Save' }}
+              </BaseButton>
+              <BaseButton variant="secondary" @click="cancelAdd">Cancel</BaseButton>
+            </div>
           </div>
-        </div>
+        </BaseCard>
 
         <!-- Empty state -->
-        <div
-          v-if="stores.length === 0 && !showAddForm"
-          class="rounded-[28px] border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm dark:border-white/10 dark:bg-[#0F172D]"
-        >
-          <div class="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center mx-auto mb-3">
-            <IconDatabase class="text-slate-400 w-6 h-6" />
-          </div>
-          <p class="text-slate-600 dark:text-slate-400 font-medium">No chunk stores yet</p>
-          <p class="text-sm text-slate-500 dark:text-slate-500 mt-1">Add a chunk store to get started.</p>
-        </div>
+        <BaseCard v-if="stores.length === 0 && !showAddForm">
+          <EmptyState
+            :icon="IconDatabase"
+            title="No chunk stores yet"
+            description="Add a chunk store to get started."
+          />
+        </BaseCard>
 
         <!-- Stores list -->
-        <div v-if="stores.length > 0" class="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm dark:border-white/5 dark:bg-[#0F172D]">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide bg-slate-50 dark:bg-white/[0.03] border-b border-slate-200 dark:border-white/5">
-                <th class="px-5 py-3 text-left">Name</th>
-                <th class="px-5 py-3 text-left">ID</th>
-                <th class="px-5 py-3 text-right"></th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100 dark:divide-white/5">
-              <tr
-                v-for="store in stores"
-                :key="store.id"
-                class="hover:bg-slate-50 dark:hover:bg-white/[0.03] transition cursor-pointer"
-                @click="selectedStoreId = store.id"
-              >
-                <td class="px-5 py-3 font-medium text-slate-900 dark:text-white">
-                  {{ store.name }}
-                </td>
-                <td class="px-5 py-3 font-mono text-xs text-slate-400 dark:text-slate-500">
-                  {{ store.id }}
-                </td>
-                <td class="px-5 py-3 text-right">
-                  <span class="text-xs text-[#7C86FF] hover:text-[#6974ff] font-medium">
-                    View →
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <BaseCard v-if="stores.length > 0" :padded="false">
+          <DataTable
+            :columns="columns"
+            :items="stores"
+            :on-row-click="(store) => (selectedStoreId = store.id)"
+          >
+            <template #cell-name="{ item }">
+              <span class="font-medium text-ink-strong">{{ item.name }}</span>
+            </template>
+            <template #cell-id="{ item }">
+              <span class="font-mono text-xs text-ink-subtle">{{ item.id }}</span>
+            </template>
+            <template #cell-actions>
+              <span class="text-xs font-medium text-accent">View →</span>
+            </template>
+          </DataTable>
+        </BaseCard>
       </template>
-
-      <!-- Success toast -->
-      <div
-        v-if="successMsg"
-        class="fixed bottom-4 right-4 z-50 bg-green-500 text-white text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2"
-      >
-        <IconCircleCheck color="white" class="w-4 h-4 shrink-0" />
-        {{ successMsg }}
-      </div>
     </template>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { ref, reactive, onMounted } from 'vue'
-import { IconPlus, IconDatabase, IconCircleCheck, IconChevronDown } from '@tabler/icons-vue'
+import { IconPlus, IconDatabase, IconChevronDown } from '@tabler/icons-vue'
 import {
   listChunkStores,
   createChunkStore,
@@ -189,12 +138,15 @@ import {
 } from '@/api/chunkStores'
 import ChunkStoreDetail from './ChunkStoreDetail.vue'
 import Spinner from '@/shared/components/feedback/Spinner.vue'
+import { BaseButton, BaseCard, BaseInput, BaseSelect, DataTable, EmptyState, type Column } from '@/shared/components/ui'
+import { useToast } from '@/composables/useToast'
+
+const toast = useToast()
 
 const loading = ref(true)
 const error = ref<string | null>(null)
 const saving = ref(false)
 const addError = ref<string | null>(null)
-const successMsg = ref<string | null>(null)
 const showAddForm = ref(false)
 const showChunkerConfig = ref(false)
 const selectedStoreId = ref<string | null>(null)
@@ -204,6 +156,12 @@ const chunkStoreTypes = ref<{ name: string; value: number }[]>([])
 
 const newStore = reactive({ name: '', typeValue: -1, localPath: '' })
 const newChunker = reactive<Partial<ChunkStoreChunkerDto>>({ type: '', minChunkSize: null, avgChunkSize: null, maxChunkSize: null })
+
+const columns: Column[] = [
+  { key: 'name', label: 'Name' },
+  { key: 'id', label: 'ID' },
+  { key: 'actions', label: '', align: 'right' },
+]
 
 async function load() {
   loading.value = true
@@ -262,17 +220,13 @@ async function saveNewStore() {
     })
     await load()
     cancelAdd()
-    showSuccess('Chunk store created successfully.')
+    toast.success('Chunk store created successfully.')
   } catch (e: any) {
     addError.value = e.message || 'Failed to create chunk store.'
+    toast.error(addError.value || 'Failed to create chunk store.')
   } finally {
     saving.value = false
   }
-}
-
-function showSuccess(msg: string) {
-  successMsg.value = msg
-  setTimeout(() => (successMsg.value = null), 3000)
 }
 
 onMounted(load)

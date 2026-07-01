@@ -1,49 +1,36 @@
 <template>
-  <div
-    class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700/60 shadow-sm overflow-hidden"
-  >
-    <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700/60">
-      <h2 class="font-semibold text-gray-800 dark:text-gray-100">Tenant Profile</h2>
-    </div>
+  <BaseCard :padded="false">
+    <template #header>
+      <h2 class="font-semibold text-ink-strong">Tenant Profile</h2>
+    </template>
 
-    <div class="p-5 space-y-4">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <div class="p-5">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <p class="text-xs font-medium uppercase text-gray-400 dark:text-gray-500 mb-1">Tenant Name</p>
-          <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ tenant?.name ?? '—' }}</p>
+          <p class="mb-1 text-xs font-medium uppercase text-ink-subtle">Tenant Name</p>
+          <p class="text-sm font-medium text-ink-strong">{{ tenant?.name ?? '—' }}</p>
         </div>
 
         <div>
-          <p class="text-xs font-medium uppercase text-gray-400 dark:text-gray-500 mb-1">Slug</p>
-          <p class="text-sm font-mono text-gray-700 dark:text-gray-300">{{ tenant?.slug ?? '—' }}</p>
+          <p class="mb-1 text-xs font-medium uppercase text-ink-subtle">Slug</p>
+          <p class="font-mono text-sm text-ink-muted">{{ tenant?.slug ?? '—' }}</p>
         </div>
 
         <div>
-          <p class="text-xs font-medium uppercase text-gray-400 dark:text-gray-500 mb-1">Tenant ID</p>
-          <p class="text-xs font-mono text-gray-500 dark:text-gray-400 truncate">{{ tenantId }}</p>
+          <p class="mb-1 text-xs font-medium uppercase text-ink-subtle">Tenant ID</p>
+          <p class="truncate font-mono text-xs text-ink-muted">{{ tenantId }}</p>
         </div>
 
         <div>
-          <p class="text-xs font-medium uppercase text-gray-400 dark:text-gray-500 mb-1">Your Role</p>
+          <p class="mb-1 text-xs font-medium uppercase text-ink-subtle">Your Role</p>
           <div class="flex flex-wrap gap-1">
-            <span
-              v-for="r in userRoles"
-              :key="r"
-              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
-            >
-              {{ r }}
-            </span>
-            <span
-              v-if="userRoles.length === 0"
-              class="text-xs text-gray-400 dark:text-gray-500"
-            >
-              —
-            </span>
+            <BaseBadge v-for="r in userRoles" :key="r" tone="accent">{{ r }}</BaseBadge>
+            <span v-if="userRoles.length === 0" class="text-xs text-ink-subtle">—</span>
           </div>
         </div>
       </div>
     </div>
-  </div>
+  </BaseCard>
 </template>
 
 <script setup lang="ts">
@@ -51,6 +38,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useTenantStore } from '@/stores/tenant'
+import { BaseCard, BaseBadge } from '@/shared/components/ui'
 
 const route = useRoute()
 const auth = useAuthStore()

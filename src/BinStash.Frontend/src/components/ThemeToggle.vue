@@ -25,7 +25,11 @@
 
 <script setup>
 import { useDark } from "@vueuse/core";
+// Dark is the primary, default-on-load theme. useDark persists the user's
+// explicit choice in localStorage ('vueuse-color-scheme'); when nothing is
+// stored we fall back to dark rather than the system preference.
 const isDark = useDark({
   selector: 'html',
+  initialValue: 'dark',
 })
 </script>

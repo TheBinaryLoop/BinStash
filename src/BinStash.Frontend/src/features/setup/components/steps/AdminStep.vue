@@ -1,75 +1,62 @@
 <template>
   <form @submit.prevent="onSubmit" class="flex flex-col gap-4">
-    <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100">Step 5: Create {{ adminLabel }}</h2>
-    <p class="text-gray-600 dark:text-gray-400">
+    <h2 class="text-xl font-bold text-ink-strong">Step 5: Create {{ adminLabel }}</h2>
+    <p class="text-sm text-ink-muted">
       Set up the first {{ adminLabel.toLowerCase() }} account for BinStash.
     </p>
-    <div class="flex flex-col gap-1">
-      <label for="admin-email" class="text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
-      <input
-        id="admin-email"
-        v-model="email"
-        type="email"
-        required
-        autocomplete="username"
-        :disabled="loading"
-        class="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-      />
+    <BaseInput
+      v-model="email"
+      label="Email"
+      type="email"
+      required
+      autocomplete="username"
+      :disabled="loading"
+    />
+    <BaseInput
+      v-model="password"
+      label="Password"
+      :type="showPassword ? 'text' : 'password'"
+      required
+      autocomplete="new-password"
+      :disabled="loading"
+    />
+    <div
+      class="-mt-2 text-sm"
+      :class="passwordStrength < 2 ? 'text-danger' : 'text-success'"
+    >
+      Password strength: {{ passwordStrengthText }}
     </div>
-    <div class="flex flex-col gap-1">
-      <label for="admin-password" class="text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
-      <div class="flex items-center gap-2">
-        <input
-          id="admin-password"
-          v-model="password"
-          :type="showPassword ? 'text' : 'password'"
-          required
-          autocomplete="new-password"
-          :disabled="loading"
-          class="flex-1 px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-        />
-      </div>
-      <div
-        class="text-sm mt-1"
-        :class="passwordStrength < 2 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'"
-      >
-        Password strength: {{ passwordStrengthText }}
-      </div>
-    </div>
-    <div class="flex flex-col gap-1">
-      <label for="admin-firstname" class="text-sm font-medium text-gray-700 dark:text-gray-300">First Name</label>
-      <input
-        id="admin-firstname"
-        v-model="firstName"
-        type="text"
-        autocomplete="given-name"
-        :disabled="loading"
-        class="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-      />
-    </div>
-    <div class="flex flex-col gap-1">
-      <label for="admin-lastname" class="text-sm font-medium text-gray-700 dark:text-gray-300">Last Name</label>
-      <input
-        id="admin-lastname"
-        v-model="lastName"
-        type="text"
-        autocomplete="family-name"
-        :disabled="loading"
-        class="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"
-      />
-    </div>
-    <div v-if="success" class="text-green-600 dark:text-green-400 text-sm">
+    <BaseInput
+      v-model="firstName"
+      label="First Name"
+      type="text"
+      autocomplete="given-name"
+      :disabled="loading"
+    />
+    <BaseInput
+      v-model="lastName"
+      label="Last Name"
+      type="text"
+      autocomplete="family-name"
+      :disabled="loading"
+    />
+    <div
+      v-if="success"
+      class="rounded-card border border-success/25 bg-success-soft px-4 py-3 text-sm text-success"
+    >
       Admin user created successfully.
     </div>
-    <div v-if="error" class="text-red-600 dark:text-red-400 text-sm">{{ error }}</div>
-    <button
+    <div
+      v-if="error"
+      class="rounded-card border border-danger/20 bg-danger-soft px-4 py-3 text-sm text-danger"
+    >{{ error }}</div>
+    <BaseButton
       type="submit"
+      :loading="loading"
       :disabled="loading || !email || !password"
-      class="flex items-center justify-center px-6 py-2 text-sm font-medium bg-violet-500 hover:bg-violet-600 text-white rounded-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
     >
-      <Spinner v-if="loading" color="white" class="w-4 h-4 mr-2" />
       {{ loading ? 'Creating...' : `Create ${adminLabel.toLowerCase()}` }}
-    </button>
+    </BaseButton>
   </form>
 </template>
 
@@ -77,7 +64,7 @@
 import { ref, computed } from 'vue'
 import { useSetupStore } from '@/features/setup/store/setup.store'
 import { createAdminUser } from '@/features/setup/api/setup.api'
-import Spinner from '@/shared/components/feedback/Spinner.vue'
+import { BaseInput, BaseButton } from '@/shared/components/ui'
 
 const setupStore = useSetupStore()
 const email = ref('')
