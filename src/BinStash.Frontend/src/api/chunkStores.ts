@@ -1,4 +1,3 @@
-import { apiJson } from '../shared/api/http'
 import gql from 'graphql-tag'
 import { normalizeGraphqlError, runMutation, runQuery } from '../shared/api/graphqlComposable'
 import type { BackgroundJobDto } from './backgroundJobs'
@@ -39,8 +38,6 @@ export type CreateChunkStoreDto = {
 export type ChunkStoreStatsDto = {
   totalChunks: number
 }
-
-const BASE = '/api/chunk-stores'
 
 function toChunkStoreSummaryDto(x: any): ChunkStoreSummaryDto {
   return {
@@ -98,8 +95,52 @@ const UPGRADE_CHUNK_STORE_MUTATION = gql`
   }
 `
 
+const ENABLED_CHUNK_STORE_TYPES_QUERY = gql`
+  query EnabledChunkStoreTypes {
+    enabledChunkStoreTypes {
+      name
+      value
+    }
+  }
+`
+
+const GET_CHUNK_STORE_QUERY = gql`
+  query GetChunkStore($id: UUID!) {
+    chunkStore(id: $id) {
+      id
+      name
+      type
+      chunker {
+        type
+        minChunkSize
+        avgChunkSize
+        maxChunkSize
+      }
+      backendSettings {
+        backendType
+        localPath
+      }
+    }
+  }
+`
+
+const CHUNK_STORE_STATS_QUERY = gql`
+  query ChunkStoreStats($chunkStoreId: UUID!) {
+    chunkStoreStats(chunkStoreId: $chunkStoreId) {
+      totalChunks
+    }
+  }
+`
+
 export async function getEnabledChunkStoreTypes() {
-  return apiJson<{ name: string, value: number }[]>(`${BASE}/enabled-types`)
+  try {
+    const data = await runQuery<{ enabledChunkStoreTypes: { name: string; value: number }[] }>(
+      ENABLED_CHUNK_STORE_TYPES_QUERY,
+    )
+    return data.enabledChunkStoreTypes ?? []
+  } catch (error) {
+    throw normalizeGraphqlError(error, 'Failed to load chunk store types.')
+  }
 }
 
 export async function listChunkStores(): Promise<ChunkStoreSummaryDto[]> {
@@ -112,7 +153,23 @@ export async function listChunkStores(): Promise<ChunkStoreSummaryDto[]> {
 }
 
 export async function getChunkStore(id: string): Promise<ChunkStoreDetailDto> {
-  return await apiJson<ChunkStoreDetailDto>(`${BASE}/${encodeURIComponent(id)}`, { method: 'GET' })
+  try {
+    const data = await runQuery<{ chunkStore: any }>(GET_CHUNK_STORE_QUERY, { id })
+    const cs = data?.chunkStore
+    if (!cs) throw new Error('Chunk store not found.')
+    return {
+      id: cs.id,
+      name: cs.name,
+      type: cs.type,
+      chunker: cs.chunker ?? null,
+      backendSettings: cs.backendSettings
+        ? { type: cs.backendSettings.backendType, localPath: cs.backendSettings.localPath }
+        : undefined,
+      stats: {} as any,
+    }
+  } catch (error) {
+    throw normalizeGraphqlError(error, 'Failed to load chunk store.')
+  }
 }
 
 export async function createChunkStore(dto: CreateChunkStoreDto): Promise<ChunkStoreSummaryDto> {
@@ -141,7 +198,14 @@ export async function createChunkStore(dto: CreateChunkStoreDto): Promise<ChunkS
 }
 
 export async function getChunkStoreStats(id: string): Promise<ChunkStoreStatsDto> {
-  return await apiJson<ChunkStoreStatsDto>(`${BASE}/${encodeURIComponent(id)}/stats`, { method: 'GET' })
+  try {
+    const data = await runQuery<{ chunkStoreStats: ChunkStoreStatsDto | null }>(CHUNK_STORE_STATS_QUERY, {
+      chunkStoreId: id,
+    })
+    return data.chunkStoreStats ?? { totalChunks: 0 }
+  } catch (error) {
+    throw normalizeGraphqlError(error, 'Failed to load chunk store stats.')
+  }
 }
 
 export async function rebuildChunkStore(id: string): Promise<void> {

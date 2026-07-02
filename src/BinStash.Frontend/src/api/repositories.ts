@@ -1,5 +1,3 @@
-import { apiJson } from '../shared/api/http'
-import { useTenantStore } from '../stores/tenant'
 import gql from 'graphql-tag'
 import { normalizeGraphqlError, runMutation, runQuery } from '../shared/api/graphqlComposable'
 
@@ -96,16 +94,6 @@ export type RepositoryReleaseListOptions = {
   dateRange?: 'all' | '30d' | '90d'
 }
 
-function base() {
-  const t = useTenantStore()
-  if (!t.currentTenantId) throw new Error('No tenant selected.')
-  return `/api/tenants/${encodeURIComponent(t.currentTenantId)}/repositories`
-}
-
-async function listRepositoryReleasesRest(repoId: string): Promise<ReleaseSummaryDto[]> {
-  const data = await apiJson<any[]>(`${base()}/${encodeURIComponent(repoId)}/releases`, { method: 'GET' })
-  return (data ?? []).map(toReleaseSummaryDto)
-}
 
 function toRepositorySummaryDto(x: any): RepositorySummaryDto {
   return {
@@ -331,15 +319,6 @@ export async function createRepository(dto: CreateRepositoryDto): Promise<Reposi
   }
 }
 
-export async function getRepositoryReleases(repoId: string): Promise<ReleaseSummaryDto[]> {
-  try {
-    const releases = await listRepositoryReleasesRest(repoId)
-    return releases.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
-  } catch (e: any) {
-    throw normalizeGraphqlError(e, 'Could not load releases.')
-  }
-}
-
 export async function getRepositoryDetail(repoId: string): Promise<RepositoryDetailDto> {
   return await getRepositoryDetailWithReleases(repoId)
 }
@@ -441,27 +420,102 @@ export async function listRepositoriesWithReleaseStats(releasesPerRepo = 10): Pr
   }
 }
 
+const GET_REPOSITORY_CONFIG_QUERY = gql`
+  query GetRepositoryConfig($id: UUID!) {
+    repository(id: $id) {
+      config {
+        dedupeConfig {
+          chunker
+          minChunkSize
+          avgChunkSize
+          maxChunkSize
+          shiftCount
+          boundaryCheckBytes
+        }
+      }
+    }
+  }
+`
+
+const GET_REPOSITORY_ACCESS_QUERY = gql`
+  query GetRepositoryAccess($id: UUID!) {
+    repository(id: $id) {
+      access {
+        subjectType
+        subjectId
+        role
+        grantedAt
+      }
+    }
+  }
+`
+
+const GRANT_REPOSITORY_ACCESS_MUTATION = gql`
+  mutation GrantRepositoryAccess($repoId: UUID!, $subjectType: Short!, $subjectId: UUID!, $role: String!) {
+    grantRepositoryAccess(repoId: $repoId, subjectType: $subjectType, subjectId: $subjectId, role: $role) {
+      subjectType
+      subjectId
+      role
+      grantedAt
+    }
+  }
+`
+
+const REVOKE_REPOSITORY_ACCESS_MUTATION = gql`
+  mutation RevokeRepositoryAccess($repoId: UUID!, $subjectType: Short!, $subjectId: UUID!) {
+    revokeRepositoryAccess(repoId: $repoId, subjectType: $subjectType, subjectId: $subjectId)
+  }
+`
+
 export async function getRepositoryConfig(repoId: string): Promise<RepositoryConfigDto> {
-  return await apiJson<RepositoryConfigDto>(`${base()}/${encodeURIComponent(repoId)}/config`, { method: 'GET' })
+  try {
+    const data = await runQuery<{ repository: { config: RepositoryConfigDto } }>(
+      GET_REPOSITORY_CONFIG_QUERY,
+      { id: repoId },
+      { tenantScoped: true },
+    )
+    return data.repository.config
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not load repository configuration.')
+  }
 }
 
 export async function getRepositoryAccess(repoId: string): Promise<RepositoryAccessDto[]> {
-  return await apiJson<RepositoryAccessDto[]>(`${base()}/${encodeURIComponent(repoId)}/access`, { method: 'GET' })
+  try {
+    const data = await runQuery<{ repository: { access: RepositoryAccessDto[] } }>(
+      GET_REPOSITORY_ACCESS_QUERY,
+      { id: repoId },
+      { tenantScoped: true },
+    )
+    return data.repository.access ?? []
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not load repository access.')
+  }
 }
 
 export async function setRepositoryAccess(repoId: string, dto: Omit<RepositoryAccessDto, 'grantedAt'>): Promise<RepositoryAccessDto> {
-  return await apiJson<RepositoryAccessDto>(`${base()}/${encodeURIComponent(repoId)}/access`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(dto),
-  })
+  try {
+    const data = await runMutation<{ grantRepositoryAccess: RepositoryAccessDto }>(
+      GRANT_REPOSITORY_ACCESS_MUTATION,
+      { repoId, subjectType: dto.subjectType, subjectId: dto.subjectId, role: dto.role },
+      { tenantScoped: true },
+    )
+    return data.grantRepositoryAccess
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not update repository access.')
+  }
 }
 
 export async function deleteRepositoryAccess(repoId: string, subjectType: number, subjectId: string): Promise<void> {
-  const t = useTenantStore()
-  if (!t.currentTenantId) throw new Error('No tenant selected.')
-  const url = `/api/tenants/${encodeURIComponent(t.currentTenantId)}/repositories/${encodeURIComponent(repoId)}/access/${subjectType}/${encodeURIComponent(subjectId)}`
-  await apiJson<void>(url, { method: 'DELETE' })
+  try {
+    await runMutation(
+      REVOKE_REPOSITORY_ACCESS_MUTATION,
+      { repoId, subjectType, subjectId },
+      { tenantScoped: true },
+    )
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not revoke repository access.')
+  }
 }
 
 // Single-release endpoints (accept explicit tenantId for use outside tenant context)
@@ -483,9 +537,24 @@ export async function getRelease(tenantId: string, repoId: string, releaseId: st
   }
 }
 
-export async function getReleaseProperties(tenantId: string, repoId: string, releaseId: string): Promise<string> {
-  return await apiJson<string>(
-    `/api/tenants/${encodeURIComponent(tenantId)}/repositories/${encodeURIComponent(repoId)}/releases/${encodeURIComponent(releaseId)}/properties`,
-    { method: 'GET' },
-  )
+const GET_RELEASE_PROPERTIES_QUERY = gql`
+  query GetReleaseProperties($id: UUID!) {
+    release(id: $id) {
+      customProperties
+    }
+  }
+`
+
+export async function getReleaseProperties(tenantId: string, _repoId: string, releaseId: string): Promise<string> {
+  try {
+    const data = await runQuery<{ release: { customProperties: unknown } | null }>(
+      GET_RELEASE_PROPERTIES_QUERY,
+      { id: releaseId },
+      { tenantScoped: true, tenantId },
+    )
+    const props = data?.release?.customProperties
+    return props == null ? '' : JSON.stringify(props, null, 2)
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not load release properties.')
+  }
 }

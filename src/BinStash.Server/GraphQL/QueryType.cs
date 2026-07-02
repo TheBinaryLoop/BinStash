@@ -130,5 +130,59 @@ public sealed class QueryType : ObjectType<Query>
             .Field(x => x.GetBackgroundJob(Guid.Empty, null!, CancellationToken.None))
             .Type<ObjectType<BackgroundJobGql>>()
             .Authorize();
+
+        descriptor
+            .Field(x => x.GetInstanceStats(null!, CancellationToken.None))
+            .Type<ObjectType<InstanceStatsGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetEmailConfig(null!))
+            .Type<ObjectType<EmailConfigGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetTenancyConfig(null!))
+            .Type<ObjectType<TenancyConfigGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetDomainConfig(null!))
+            .Type<ObjectType<DomainConfigGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetStorageClasses(null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetStorageClassDefaultMappings(null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetServiceAccountApiKeys(Guid.Empty, null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetTenantMembers(null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetTenantStorageClasses(null!, CancellationToken.None))
+            .Authorize();
+
+        // Invitation preview is intentionally public (unauthenticated onboarding flow).
+        descriptor
+            .Field(x => x.GetTenantInvitationPreview(Guid.Empty, null!, null!, CancellationToken.None))
+            .Type<ObjectType<TenantInvitationPreviewGql>>();
+
+        descriptor
+            .Field(x => x.GetChunkStoreStats(Guid.Empty, null!, CancellationToken.None))
+            .Type<ObjectType<ChunkStoreStatsGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetEnabledChunkStoreTypes(null!))
+            .Authorize();
     }
 }

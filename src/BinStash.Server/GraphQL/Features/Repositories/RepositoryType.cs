@@ -35,6 +35,16 @@ public sealed class RepositoryType : ObjectType<RepositoryGql>
             .UseProjection()
             .UseFiltering()
             .UseSorting();
+
+        descriptor.Field("config")
+            .Authorize()
+            .Type<ObjectType<RepositoryConfigGql>>()
+            .ResolveWith<Resolvers>(x => x.GetConfig(null!, null!));
+
+        descriptor.Field("access")
+            .Authorize()
+            .Type<ListType<NonNullType<ObjectType<RepositoryAccessGql>>>>()
+            .ResolveWith<Resolvers>(x => x.GetAccess(null!, null!));
     }
 
     private sealed class Resolvers
@@ -59,5 +69,15 @@ public sealed class RepositoryType : ObjectType<RepositoryGql>
 
             return repositoryQueryService.GetReleasesForRepository(repository.Id);
         }
+
+        public Task<RepositoryConfigGql> GetConfig(
+            [Parent] RepositoryGql repository,
+            [Service] RepositoryQueryService repositoryQueryService)
+            => repositoryQueryService.GetRepositoryConfigAsync(repository.Id);
+
+        public Task<List<RepositoryAccessGql>> GetAccess(
+            [Parent] RepositoryGql repository,
+            [Service] RepositoryQueryService repositoryQueryService)
+            => repositoryQueryService.GetRepositoryAccessAsync(repository.Id);
     }
 }

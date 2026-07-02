@@ -83,7 +83,29 @@ public class BinStashApiClient
     #region Tenant Info
 
     public async Task<List<TenantInfoDto>?> GetTenantsAsync()
-        => await GetAsync("tenants", SourceGenerationContext.Default.ListTenantInfoDto);
+    {
+        const string query = """
+            query($first: Int!, $after: String) {
+                tenants(first: $first, after: $after) {
+                    nodes { id name slug }
+                    pageInfo { hasNextPage endCursor }
+                }
+            }
+            """;
+        var all = new List<GqlTenant>();
+        string? cursor = null;
+        do
+        {
+            var req = new GqlPagedRequest { Query = query, Variables = new GqlPageVariables { First = 50, After = cursor } };
+            var resp = await GraphQlAsync(req, SourceGenerationContext.Default.GqlPagedRequestBody, SourceGenerationContext.Default.GqlResponseGqlTenantsData);
+            var conn = resp?.Data?.Tenants;
+            if (conn?.Nodes is { } nodes) all.AddRange(nodes);
+            cursor = conn?.PageInfo?.HasNextPage == true ? conn.PageInfo.EndCursor : null;
+        } while (cursor is not null);
+
+        // Role/joined-date are not needed by the CLI (it maps --tenant <slug> to an id).
+        return all.Select(t => new TenantInfoDto(t.Id, t.Name, t.Slug, default, string.Empty)).ToList();
+    }
 
     #endregion
     

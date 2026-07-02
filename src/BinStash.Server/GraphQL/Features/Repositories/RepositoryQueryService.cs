@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Auth;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Infrastructure.Data;
@@ -146,5 +147,69 @@ public class RepositoryQueryService
                 RepoId = r.RepoId,
                 CustomProperties = null // resolved separately
             });
+    }
+
+    public async Task<RepositoryConfigGql> GetRepositoryConfigAsync(Guid repoId)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureRepositoryPermissionAsync(user, _authorizationService, tenantContext.TenantId, repoId, RepositoryPermission.Read);
+
+        var config = await _db.Repositories
+            .AsNoTracking()
+            .Where(r => r.TenantId == tenantContext.TenantId && r.Id == repoId)
+            .Select(r => new RepositoryConfigGql
+            {
+                DedupeConfig = new RepositoryDedupeConfigGql
+                {
+                    Chunker = r.ChunkStore.ChunkerOptions.Type.ToString(),
+                    MinChunkSize = r.ChunkStore.ChunkerOptions.MinChunkSize,
+                    AvgChunkSize = r.ChunkStore.ChunkerOptions.AvgChunkSize,
+                    MaxChunkSize = r.ChunkStore.ChunkerOptions.MaxChunkSize,
+                    ShiftCount = r.ChunkStore.ChunkerOptions.ShiftCount,
+                    BoundaryCheckBytes = r.ChunkStore.ChunkerOptions.BoundaryCheckBytes
+                }
+            })
+            .FirstOrDefaultAsync();
+
+        return config ?? throw new GraphQLException("Repository not found.");
+    }
+
+    public async Task<List<RepositoryAccessGql>> GetRepositoryAccessAsync(Guid repoId)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureRepositoryPermissionAsync(user, _authorizationService, tenantContext.TenantId, repoId, RepositoryPermission.Admin);
+
+        var repoExists = await _db.Repositories.AnyAsync(r => r.TenantId == tenantContext.TenantId && r.Id == repoId);
+        if (!repoExists)
+            throw new GraphQLException("Repository not found.");
+
+        var accessInfos = await _db.RepositoryRoleAssignments
+            .AsNoTracking()
+            .Where(x => x.RepositoryId == repoId)
+            .Select(x => new RepositoryAccessGql
+            {
+                SubjectType = (short)x.SubjectType,
+                SubjectId = x.SubjectId,
+                Role = x.RoleName,
+                GrantedAt = x.GrantedAt
+            })
+            .ToListAsync();
+
+        var tenantAdmins = await _db.TenantRoleAssignments
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenantContext.TenantId && x.RoleName == "TenantAdmin")
+            .Select(x => new RepositoryAccessGql
+            {
+                SubjectType = (short)SubjectType.User,
+                SubjectId = x.UserId,
+                Role = "TenantAdmin",
+                GrantedAt = x.GrantedAt
+            })
+            .ToListAsync();
+
+        accessInfos.AddRange(tenantAdmins);
+        return accessInfos;
     }
 }

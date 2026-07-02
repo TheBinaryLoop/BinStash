@@ -1,5 +1,3 @@
-import { apiJson } from '../shared/api/http'
-import { useTenantStore } from '../stores/tenant'
 import gql from 'graphql-tag'
 import { normalizeGraphqlError, runMutation, runQuery } from '../shared/api/graphqlComposable'
 
@@ -33,12 +31,6 @@ export type CreateApiKeyResponse = {
   displayName: string
   key: string
   expiresAt?: string | null
-}
-
-function base() {
-  const t = useTenantStore()
-  if (!t.currentTenantId) throw new Error('No tenant selected.')
-  return `/api/tenants/${encodeURIComponent(t.currentTenantId)}/service-accounts`
 }
 
 function toServiceAccountInfoDto(x: any): ServiceAccountInfoDto {
@@ -116,18 +108,70 @@ export async function deleteServiceAccount(serviceAccountId: string): Promise<vo
   }
 }
 
+const SERVICE_ACCOUNT_API_KEYS_QUERY = gql`
+  query ServiceAccountApiKeys($serviceAccountId: UUID!) {
+    serviceAccountApiKeys(serviceAccountId: $serviceAccountId) {
+      id
+      displayName
+      createdAt
+      expiresAt
+      lastUsedAt
+      isActive
+      scopes
+    }
+  }
+`
+
+const CREATE_SERVICE_ACCOUNT_API_KEY_MUTATION = gql`
+  mutation CreateServiceAccountApiKey($serviceAccountId: UUID!, $input: CreateServiceAccountApiKeyInput!) {
+    createServiceAccountApiKey(serviceAccountId: $serviceAccountId, input: $input) {
+      displayName
+      key
+      expiresAt
+    }
+  }
+`
+
+const DELETE_SERVICE_ACCOUNT_API_KEY_MUTATION = gql`
+  mutation DeleteServiceAccountApiKey($serviceAccountId: UUID!, $apiKeyId: UUID!) {
+    deleteServiceAccountApiKey(serviceAccountId: $serviceAccountId, apiKeyId: $apiKeyId)
+  }
+`
+
 export async function listApiKeys(serviceAccountId: string): Promise<ApiKeyInfoDto[]> {
-  return await apiJson<ApiKeyInfoDto[]>(`${base()}/${encodeURIComponent(serviceAccountId)}/api-keys`, { method: 'GET' })
+  try {
+    const data = await runQuery<{ serviceAccountApiKeys: ApiKeyInfoDto[] }>(
+      SERVICE_ACCOUNT_API_KEYS_QUERY,
+      { serviceAccountId },
+      { tenantScoped: true },
+    )
+    return data.serviceAccountApiKeys ?? []
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not load API keys.')
+  }
 }
 
 export async function createApiKey(serviceAccountId: string, dto: CreateApiKeyRequest): Promise<CreateApiKeyResponse> {
-  return await apiJson<CreateApiKeyResponse>(`${base()}/${encodeURIComponent(serviceAccountId)}/api-keys`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(dto),
-  })
+  try {
+    const data = await runMutation<{ createServiceAccountApiKey: CreateApiKeyResponse }>(
+      CREATE_SERVICE_ACCOUNT_API_KEY_MUTATION,
+      { serviceAccountId, input: { displayName: dto.displayName, expiresAt: dto.expiresAt ?? null, scopes: dto.scopes ?? null } },
+      { tenantScoped: true },
+    )
+    return data.createServiceAccountApiKey
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not create API key.')
+  }
 }
 
 export async function deleteApiKey(serviceAccountId: string, apiKeyId: string): Promise<void> {
-  await apiJson<void>(`${base()}/${encodeURIComponent(serviceAccountId)}/api-keys/${encodeURIComponent(apiKeyId)}`, { method: 'DELETE' })
+  try {
+    await runMutation(
+      DELETE_SERVICE_ACCOUNT_API_KEY_MUTATION,
+      { serviceAccountId, apiKeyId },
+      { tenantScoped: true },
+    )
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not delete API key.')
+  }
 }

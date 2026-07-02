@@ -49,16 +49,10 @@ public static class ReleaseEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .RequireAuthorization();
         
-        // Release reads (get by id, list) are served by GraphQL (query { release(id) }, query { repository { releases } }).
-        // REST is kept only for operations GraphQL cannot serve: binary download and raw custom properties.
+        // Release reads (get by id, list) and custom properties are served by GraphQL
+        // (query { release(id) { customProperties } }, query { repository { releases } }).
+        // REST is kept only for the binary release-package download, which GraphQL cannot serve.
 
-        group.MapGet("/{id:guid}/properties", GetReleaseCustomPropertiesAsync)
-            .WithDescription("Get custom properties of a release.")
-            .WithSummary("Get Release Custom Properties")
-            .Produces<string>()
-            .Produces(StatusCodes.Status404NotFound)
-            .RequireRepoPermission(RepositoryPermission.Read);
-        
         group.MapGet("/{id:guid}/download", GetReleaseDownloadAsync)
             .WithDescription("Download a release package.")
             .WithSummary("Download Release")
@@ -68,12 +62,6 @@ public static class ReleaseEndpoints
             .RequireRepoPermission(RepositoryPermission.Read);
         
         return group;
-    }
-    
-    private static async Task<IResult> GetReleaseCustomPropertiesAsync(Guid id, BinStashDbContext db)
-    {
-        var customProperties = await db.Releases.AsNoTracking().Where(r => r.Id == id).Select(x => x.CustomProperties).FirstOrDefaultAsync();
-        return Results.Text(customProperties ?? "{}", "application/json");
     }
     
     private static async Task<IResult> GetReleaseDownloadAsync(Guid tenantId, Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService, IUsageMeteringService meteringService, ILoggerFactory loggerFactory)

@@ -301,7 +301,6 @@
         :disabled="isCreating"
         placeholder="Select a storage class"
       >
-        <option value="" disabled>Select a storage class</option>
         <option
           v-for="sc in tenantSettingsStore.allowedStorageClasses"
           :key="sc.name"

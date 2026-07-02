@@ -1,4 +1,5 @@
-import { apiFetch, throwForStatus } from '../shared/api/http'
+import gql from 'graphql-tag'
+import { normalizeGraphqlError, runMutation, runQuery } from '../shared/api/graphqlComposable'
 
 export type InstanceStats = {
   userCount: number
@@ -6,10 +7,23 @@ export type InstanceStats = {
   repositoryCount: number
 }
 
+const INSTANCE_STATS_QUERY = gql`
+  query InstanceStats {
+    instanceStats {
+      userCount
+      tenantCount
+      repositoryCount
+    }
+  }
+`
+
 export async function fetchInstanceStats(): Promise<InstanceStats> {
-  const res = await apiFetch('/api/instance/stats', { method: 'GET' })
-  await throwForStatus(res)
-  return (await res.json()) as InstanceStats
+  try {
+    const data = await runQuery<{ instanceStats: InstanceStats }>(INSTANCE_STATS_QUERY)
+    return data.instanceStats
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not load instance statistics.')
+  }
 }
 
 // ── Public URL / Domain configuration ───────────────────────────────────────
@@ -19,22 +33,39 @@ export type InstanceDomainConfig = {
   baseUrl: string
 }
 
+const DOMAIN_CONFIG_QUERY = gql`
+  query DomainConfig {
+    domainConfig {
+      baseUrl
+    }
+  }
+`
+
+const SET_DOMAIN_CONFIG_MUTATION = gql`
+  mutation SetDomainConfig($input: SetDomainConfigInput!) {
+    setDomainConfig(input: $input) {
+      baseUrl
+    }
+  }
+`
+
 /** Reads the current instance domain/base URL configuration. */
 export async function fetchInstanceDomainConfig(): Promise<InstanceDomainConfig> {
-  const res = await apiFetch('/api/instance/config/domain', { method: 'GET' })
-  if (res.status === 404) return { baseUrl: '' }
-  await throwForStatus(res)
-  return deserializeInstanceDomainConfig(await res.json())
+  try {
+    const data = await runQuery<{ domainConfig: { baseUrl?: string | null } }>(DOMAIN_CONFIG_QUERY)
+    return { baseUrl: data.domainConfig?.baseUrl ?? '' }
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not load domain configuration.')
+  }
 }
 
 /** Saves the instance domain/base URL configuration. */
 export async function saveInstanceDomainConfig(config: InstanceDomainConfig): Promise<void> {
-  const res = await apiFetch('/api/instance/config/domain', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(serializeInstanceDomainConfig(config)),
-  })
-  await throwForStatus(res)
+  try {
+    await runMutation(SET_DOMAIN_CONFIG_MUTATION, { input: { baseUrl: config.baseUrl } })
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not save domain configuration.')
+  }
 }
 
 // ── Tenancy configuration ─────────────────────────────────────────────────────
@@ -46,22 +77,46 @@ export type TenancyConfig = {
   defaultTenantId?: string
 }
 
-/** Reads the current tenancy configuration via the instance config endpoint. */
+const TENANCY_CONFIG_QUERY = gql`
+  query TenancyConfig {
+    tenancyConfig {
+      mode
+      defaultTenantId
+    }
+  }
+`
+
+const SET_TENANCY_CONFIG_MUTATION = gql`
+  mutation SetTenancyConfig($input: SetTenancyConfigInput!) {
+    setTenancyConfig(input: $input) {
+      mode
+      defaultTenantId
+    }
+  }
+`
+
+/** Reads the current tenancy configuration. */
 export async function fetchTenancyConfig(): Promise<TenancyConfig> {
-  const res = await apiFetch('/api/instance/config/tenancy', { method: 'GET' })
-  if (res.status === 404) return { mode: 'Multi', defaultTenantId: undefined }
-  await throwForStatus(res)
-  return deserializeTenancyConfig(await res.json())
+  try {
+    const data = await runQuery<{ tenancyConfig: { mode?: string | null; defaultTenantId?: string | null } }>(
+      TENANCY_CONFIG_QUERY,
+    )
+    const mode = data.tenancyConfig?.mode === 'Single' ? 'Single' : 'Multi'
+    return { mode, defaultTenantId: data.tenancyConfig?.defaultTenantId ?? undefined }
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not load tenancy configuration.')
+  }
 }
 
-/** Saves tenancy mode (and optional default tenant) via the instance config endpoint. */
+/** Saves tenancy mode (and optional default tenant). */
 export async function saveTenancyConfig(config: TenancyConfig): Promise<void> {
-  const res = await apiFetch('/api/instance/config/tenancy', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(serializeTenancyConfig(config)),
-  })
-  await throwForStatus(res)
+  try {
+    await runMutation(SET_TENANCY_CONFIG_MUTATION, {
+      input: { mode: config.mode, defaultTenantId: config.defaultTenantId ?? null },
+    })
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not save tenancy configuration.')
+  }
 }
 
 // ── Email configuration ───────────────────────────────────────────────────────
@@ -276,110 +331,104 @@ function capitalize(s: string): string {
 }
 
 function deserializeEmailConfig(raw: any): EmailConfig {
-  const providerStr: string = raw.Provider ?? 'None'
+  const providerStr: string = raw?.provider ?? 'None'
   const provider: EmailProvider | null =
-    providerStr === 'None' ? null : (providerStr.toLowerCase() as EmailProvider)
+    !providerStr || providerStr === 'None' ? null : (providerStr.toLowerCase() as EmailProvider)
 
   return {
     provider,
     shared: {
-      fromEmail: raw.Shared?.FromEmail ?? '',
-      supportEmail: raw.Shared?.SupportEmail ?? '',
+      fromEmail: raw?.shared?.fromEmail ?? '',
+      supportEmail: raw?.shared?.supportEmail ?? '',
     },
     brevo: {
-      apiKey: raw.Brevo?.ApiKey ?? '',
+      apiKey: raw?.brevo?.apiKey ?? '',
     },
     smtp: {
-      host: raw.Smtp?.Host ?? '',
-      port: raw.Smtp?.Port ?? 587,
-      username: raw.Smtp?.Username ?? '',
-      password: raw.Smtp?.Password ?? '',
-      security: ((raw.Smtp?.Security as string)?.toLowerCase() ?? 'starttls') as SmtpSecurityMode,
+      host: raw?.smtp?.host ?? '',
+      port: raw?.smtp?.port ?? 587,
+      username: raw?.smtp?.username ?? '',
+      password: raw?.smtp?.password ?? '',
+      security: ((raw?.smtp?.security as string)?.toLowerCase() ?? 'starttls') as SmtpSecurityMode,
     },
   }
 }
 
 function serializeEmailConfig(config: EmailConfigSavePayload): object {
-  const payload: Record<string, unknown> = {
-    Provider: config.provider ? capitalize(config.provider) : 'None',
-    Shared: {
-      FromEmail: config.shared.fromEmail,
-      SupportEmail: config.shared.supportEmail,
+  const input: Record<string, unknown> = {
+    provider: config.provider ? capitalize(config.provider) : 'None',
+    shared: {
+      fromEmail: config.shared.fromEmail,
+      supportEmail: config.shared.supportEmail,
     },
   }
 
   if (config.provider === 'brevo' && config.brevo) {
-    payload.Brevo = {
-      ApiKey: config.brevo.apiKey,
-    }
+    input.brevo = { apiKey: config.brevo.apiKey }
   }
 
   if (config.provider === 'smtp' && config.smtp) {
-    payload.Smtp = {
-      Host: config.smtp.host,
-      Port: config.smtp.port,
-      Username: config.smtp.username,
-      Password: config.smtp.password,
-      Security: config.smtp.security,
+    input.smtp = {
+      host: config.smtp.host,
+      port: config.smtp.port,
+      username: config.smtp.username,
+      password: config.smtp.password,
+      security: config.smtp.security,
     }
   }
 
-  return payload
-}
-
-function deserializeTenancyConfig(raw: any): TenancyConfig {
-  const modeStr: string = raw.Mode ?? 'Multi'
-  const mode: TenancyMode = (modeStr as TenancyMode) || 'Multi'
-  const defaultTenantId: string | undefined = raw.DefaultTenantId ?? undefined
-
-  return { mode, defaultTenantId }
-}
-
-function serializeTenancyConfig(config: TenancyConfig): object {
-  return {
-    Mode: config.mode,
-    DefaultTenantId: config.defaultTenantId,
-  }
-}
-
-function deserializeInstanceDomainConfig(raw: any): InstanceDomainConfig {
-  return {
-    // Be tolerant to casing while backend contracts settle.
-    baseUrl:
-      raw?.BaseUrl ??
-      raw?.baseUrl ??
-      raw?.PublicUrl ??
-      raw?.publicUrl ??
-      '',
-  }
-}
-
-function serializeInstanceDomainConfig(config: InstanceDomainConfig): object {
-  return {
-    // Send both conventional casings for forward/backward compatibility.
-    BaseUrl: config.baseUrl,
-    baseUrl: config.baseUrl,
-  }
+  return input
 }
 
 // ── API functions ─────────────────────────────────────────────────────────────
 
+const EMAIL_CONFIG_QUERY = gql`
+  query EmailConfig {
+    emailConfig {
+      provider
+      shared {
+        fromEmail
+        supportEmail
+      }
+      brevo {
+        apiKey
+      }
+      smtp {
+        host
+        port
+        username
+        password
+        security
+      }
+    }
+  }
+`
+
+const SET_EMAIL_CONFIG_MUTATION = gql`
+  mutation SetEmailConfig($input: SetEmailConfigInput!) {
+    setEmailConfig(input: $input) {
+      provider
+    }
+  }
+`
+
 /** Returns the current email config. Falls back to a default if none is saved. */
 export async function fetchEmailConfig(): Promise<EmailConfig> {
-  const res = await apiFetch('/api/instance/config/email', { method: 'GET' })
-  if (res.status === 404) return defaultEmailConfig()
-  await throwForStatus(res)
-  return deserializeEmailConfig(await res.json())
+  try {
+    const data = await runQuery<{ emailConfig: any }>(EMAIL_CONFIG_QUERY)
+    return deserializeEmailConfig(data.emailConfig)
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not load email configuration.')
+  }
 }
 
 /** Saves (creates or replaces) the instance-wide email configuration. */
 export async function saveEmailConfig(config: EmailConfigSavePayload): Promise<void> {
-  const res = await apiFetch('/api/instance/config/email', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(serializeEmailConfig(config)),
-  })
-  await throwForStatus(res)
+  try {
+    await runMutation(SET_EMAIL_CONFIG_MUTATION, { input: serializeEmailConfig(config) })
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not save email configuration.')
+  }
 }
 
 export type TestEmailResult = {
@@ -395,12 +444,22 @@ export type TestEmailResult = {
  * provider-level failures, so callers can distinguish transport errors from
  * API / auth errors.
  */
+const SEND_TEST_EMAIL_MUTATION = gql`
+  mutation SendTestEmail($recipientEmail: String!) {
+    sendTestEmail(recipientEmail: $recipientEmail) {
+      success
+      providerError
+    }
+  }
+`
+
 export async function sendTestEmail(recipientEmail: string): Promise<TestEmailResult> {
-  const res = await apiFetch('/api/instance/config/email/test', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ recipientEmail }),
-  })
-  await throwForStatus(res)
-  return (await res.json()) as TestEmailResult
+  try {
+    const data = await runMutation<{ sendTestEmail: TestEmailResult }>(SEND_TEST_EMAIL_MUTATION, {
+      recipientEmail,
+    })
+    return data.sendTestEmail
+  } catch (e: any) {
+    throw normalizeGraphqlError(e, 'Could not send test email.')
+  }
 }

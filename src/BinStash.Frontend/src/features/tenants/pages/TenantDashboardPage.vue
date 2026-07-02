@@ -199,7 +199,7 @@
 
     <div class="col-span-full xl:col-span-4 space-y-6">
       <!-- Quick actions -->
-      <DashboardCard title="Quick Actions" :icon="IconArrowsTransferDown">
+      <DashboardCard title="Quick Actions" :icon="IconBolt">
         <div class="p-4 space-y-3">
           <DashboardCardAction
             :to="`/t/${tenantId}/repositories`"
@@ -315,6 +315,7 @@ import {
   IconChevronRight,
   IconAlertCircleFilled,
   IconArrowsTransferDown,
+  IconBolt,
   IconCircleCheckFilled,
   IconClockFilled,
   IconCircleXFilled,
@@ -516,6 +517,7 @@ export default {
       // Icons exposed for template :icon bindings
       IconPackage,
       IconGitBranch,
+      IconBolt,
       IconArrowsTransferDown,
       IconUsers,
       IconRobot,

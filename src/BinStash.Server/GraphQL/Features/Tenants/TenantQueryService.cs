@@ -60,6 +60,30 @@ public class TenantQueryService
         var user = _httpContextAccessor.HttpContext?.User
             ?? throw new GraphQLException("No user context.");
 
+        // Service-account (machine) subjects have no user/membership row; resolve the single
+        // tenant the service account belongs to so CLI/CI flows can map --tenant <slug> to an id.
+        if (user.FindFirstValue("auth_type") == "machine")
+        {
+            if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var subjectId))
+                throw new GraphQLException(
+                    ErrorBuilder.New()
+                        .SetMessage("Unauthorized.")
+                        .SetCode("UNAUTHORIZED")
+                        .Build());
+
+            return _db.ServiceAccounts
+                .AsNoTracking()
+                .Where(sa => sa.Id == subjectId)
+                .Join(_db.Tenants.AsNoTracking(), sa => sa.TenantId, t => t.Id, (_, t) => new TenantGql
+                {
+                    Id = t.Id,
+                    Name = t.Name,
+                    Slug = t.Slug,
+                    CreatedAt = t.CreatedAt,
+                    JoinedAt = null,
+                });
+        }
+
         var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
 
         if (!Guid.TryParse(userIdStr, out var userId))
@@ -132,5 +156,85 @@ public class TenantQueryService
             .FirstOrDefaultAsync(ct);
     }
 
-    // GetReleasesForRepository lives in RepositoryQueryService — use that one.
+    public async Task<List<TenantMemberGql>> GetTenantMembersAsync(CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureTenantPermissionAsync(user, _authorizationService, tenantContext.TenantId, TenantPermission.Admin);
+
+        var members = await _db.TenantMembers.AsNoTracking()
+            .Where(tm => tm.TenantId == tenantContext.TenantId)
+            .Join(_db.Users.AsNoTracking(), tm => tm.UserId, u => u.Id, (tm, u) => new { u.Id, u.Email, u.FirstName, u.LastName, tm.JoinedAt })
+            .ToListAsync(ct);
+
+        var memberRoles = await _db.TenantRoleAssignments.AsNoTracking()
+            .Where(t => t.TenantId == tenantContext.TenantId)
+            .ToListAsync(ct);
+
+        return members.Select(m => new TenantMemberGql
+        {
+            Id = m.Id,
+            Email = m.Email ?? string.Empty,
+            FirstName = m.FirstName,
+            LastName = m.LastName,
+            JoinedAt = m.JoinedAt,
+            Roles = memberRoles.Where(r => r.UserId == m.Id).Select(r => r.RoleName).ToList()
+        }).ToList();
+    }
+
+    public async Task<List<TenantStorageClassGql>> GetTenantStorageClassesAsync(CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureTenantPermissionAsync(user, _authorizationService, tenantContext.TenantId, TenantPermission.Member);
+
+        return await _db.StorageClassMappings.AsNoTracking()
+            .Where(scm => scm.TenantId == tenantContext.TenantId && scm.IsEnabled)
+            .Join(_db.StorageClasses.AsNoTracking(),
+                scm => scm.StorageClassName,
+                sc => sc.Name,
+                (scm, sc) => new TenantStorageClassGql
+                {
+                    Name = sc.Name,
+                    Description = sc.Description,
+                    IsDefault = scm.IsDefault
+                })
+            .ToListAsync(ct);
+    }
+
+    public async Task<TenantInvitationPreviewGql?> GetTenantInvitationPreviewAsync(Guid tenantId, string code, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(code))
+            throw new GraphQLException("Invitation code is required.");
+
+        string decodedCode;
+        try
+        {
+            var decodedBytes = Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlDecode(code);
+            decodedCode = System.Text.Encoding.UTF8.GetString(decodedBytes);
+        }
+        catch
+        {
+            throw new GraphQLException("Invalid invitation code.");
+        }
+
+        var invitation = await _db.TenantMemberInvitations.AsNoTracking()
+            .FirstOrDefaultAsync(i => i.TenantId == tenantId && i.Code == decodedCode && i.ExpiresAt > DateTimeOffset.UtcNow && i.AcceptedAt == null, ct);
+        if (invitation is null)
+            return null;
+
+        var tenant = await _db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null)
+            return null;
+
+        return new TenantInvitationPreviewGql
+        {
+            TenantId = tenant.Id,
+            TenantName = tenant.Name,
+            TenantSlug = tenant.Slug,
+            Role = invitation.Roles.First(),
+            InvitedEmail = invitation.InviteeEmail,
+            ExpiresAt = invitation.ExpiresAt
+        };
+    }
 }

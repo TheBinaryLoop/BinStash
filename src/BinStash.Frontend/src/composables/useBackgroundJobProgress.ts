@@ -7,12 +7,17 @@ export type BackgroundJobProgress = {
   jobId: string
   jobType: string
   status: string
+  // Release-upgrade progress
   totalReleases: number
   processedReleases: number
   failedReleases: number
   skippedReleases: number
   bytesSaved: number
   bytesGrown: number
+  // Chunk-store rebuild progress
+  totalBuckets: number
+  processedBuckets: number
+  failedBuckets: number
   chunkStoreId?: string | null
   startedAt?: string | null
   completedAt?: string | null
@@ -30,6 +35,9 @@ const BACKGROUND_JOB_PROGRESS_SUBSCRIPTION = gql`
       skippedReleases
       bytesSaved
       bytesGrown
+      totalBuckets
+      processedBuckets
+      failedBuckets
       chunkStoreId
       startedAt
       completedAt

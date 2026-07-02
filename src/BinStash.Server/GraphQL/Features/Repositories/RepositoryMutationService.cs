@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Auth;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Entities;
@@ -171,5 +172,71 @@ public sealed class RepositoryMutationService
                 MaxChunkSize = repo.ChunkStore.ChunkerOptions.MaxChunkSize
             }
         };
+    }
+
+    public async Task<RepositoryAccessGql> GrantRepositoryAccessAsync(Guid repoId, short subjectType, Guid subjectId, string role, CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureRepositoryPermissionAsync(user, _authorizationService, tenantContext.TenantId, repoId, RepositoryPermission.Admin);
+
+        if (string.IsNullOrWhiteSpace(role))
+            throw new GraphQLException("A role is required.");
+
+        var repoExists = await _db.Repositories.AnyAsync(r => r.TenantId == tenantContext.TenantId && r.Id == repoId, ct);
+        if (!repoExists)
+            throw new GraphQLException("Repository not found.");
+
+        var subject = (SubjectType)subjectType;
+
+        var roleAssignment = await _db.RepositoryRoleAssignments
+            .FirstOrDefaultAsync(x => x.RepositoryId == repoId && x.SubjectType == subject && x.SubjectId == subjectId, ct);
+
+        if (roleAssignment is not null)
+        {
+            roleAssignment.RoleName = role;
+            roleAssignment.GrantedAt = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            roleAssignment = new RepositoryRoleAssignment
+            {
+                RepositoryId = repoId,
+                SubjectType = subject,
+                SubjectId = subjectId,
+                RoleName = role,
+                GrantedAt = DateTimeOffset.UtcNow
+            };
+            await _db.RepositoryRoleAssignments.AddAsync(roleAssignment, ct);
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        return new RepositoryAccessGql
+        {
+            SubjectType = (short)roleAssignment.SubjectType,
+            SubjectId = roleAssignment.SubjectId,
+            Role = roleAssignment.RoleName,
+            GrantedAt = roleAssignment.GrantedAt
+        };
+    }
+
+    public async Task<bool> RevokeRepositoryAccessAsync(Guid repoId, short subjectType, Guid subjectId, CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureRepositoryPermissionAsync(user, _authorizationService, tenantContext.TenantId, repoId, RepositoryPermission.Admin);
+
+        var subject = (SubjectType)subjectType;
+
+        var roleAssignment = await _db.RepositoryRoleAssignments
+            .FirstOrDefaultAsync(x => x.RepositoryId == repoId && x.SubjectType == subject && x.SubjectId == subjectId, ct);
+
+        if (roleAssignment is null)
+            return false;
+
+        _db.RepositoryRoleAssignments.Remove(roleAssignment);
+        await _db.SaveChangesAsync(ct);
+        return true;
     }
 }

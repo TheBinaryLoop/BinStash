@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Server.GraphQL.Features.Instance;
 using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
 using BinStash.Server.GraphQL.Features.Tenants;
@@ -81,6 +82,73 @@ public sealed class MutationType : ObjectType<Mutation>
         descriptor
             .Field(x => x.CancelBackgroundJob(Guid.Empty, null!, CancellationToken.None))
             .Type<ObjectType<BackgroundJobGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.SendTestEmail(null!, null!, CancellationToken.None))
+            .Type<ObjectType<SendTestEmailResultGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.SetEmailConfig(null!, null!))
+            .Type<ObjectType<EmailConfigGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.SetTenancyConfig(null!, null!))
+            .Type<ObjectType<TenancyConfigGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.SetDomainConfig(null!, null!))
+            .Type<ObjectType<DomainConfigGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.SetStorageClassDefaultMappings(null!, null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GrantRepositoryAccess(Guid.Empty, (short)0, Guid.Empty, null!, null!, CancellationToken.None))
+            .Type<ObjectType<RepositoryAccessGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.RevokeRepositoryAccess(Guid.Empty, (short)0, Guid.Empty, null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.CreateServiceAccountApiKey(Guid.Empty, null!, null!, CancellationToken.None))
+            .Type<ObjectType<CreateApiKeyResultGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.DeleteServiceAccountApiKey(Guid.Empty, Guid.Empty, null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.InviteTenantMember(null!, null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.UpdateTenantMemberRoles(Guid.Empty, null!, null!, CancellationToken.None))
+            .Type<ObjectType<TenantMemberGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.RemoveTenantMember(Guid.Empty, null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.LeaveTenant(null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.AcceptTenantInvitation(Guid.Empty, null!, null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.DeleteTenant(Guid.Empty, null!, CancellationToken.None))
             .Authorize();
     }
 }

@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Auth;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.GraphQL.Auth;
@@ -51,5 +52,32 @@ public sealed class ServiceAccountQueryService
                 Name = r.Name,
                 CreatedAt = r.CreatedAt
             });
+    }
+
+    public async Task<List<ApiKeyInfoGql>> GetApiKeysAsync(Guid serviceAccountId, CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureTenantPermissionAsync(user, _authorizationService, tenantContext.TenantId, TenantPermission.Admin);
+
+        var serviceAccountExists = await _db.ServiceAccounts
+            .AnyAsync(x => x.Id == serviceAccountId && x.TenantId == tenantContext.TenantId, ct);
+        if (!serviceAccountExists)
+            throw new GraphQLException("Service account not found.");
+
+        return await _db.ApiKeys
+            .AsNoTracking()
+            .Where(x => x.SubjectType == SubjectType.ServiceAccount && x.SubjectId == serviceAccountId)
+            .Select(x => new ApiKeyInfoGql
+            {
+                Id = x.Id,
+                DisplayName = x.DisplayName,
+                CreatedAt = x.CreatedAt,
+                ExpiresAt = x.ExpiresAt,
+                LastUsedAt = x.LastUsedAt,
+                IsActive = x.IsActive,
+                Scopes = x.Scopes
+            })
+            .ToListAsync(ct);
     }
 }

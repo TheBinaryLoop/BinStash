@@ -61,11 +61,43 @@ public sealed class ChunkStoreQueryService
         return stores.Select(MapToGql).AsQueryable();
     }
 
+    public async Task<ChunkStoreStatsGql?> GetChunkStoreStatsAsync(Guid chunkStoreId, CancellationToken ct)
+    {
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureInstancePermissionAsync(user, _authorizationService, InstancePermission.Admin);
+
+        var exists = await _db.ChunkStores.AnyAsync(cs => cs.Id == chunkStoreId, ct);
+        if (!exists)
+            return null;
+
+        return new ChunkStoreStatsGql
+        {
+            TotalChunks = await _db.Chunks.CountAsync(x => x.ChunkStoreId == chunkStoreId, ct)
+        };
+    }
+
+    public async Task<List<ChunkStoreTypeInfoGql>> GetEnabledChunkStoreTypesAsync()
+    {
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureInstancePermissionAsync(user, _authorizationService, InstancePermission.Admin);
+
+        return Enum.GetValues<BinStash.Core.Entities.ChunkStoreType>()
+            .Select(x => new ChunkStoreTypeInfoGql { Name = x.ToString(), Value = (int)x })
+            .ToList();
+    }
+
     private static ChunkStoreGql MapToGql(ChunkStore store) => new()
     {
         Id = store.Id,
         Name = store.Name,
         Type = store.Type.ToString(),
+        Chunker = new ChunkStoreChunkerGql
+        {
+            Type = store.ChunkerOptions.Type.ToString(),
+            MinChunkSize = store.ChunkerOptions.MinChunkSize,
+            AvgChunkSize = store.ChunkerOptions.AvgChunkSize,
+            MaxChunkSize = store.ChunkerOptions.MaxChunkSize
+        },
         BackendSettings = MapBackendSettingsToGql(store.BackendSettings)
     };
 
