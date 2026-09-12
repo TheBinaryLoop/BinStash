@@ -57,7 +57,7 @@ public class EgressMeterTests : IDisposable
         _db.ChunkStores.Add(store);
         _db.Repositories.Add(repo);
         _db.Releases.Add(release);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var meteringService = new SpyEgressMeteringService();
         var loggerFactory = NullLoggerFactory.Instance;

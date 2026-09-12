@@ -41,7 +41,7 @@ public class QuotaEnforcementTests : IDisposable
         var sut = new BillingLimitsCache(provider, cache);
 
         // Act
-        var limits = await sut.GetCachedLimitsAsync(tenantId);
+        var limits = await sut.GetCachedLimitsAsync(tenantId, TestContext.Current.CancellationToken);
 
         // Assert
         limits.IsIngestAllowed.Should().BeFalse();
@@ -57,9 +57,9 @@ public class QuotaEnforcementTests : IDisposable
         var sut = new BillingLimitsCache(provider, cache);
 
         // Act
-        await sut.GetCachedLimitsAsync(tenantId);
-        await sut.GetCachedLimitsAsync(tenantId);
-        await sut.GetCachedLimitsAsync(tenantId);
+        await sut.GetCachedLimitsAsync(tenantId, TestContext.Current.CancellationToken);
+        await sut.GetCachedLimitsAsync(tenantId, TestContext.Current.CancellationToken);
+        await sut.GetCachedLimitsAsync(tenantId, TestContext.Current.CancellationToken);
 
         // Assert
         provider.CallCount.Should().Be(1);
@@ -76,8 +76,8 @@ public class QuotaEnforcementTests : IDisposable
         var sut = new BillingLimitsCache(provider, cache);
 
         // Act
-        await sut.GetCachedLimitsAsync(tenantA);
-        await sut.GetCachedLimitsAsync(tenantB);
+        await sut.GetCachedLimitsAsync(tenantA, TestContext.Current.CancellationToken);
+        await sut.GetCachedLimitsAsync(tenantB, TestContext.Current.CancellationToken);
 
         // Assert — two distinct tenants → two provider calls
         provider.CallCount.Should().Be(2);
@@ -100,7 +100,7 @@ public class QuotaEnforcementTests : IDisposable
 
         _db.ChunkStores.Add(store);
         _db.Repositories.Add(repo);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var provider = new StubBillingProvider(isIngestAllowed: false);
         var memCache = new MemoryCache(new MemoryCacheOptions());

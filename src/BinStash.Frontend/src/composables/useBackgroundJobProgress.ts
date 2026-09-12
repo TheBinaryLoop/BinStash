@@ -1,7 +1,14 @@
 import { ref, readonly, onUnmounted, type Ref } from 'vue'
 import { apolloClient } from '@/shared/api/apolloClient'
 import gql from 'graphql-tag'
-import type { Subscription as ZenSubscription } from 'zen-observable-ts'
+
+/**
+ * Minimal structural type for the handle returned by `observable.subscribe(...)`.
+ * Only `unsubscribe()` is used here, and both Apollo 3's zen-observable
+ * `Subscription` and Apollo 4's rxjs `Subscription` satisfy this shape, so it
+ * avoids importing a non-hoisted transitive type.
+ */
+type ProgressSubscription = { unsubscribe(): void }
 
 export type BackgroundJobProgress = {
   jobId: string
@@ -50,7 +57,7 @@ export function useBackgroundJobProgress() {
   const error = ref<string | null>(null)
   const isSubscribed = ref(false)
 
-  let subscription: ZenSubscription | null = null
+  let subscription: ProgressSubscription | null = null
 
   function subscribe(jobId: string) {
     unsubscribe()
@@ -58,7 +65,7 @@ export function useBackgroundJobProgress() {
     error.value = null
     isSubscribed.value = true
 
-    const observable = apolloClient.subscribe({
+    const observable = apolloClient.subscribe<{ backgroundJobProgress: BackgroundJobProgress }>({
       query: BACKGROUND_JOB_PROGRESS_SUBSCRIPTION,
       variables: { jobId },
     })
@@ -66,7 +73,7 @@ export function useBackgroundJobProgress() {
     subscription = observable.subscribe({
       next(result) {
         if (result.data?.backgroundJobProgress) {
-          progress.value = result.data.backgroundJobProgress as BackgroundJobProgress
+          progress.value = result.data.backgroundJobProgress
 
           // Auto-unsubscribe when the job reaches a terminal state
           const status = progress.value.status

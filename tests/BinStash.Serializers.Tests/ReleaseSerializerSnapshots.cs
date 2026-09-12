@@ -23,7 +23,7 @@ public class ReleaseSerializerSnapshots
     {
         var package = await TestData.GetSampleReleasePackageAsync();
 
-        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(package);
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(package, cancellationToken: TestContext.Current.CancellationToken);
 
         bytes[0].Should().Be((byte)'B');
         bytes[1].Should().Be((byte)'P');

@@ -56,7 +56,7 @@ public class ReleasePackageSerializerSpecs
     [Fact]
     public async Task Serialized_bytes_start_with_BPKG_magic()
     {
-        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage(), cancellationToken: TestContext.Current.CancellationToken);
         bytes[0].Should().Be((byte)'B');
         bytes[1].Should().Be((byte)'P');
         bytes[2].Should().Be((byte)'K');
@@ -66,7 +66,7 @@ public class ReleasePackageSerializerSpecs
     [Fact]
     public async Task Serialized_bytes_carry_version_6()
     {
-        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage(), cancellationToken: TestContext.Current.CancellationToken);
         bytes[4].Should().Be(6);
     }
 
@@ -456,8 +456,8 @@ public class ReleasePackageSerializerSpecs
     {
         var options = new ReleasePackageSerializerOptions { EnableCompression = false };
         var original = MinimalPackage();
-        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(original, options);
-        var rt = (await ReleasePackageSerializer.DeserializeAsync(bytes)).Package;
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(original, options, TestContext.Current.CancellationToken);
+        var rt = (await ReleasePackageSerializer.DeserializeAsync(bytes, TestContext.Current.CancellationToken)).Package;
         rt.ReleaseId.Should().Be("rel-001");
     }
 
@@ -467,9 +467,9 @@ public class ReleasePackageSerializerSpecs
         var package = PackageWithManyOpaqueArtifacts(100);
 
         var (compressedBytes, _) = await ReleasePackageSerializer.SerializeAsync(package,
-            new ReleasePackageSerializerOptions { EnableCompression = true });
+            new ReleasePackageSerializerOptions { EnableCompression = true }, TestContext.Current.CancellationToken);
         var (uncompressedBytes, _) = await ReleasePackageSerializer.SerializeAsync(package,
-            new ReleasePackageSerializerOptions { EnableCompression = false });
+            new ReleasePackageSerializerOptions { EnableCompression = false }, TestContext.Current.CancellationToken);
 
         // Compression should at least not bloat the output for 100 identical-ish hashes
         uncompressedBytes.Length.Should().BeGreaterThan(0);
@@ -529,10 +529,10 @@ public class ReleasePackageSerializerSpecs
         // Produce V6 bytes for a minimal package. V4 and V6 share identical wire
         // encoding for §0x02 — the only difference is which field the deserializer
         // populates (ContentHash for V4 and V6, StorageKey for V5).
-        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage(), cancellationToken: TestContext.Current.CancellationToken);
         // Patch the version byte to 4 to exercise the V4 deserializer code path.
         bytes[4] = 4;
-        var rt = (await ReleasePackageSerializer.DeserializeAsync(bytes)).Package;
+        var rt = (await ReleasePackageSerializer.DeserializeAsync(bytes, TestContext.Current.CancellationToken)).Package;
         rt.PackageFormatVersion.Should().Be(4);
         var backing = rt.OutputArtifacts[0].Backing.Should().BeOfType<OpaqueBlobBacking>().Subject;
         // V4 deserializer populates ContentHash, not StorageKey.
@@ -559,7 +559,7 @@ public class ReleasePackageSerializerSpecs
     [Fact]
     public async Task V6_write_read_produces_version_6_header()
     {
-        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage());
+        var (bytes, _) = await ReleasePackageSerializer.SerializeAsync(MinimalPackage(), cancellationToken: TestContext.Current.CancellationToken);
         bytes[4].Should().Be(6);
     }
 

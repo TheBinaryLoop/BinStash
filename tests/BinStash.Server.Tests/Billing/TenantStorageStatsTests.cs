@@ -33,25 +33,25 @@ public class TenantStorageStatsTests
             var store1 = new ChunkStore("store1", ChunkStoreType.Local, new LocalFolderBackendSettings { Path = "/tmp/t1" });
             var store2 = new ChunkStore("store2", ChunkStoreType.Local, new LocalFolderBackendSettings { Path = "/tmp/t2" });
             seedDb.ChunkStores.AddRange(store1, store2);
-            await seedDb.SaveChangesAsync();
+            await seedDb.SaveChangesAsync(TestContext.Current.CancellationToken);
 
             var repo1 = new Repository { Name = "repo1", ChunkStoreId = store1.Id, ChunkStore = store1, TenantId = tenant1Id };
             var repo2 = new Repository { Name = "repo2", ChunkStoreId = store2.Id, ChunkStore = store2, TenantId = tenant2Id };
             seedDb.Repositories.AddRange(repo1, repo2);
-            await seedDb.SaveChangesAsync();
+            await seedDb.SaveChangesAsync(TestContext.Current.CancellationToken);
 
             // Each release needs its own IngestSession (one-to-one with ReleaseMetrics)
             var session1a = MakeSession(repo1);
             var session1b = MakeSession(repo1);
             var session2 = MakeSession(repo2);
             seedDb.IngestSessions.AddRange(session1a, session1b, session2);
-            await seedDb.SaveChangesAsync();
+            await seedDb.SaveChangesAsync(TestContext.Current.CancellationToken);
 
             var release1a = new Release { Id = Guid.NewGuid(), Version = "1.0", RepoId = repo1.Id, SerializerVersion = 1 };
             var release1b = new Release { Id = Guid.NewGuid(), Version = "1.1", RepoId = repo1.Id, SerializerVersion = 1 };
             var release2 = new Release { Id = Guid.NewGuid(), Version = "2.0", RepoId = repo2.Id, SerializerVersion = 1 };
             seedDb.Releases.AddRange(release1a, release1b, release2);
-            await seedDb.SaveChangesAsync();
+            await seedDb.SaveChangesAsync(TestContext.Current.CancellationToken);
 
             // Tenant1: 100 + 200 = 300 bytes; Tenant2: 500 bytes
             seedDb.ReleaseMetrics.AddRange(
@@ -59,7 +59,7 @@ public class TenantStorageStatsTests
                 new ReleaseMetrics { ReleaseId = release1b.Id, IngestSessionId = session1b.Id, IngestSession = session1b, TotalLogicalBytes = 200, CreatedAt = DateTimeOffset.UtcNow },
                 new ReleaseMetrics { ReleaseId = release2.Id, IngestSessionId = session2.Id, IngestSession = session2, TotalLogicalBytes = 500, CreatedAt = DateTimeOffset.UtcNow }
             );
-            await seedDb.SaveChangesAsync();
+            await seedDb.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
         // Act — run the hosted service using a fresh scope per call
@@ -73,7 +73,7 @@ public class TenantStorageStatsTests
 
         using var cts = new CancellationTokenSource();
         await sut.StartAsync(cts.Token);
-        await Task.Delay(200);
+        await Task.Delay(200, TestContext.Current.CancellationToken);
         await cts.CancelAsync();
         try { await sut.StopAsync(CancellationToken.None); } catch { /* ignore */ }
 

@@ -61,7 +61,7 @@ public class IngestMeterTests : IDisposable
         _db.ChunkStores.Add(store);
         _db.Repositories.Add(repo);
         _db.IngestSessions.Add(session);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var chunkData = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
         var chunkHash = Blake3.Hasher.Hash(chunkData);

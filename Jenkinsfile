@@ -157,14 +157,12 @@ pipeline {
     stage('Test') {
       when { expression { params.RUN_TESTS } }
       steps {
-        dotnetTest(
-          project: env.SOLUTION,
-          configuration: env.BUILD_CONFIG,
-          noBuild: true,
-          logger: 'xunit',
-          sdk: 'dotnet-lts',
-          shutDownBuildServers: true
-        )
+        // xunit.v3 4.x runs on Microsoft.Testing.Platform (MTP), which the .NET 10 SDK
+        // will not execute through the legacy VSTest target that the `dotnetTest` step
+        // (and its `logger: 'xunit'`) relies on. MTP is opted into via global.json, takes
+        // the solution through `--solution`, and emits the xUnit.net v2+ XML that the
+        // xUnitDotNet publisher below consumes via `--report-xunit-xml`.
+        bat "dotnet test --solution ${env.SOLUTION} -c ${env.BUILD_CONFIG} --no-build --report-xunit-xml"
       }
       post {
         always { xunit checksName: '', tools: [xUnitDotNet(excludesPattern: '', pattern: '**/TestResults/*.xml', stopProcessingIfError: true)] }
