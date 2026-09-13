@@ -45,6 +45,11 @@ public sealed class RepositoryType : ObjectType<RepositoryGql>
             .Authorize()
             .Type<ListType<NonNullType<ObjectType<RepositoryAccessGql>>>>()
             .ResolveWith<Resolvers>(x => x.GetAccess(null!, null!));
+
+        descriptor.Field("metrics")
+            .Authorize()
+            .Type<NonNullType<ObjectType<RepositoryMetricsGql>>>()
+            .ResolveWith<Resolvers>(x => x.GetMetrics(null!, null!, null!, null!, CancellationToken.None));
     }
 
     private sealed class Resolvers
@@ -79,5 +84,33 @@ public sealed class RepositoryType : ObjectType<RepositoryGql>
             [Parent] RepositoryGql repository,
             [Service] RepositoryQueryService repositoryQueryService)
             => repositoryQueryService.GetRepositoryAccessAsync(repository.Id);
+
+        /// <summary>
+        /// Permission is checked per repository, as it is for releases and config; only the data
+        /// fetch is batched. Batching the authorization too would mean deciding access for a page
+        /// in aggregate, and a user who can see a workspace need not be able to read every
+        /// repository in it.
+        /// </summary>
+        public async Task<RepositoryMetricsGql> GetMetrics(
+            [Parent] RepositoryGql repository,
+            [Service] RepositoryMetricsDataLoader metricsLoader,
+            [Service] IHttpContextAccessor httpContextAccessor,
+            [Service] IAuthorizationService authorizationService,
+            CancellationToken cancellationToken)
+        {
+            var tenantContext = GraphQlAuth.EnsureTenantResolved(httpContextAccessor);
+
+            var user = httpContextAccessor.HttpContext?.User
+                       ?? throw new GraphQLException("No user context.");
+
+            await GraphQlAuth.EnsureRepositoryPermissionAsync(
+                user,
+                authorizationService,
+                tenantContext.TenantId,
+                repository.Id,
+                RepositoryPermission.Read);
+
+            return await metricsLoader.LoadRequiredAsync(repository.Id, cancellationToken);
+        }
     }
 }

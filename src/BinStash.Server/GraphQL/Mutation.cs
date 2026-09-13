@@ -78,6 +78,9 @@ public sealed class Mutation
     public Task<DomainConfigGql> SetDomainConfig(SetDomainConfigInput input, [Service] InstanceMutationService service)
         => service.SetDomainConfigAsync(input);
 
+    public Task<GcConfigGql> SetGcConfig(SetGcConfigInput input, [Service] InstanceMutationService service)
+        => service.SetGcConfigAsync(input);
+
     public Task<bool> SetStorageClassDefaultMappings(SetStorageClassDefaultMappingsInput input, [Service] StorageClassMutationService service, CancellationToken cancellationToken)
         => service.SetStorageClassDefaultMappingsAsync(input, cancellationToken);
 

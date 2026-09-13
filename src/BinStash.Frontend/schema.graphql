@@ -146,6 +146,7 @@ type Query {
   emailConfig: EmailConfigGql @authorize @cost(weight: "10")
   tenancyConfig: TenancyConfigGql @authorize @cost(weight: "10")
   domainConfig: DomainConfigGql @authorize @cost(weight: "10")
+  gcConfig: GcConfigGql! @authorize @cost(weight: "10")
   storageClasses: [StorageClassDetailsGql!]! @authorize @cost(weight: "10")
   storageClassDefaultMappings: [StorageClassDefaultMappingGql!]!
     @authorize
@@ -158,6 +159,9 @@ type Query {
   tenantInvitationPreview(tenantId: UUID!, code: String!): TenantInvitationPreviewGql
     @cost(weight: "10")
   chunkStoreStats(chunkStoreId: UUID!): ChunkStoreStatsGql
+    @authorize
+    @cost(weight: "10")
+  chunkStoreStatsHistory(chunkStoreId: UUID!, days: Int! = 30): [ChunkStoreStatsGql!]!
     @authorize
     @cost(weight: "10")
   enabledChunkStoreTypes: [ChunkStoreTypeInfoGql!]!
@@ -259,6 +263,9 @@ type Mutation {
     @authorize
     @cost(weight: "10")
   setDomainConfig(input: SetDomainConfigInput!): DomainConfigGql
+    @authorize
+    @cost(weight: "10")
+  setGcConfig(input: SetGcConfigInput!): GcConfigGql!
     @authorize
     @cost(weight: "10")
   setStorageClassDefaultMappings(input: SetStorageClassDefaultMappingsInput!): Boolean!
@@ -371,6 +378,18 @@ type BackgroundJobProgressDto {
   totalBuckets: Int!
   processedBuckets: Int!
   failedBuckets: Int!
+  gcPhase: String
+  markedReleases: Int!
+  reachableObjects: Long!
+  quarantinedObjects: Long!
+  quarantinedBytes: Long!
+  reclaimedObjects: Long!
+  reclaimedBytes: Long!
+  packsCompacted: Int!
+  packsDeleted: Int!
+  packBytesDeleted: Long!
+  resurrectedObjects: Long!
+  gcDryRun: Boolean!
   chunkStoreId: UUID
   startedAt: DateTime
   completedAt: DateTime
@@ -414,6 +433,8 @@ type ChunkStoreGql {
   type: String!
   chunker: ChunkStoreChunkerGql
   backendSettings: ChunkStoreBackendSettingsGql
+  probeMode: String!
+  minFreeBytes: Long
 }
 
 "A connection to a list of items."
@@ -438,6 +459,33 @@ type ChunkStoresEdge {
 
 type ChunkStoreStatsGql {
   totalChunks: Int!
+  collectedAt: DateTime
+  chunkCount: Long!
+  fileDefinitionCount: Long!
+  releaseCount: Long!
+  chunkPackBytes: Long!
+  fileDefinitionPackBytes: Long!
+  releasePackageBytes: Long!
+  indexBytes: Long!
+  physicalBytesTotal: Long!
+  totalLogicalBytes: Long!
+  uniqueFileBytes: Long!
+  uniqueLogicalChunkBytes: Long!
+  uniqueCompressedChunkBytes: Long!
+  referencedUniqueChunkBytes: Long!
+  compressionRatio: Float!
+  deduplicationRatio: Float!
+  effectiveStorageRatio: Float!
+  compressionSavedBytes: Long!
+  deduplicationSavedBytes: Long!
+  chunkPackFileCount: Int!
+  fileDefinitionPackFileCount: Int!
+  releasePackageFileCount: Int!
+  indexFileCount: Int!
+  volumeTotalBytes: Long!
+  volumeFreeBytes: Long!
+  avgChunkSize: Long!
+  avgCompressedChunkSize: Long!
 }
 
 type ChunkStoreTypeInfoGql {
@@ -477,6 +525,17 @@ type EmailSmtpConfigGql {
   username: String
   password: String
   security: String
+}
+
+type GcConfigGql {
+  enabled: Boolean!
+  intervalHours: Float!
+  windowStartHourUtc: Int
+  windowEndHourUtc: Int
+  dryRun: Boolean!
+  skipReclaim: Boolean!
+  retentionHours: Float!
+  nextEligibleAt: DateTime
 }
 
 type GcJobProgressGql {
@@ -521,6 +580,12 @@ type InstanceStatsGql {
   userCount: Int!
   tenantCount: Int!
   repositoryCount: Int!
+  releaseCount: Int!
+  chunkStoreCount: Int!
+  totalLogicalBytes: Long!
+  totalPhysicalBytes: Long!
+  minVolumeFreeBytes: Long
+  minVolumeFreeChunkStoreName: String
 }
 
 "Information about pagination in a connection."
@@ -649,12 +714,19 @@ type RepositoryGql {
     @cost(weight: "10")
   config: RepositoryConfigGql @authorize @cost(weight: "10")
   access: [RepositoryAccessGql!] @authorize @cost(weight: "10")
+  metrics: RepositoryMetricsGql! @authorize @cost(weight: "10")
   id: UUID!
   name: String!
   description: String
   storageClass: String!
   chunker: ChunkStoreChunkerGql
   createdAt: DateTime!
+}
+
+type RepositoryMetricsGql {
+  releaseCount: Int!
+  totalLogicalBytes: Long!
+  lastReleaseAt: DateTime
 }
 
 type RepositoryMoveTargetGql {
@@ -932,6 +1004,8 @@ input ChunkStoreGqlFilterInput {
   type: StringOperationFilterInput
   chunker: ChunkStoreChunkerGqlFilterInput
   backendSettings: ChunkStoreBackendSettingsGqlFilterInput
+  probeMode: StringOperationFilterInput
+  minFreeBytes: LongOperationFilterInput
 }
 
 input ChunkStoreGqlSortInput {
@@ -940,6 +1014,8 @@ input ChunkStoreGqlSortInput {
   type: SortEnumType @cost(weight: "10")
   chunker: ChunkStoreChunkerGqlSortInput @cost(weight: "10")
   backendSettings: ChunkStoreBackendSettingsGqlSortInput @cost(weight: "10")
+  probeMode: SortEnumType @cost(weight: "10")
+  minFreeBytes: SortEnumType @cost(weight: "10")
 }
 
 input CreateChunkStoreInput {
@@ -1047,6 +1123,21 @@ input ListFilterInputTypeOfReleaseCustomPropertyGqlFilterInput {
   any: Boolean @cost(weight: "10")
 }
 
+input LongOperationFilterInput {
+  eq: Long @cost(weight: "10")
+  neq: Long @cost(weight: "10")
+  in: [Long] @cost(weight: "10")
+  nin: [Long] @cost(weight: "10")
+  gt: Long @cost(weight: "10")
+  ngt: Long @cost(weight: "10")
+  gte: Long @cost(weight: "10")
+  ngte: Long @cost(weight: "10")
+  lt: Long @cost(weight: "10")
+  nlt: Long @cost(weight: "10")
+  lte: Long @cost(weight: "10")
+  nlte: Long @cost(weight: "10")
+}
+
 input MoveRepositoryInput {
   repoId: UUID!
   targetTenantId: UUID!
@@ -1128,6 +1219,17 @@ input SetEmailConfigInput {
   shared: EmailSharedConfigInput
   brevo: EmailBrevoConfigInput
   smtp: EmailSmtpConfigInput
+}
+
+input SetGcConfigInput {
+  enabled: Boolean
+  intervalHours: Float
+  windowStartHourUtc: Int
+  windowEndHourUtc: Int
+  clearWindow: Boolean
+  dryRun: Boolean
+  skipReclaim: Boolean
+  retentionHours: Float
 }
 
 input SetStorageClassDefaultMappingsInput {
