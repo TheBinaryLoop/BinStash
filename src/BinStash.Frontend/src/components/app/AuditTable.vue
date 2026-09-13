@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { Bot, CircleSlash, TriangleAlert, User as UserIcon, Wrench } from '@lucide/vue'
+import { Bot, CircleSlash, Info, TriangleAlert, User as UserIcon, Wrench } from '@lucide/vue'
 import { computed } from 'vue'
 
+import AuditEntryDetails from '@/components/app/AuditEntryDetails.vue'
 import EmptyState from '@/components/app/EmptyState.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import {
   Table,
   TableBody,
@@ -15,6 +17,7 @@ import {
 } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { AuditEntryFragment } from '@/graphql/generated'
+import { humanizeAction, parseAuditMetadata, summarizeMetadata } from '@/lib/audit'
 import { formatDate, formatRelative } from '@/lib/format'
 
 const props = defineProps<{
@@ -34,32 +37,11 @@ const actorIcons = {
   ANONYMOUS: CircleSlash,
 } as const
 
-/** `repository.access.granted` -> `Repository access granted`. */
-function humanizeAction(action: string): string {
-  const words = action.replace(/[._]/g, ' ').split(' ').filter(Boolean)
-  if (words.length === 0) return action
-  return words.join(' ').replace(/^./, (c) => c.toUpperCase())
-}
-
-function parseMetadata(metadata: string | null | undefined): Array<[string, string]> {
-  if (!metadata) return []
-  try {
-    const parsed = JSON.parse(metadata) as Record<string, unknown>
-    return Object.entries(parsed).map(([key, value]) => [
-      key,
-      Array.isArray(value) ? value.join(', ') : String(value ?? '—'),
-    ])
-  } catch {
-    // Metadata is free-form JSON written by the server; never let a bad row break the table.
-    return []
-  }
-}
-
 const rows = computed(() =>
-  props.entries.map((entry) => ({
-    entry,
-    metadata: parseMetadata(entry.metadata),
-  })),
+  props.entries.map((entry) => {
+    const fields = parseAuditMetadata(entry.metadata)
+    return { entry, fields, summary: summarizeMetadata(fields) }
+  }),
 )
 </script>
 
@@ -80,13 +62,13 @@ const rows = computed(() =>
             <TableHead class="w-full">Action</TableHead>
             <TableHead class="w-[14rem]">Actor</TableHead>
             <TableHead class="w-[14rem]">Target</TableHead>
-            <TableHead v-if="showTenant" class="w-[10rem]">Tenant</TableHead>
+            <TableHead v-if="showTenant" class="w-[10rem]">Workspace</TableHead>
             <TableHead class="w-[7rem]">Outcome</TableHead>
           </TableRow>
         </TableHeader>
 
         <TableBody>
-          <TableRow v-for="{ entry, metadata } in rows" :key="entry.id" class="align-middle">
+          <TableRow v-for="{ entry, fields, summary } in rows" :key="entry.id" class="align-middle">
             <TableCell class="py-2">
               <Tooltip>
                 <TooltipTrigger class="cursor-default text-left">
@@ -97,21 +79,40 @@ const rows = computed(() =>
             </TableCell>
 
             <TableCell class="w-full max-w-0 py-2">
-              <div class="flex items-baseline gap-2">
-                <span class="text-sm font-medium whitespace-nowrap">
-                  {{ humanizeAction(entry.action) }}
-                </span>
-                <span class="text-muted-foreground truncate font-mono text-xs">{{ entry.action }}</span>
-              </div>
-              <p
-                v-if="metadata.length"
-                class="text-muted-foreground truncate text-xs"
-                :title="metadata.map(([k, v]) => `${k}: ${v}`).join('  ·  ')"
-              >
-                <span v-for="[key, value] in metadata" :key="key" class="mr-3 whitespace-nowrap">
-                  {{ key }}: <span class="font-mono">{{ value }}</span>
-                </span>
-              </p>
+              <!-- The whole cell is the trigger, and it is a button so the detail is reachable
+                   by keyboard and on touch — the native `title` it replaces was neither. -->
+              <HoverCard>
+                <HoverCardTrigger as-child>
+                  <button
+                    type="button"
+                    class="group focus-visible:ring-ring/50 block w-full cursor-default rounded-sm text-left focus-visible:ring-2 focus-visible:outline-none"
+                  >
+                    <span class="flex items-baseline gap-1.5">
+                      <span class="truncate text-sm font-medium">
+                        {{ humanizeAction(entry.action) }}
+                      </span>
+                      <Info
+                        class="text-muted-foreground/0 group-hover:text-muted-foreground group-focus-visible:text-muted-foreground size-3 shrink-0 transition-colors"
+                        aria-hidden="true"
+                      />
+                    </span>
+                    <span
+                      v-if="summary"
+                      class="text-muted-foreground block truncate text-xs"
+                    >
+                      {{ summary }}
+                    </span>
+                    <span v-else class="text-muted-foreground block truncate font-mono text-xs">
+                      {{ entry.action }}
+                    </span>
+                    <span class="sr-only">Show full audit entry</span>
+                  </button>
+                </HoverCardTrigger>
+
+                <HoverCardContent :class="fields.length > 6 ? 'w-96' : 'w-80'">
+                  <AuditEntryDetails :entry="entry" :show-tenant="showTenant" />
+                </HoverCardContent>
+              </HoverCard>
             </TableCell>
 
             <TableCell class="py-2">
