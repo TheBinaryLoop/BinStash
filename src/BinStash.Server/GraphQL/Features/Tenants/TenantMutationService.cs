@@ -28,6 +28,8 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
+using BinStash.Core.Auditing;
+
 namespace BinStash.Server.GraphQL.Features.Tenants;
 
 public sealed class TenantMutationService
@@ -38,6 +40,7 @@ public sealed class TenantMutationService
     private readonly UserManager<BinStashUser> _userManager;
     private readonly ITenantEmailSender _emailSender;
     private readonly IOptions<DomainSettings> _domainOptions;
+    private readonly IAuditLogWriter _audit;
 
     public TenantMutationService(
         BinStashDbContext db,
@@ -45,7 +48,8 @@ public sealed class TenantMutationService
         IAuthorizationService authorizationService,
         UserManager<BinStashUser> userManager,
         ITenantEmailSender emailSender,
-        IOptions<DomainSettings> domainOptions)
+        IOptions<DomainSettings> domainOptions,
+        IAuditLogWriter audit)
     {
         _db = db;
         _httpContextAccessor = httpContextAccessor;
@@ -53,6 +57,7 @@ public sealed class TenantMutationService
         _userManager = userManager;
         _emailSender = emailSender;
         _domainOptions = domainOptions;
+        _audit = audit;
     }
 
     private (ClaimsPrincipal User, Guid UserId) RequireUser()
@@ -108,6 +113,16 @@ public sealed class TenantMutationService
         await _db.Tenants.AddAsync(tenant, ct);
         await _db.SaveChangesAsync(ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.TenantCreated,
+            TenantId = tenant.Id,
+            TargetType = nameof(Tenant),
+            TargetId = tenant.Id.ToString(),
+            TargetName = tenant.Name,
+            Metadata = new Dictionary<string, object?> { ["slug"] = tenant.Slug }
+        }, ct);
+
         return new TenantGql
         {
             Id = tenant.Id,
@@ -160,6 +175,16 @@ public sealed class TenantMutationService
         
         await _db.SaveChangesAsync(ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.TenantUpdated,
+            TenantId = tenant.Id,
+            TargetType = nameof(Tenant),
+            TargetId = tenant.Id.ToString(),
+            TargetName = tenant.Name,
+            Metadata = new Dictionary<string, object?> { ["slug"] = tenant.Slug }
+        }, ct);
+
         return new TenantGql
         {
             Id = tenant.Id,
@@ -210,6 +235,20 @@ public sealed class TenantMutationService
         var acceptUrl = IdentityEndpoints.BuildFrontendUrl(_domainOptions.Value, _httpContextAccessor.HttpContext!, $"/invite/{tenantContext.TenantId:D}/{code}");
         await _emailSender.SendMemberInvitationEmailAsync(inviter, tenant, input.Email, acceptUrl);
 
+        // The invitation code is a bearer credential and is deliberately not recorded.
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.MemberInvited,
+            TargetType = nameof(TenantMemberInvitation),
+            TargetId = invitation.Id.ToString(),
+            TargetName = input.Email,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["roles"] = input.Roles,
+                ["expiresAt"] = invitation.ExpiresAt
+            }
+        }, ct);
+
         return true;
     }
 
@@ -250,6 +289,14 @@ public sealed class TenantMutationService
         await _db.TenantRoleAssignments.AddRangeAsync(newRoles, ct);
         await _db.SaveChangesAsync(ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.MemberRolesUpdated,
+            TargetType = nameof(TenantMember),
+            TargetId = memberId.ToString(),
+            Metadata = new Dictionary<string, object?> { ["roles"] = roles }
+        }, ct);
+
         var memberUser = await _db.Users.AsNoTracking()
             .Where(u => u.Id == memberId)
             .Select(u => new { u.Email, u.FirstName, u.LastName })
@@ -284,6 +331,18 @@ public sealed class TenantMutationService
         _db.TenantRoleAssignments.RemoveRange(roleAssignments);
         _db.TenantMembers.Remove(membership);
         await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.MemberRemoved,
+            TargetType = nameof(TenantMember),
+            TargetId = memberId.ToString(),
+            Metadata = new Dictionary<string, object?>
+            {
+                ["revokedRoles"] = roleAssignments.Select(r => r.RoleName).ToArray()
+            }
+        }, ct);
+
         return true;
     }
 
@@ -305,6 +364,14 @@ public sealed class TenantMutationService
 
         _db.TenantMembers.Remove(membership);
         await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.MemberLeft,
+            TargetType = nameof(TenantMember),
+            TargetId = userId.ToString()
+        }, ct);
+
         return true;
     }
 
@@ -351,6 +418,17 @@ public sealed class TenantMutationService
 
         invitation.AcceptedAt = DateTimeOffset.UtcNow;
         await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.InvitationAccepted,
+            TenantId = tenantId,
+            TargetType = nameof(TenantMember),
+            TargetId = userId.ToString(),
+            TargetName = invitation.InviteeEmail,
+            Metadata = new Dictionary<string, object?> { ["roles"] = invitation.Roles }
+        }, ct);
+
         return true;
     }
 

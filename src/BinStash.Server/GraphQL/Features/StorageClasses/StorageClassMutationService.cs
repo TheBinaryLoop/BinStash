@@ -20,6 +20,8 @@ using BinStash.Server.GraphQL.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
+using BinStash.Core.Auditing;
+
 namespace BinStash.Server.GraphQL.Features.StorageClasses;
 
 public sealed class StorageClassMutationService
@@ -27,15 +29,18 @@ public sealed class StorageClassMutationService
     private readonly BinStashDbContext _db;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IAuthorizationService _authorizationService;
+    private readonly IAuditLogWriter _audit;
 
     public StorageClassMutationService(
         BinStashDbContext db,
         IHttpContextAccessor httpContextAccessor,
-        IAuthorizationService authorizationService)
+        IAuthorizationService authorizationService,
+        IAuditLogWriter audit)
     {
         _db = db;
         _httpContextAccessor = httpContextAccessor;
         _authorizationService = authorizationService;
+        _audit = audit;
     }
 
     /// <summary>
@@ -73,6 +78,19 @@ public sealed class StorageClassMutationService
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.InstanceStorageDefaultsChanged,
+            InstanceScoped = true,
+            TargetType = nameof(StorageClassDefaultMapping),
+            Metadata = new Dictionary<string, object?>
+            {
+                ["mappingCount"] = input.Mappings.Count,
+                ["storageClasses"] = input.Mappings.Select(m => m.StorageClassName).Distinct().ToArray()
+            }
+        }, cancellationToken);
+
         return true;
     }
 }

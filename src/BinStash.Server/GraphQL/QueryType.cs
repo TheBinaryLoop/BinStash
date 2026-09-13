@@ -14,11 +14,13 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using HotChocolate.Types.Pagination;
+using BinStash.Server.GraphQL.Features.Audit;
 using BinStash.Server.GraphQL.Features.ChunkStores;
 using BinStash.Server.GraphQL.Features.Releases;
 using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
 using BinStash.Server.GraphQL.Features.Tenants;
+using BinStash.Server.GraphQL.Features.Usage;
 
 namespace BinStash.Server.GraphQL;
 
@@ -189,5 +191,32 @@ public sealed class QueryType : ObjectType<Query>
         descriptor
             .Field(x => x.GetEnabledChunkStoreTypes(null!))
             .Authorize();
+
+        descriptor
+            .Field(x => x.GetTenantUsage(null!, CancellationToken.None))
+            .Type<NonNullType<ObjectType<TenantUsageGql>>>()
+            .Authorize();
+
+        // Audit trails are paged/filtered/sorted server-side: these tables grow without bound and
+        // the UI only ever shows a window of them.
+        descriptor
+            .Field(x => x.GetAuditLog(null!))
+            .Authorize()
+            .UsePaging<ObjectType<AuditLogEntryGql>>(options: new PagingOptions
+            {
+                IncludeTotalCount = true
+            })
+            .UseFiltering()
+            .UseSorting();
+
+        descriptor
+            .Field(x => x.GetInstanceAuditLog(null!))
+            .Authorize()
+            .UsePaging<ObjectType<AuditLogEntryGql>>(options: new PagingOptions
+            {
+                IncludeTotalCount = true
+            })
+            .UseFiltering()
+            .UseSorting();
     }
 }

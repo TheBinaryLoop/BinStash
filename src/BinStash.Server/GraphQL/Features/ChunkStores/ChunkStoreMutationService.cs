@@ -27,6 +27,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Path = System.IO.Path;
 
+using BinStash.Core.Auditing;
+
 namespace BinStash.Server.GraphQL.Features.ChunkStores;
 
 public sealed class ChunkStoreMutationService
@@ -37,6 +39,7 @@ public sealed class ChunkStoreMutationService
     private readonly IOptions<StorageSettings> _storageOptions;
     private readonly RebuildJobChannel _rebuildJobChannel;
     private readonly Channel<Guid> _upgradeJobChannel;
+    private readonly IAuditLogWriter _audit;
 
     public ChunkStoreMutationService(
         BinStashDbContext db,
@@ -44,7 +47,8 @@ public sealed class ChunkStoreMutationService
         IAuthorizationService authorizationService,
         IOptions<StorageSettings> storageOptions,
         RebuildJobChannel rebuildJobChannel,
-        Channel<Guid> upgradeJobChannel)
+        Channel<Guid> upgradeJobChannel,
+        IAuditLogWriter audit)
     {
         _db = db;
         _httpContextAccessor = httpContextAccessor;
@@ -52,6 +56,7 @@ public sealed class ChunkStoreMutationService
         _storageOptions = storageOptions;
         _rebuildJobChannel = rebuildJobChannel;
         _upgradeJobChannel = upgradeJobChannel;
+        _audit = audit;
     }
 
     public async Task<ChunkStoreGql> CreateChunkStoreAsync(CreateChunkStoreInput input, CancellationToken ct)
@@ -159,6 +164,20 @@ public sealed class ChunkStoreMutationService
         _db.ChunkStores.Add(chunkStore);
         await _db.SaveChangesAsync(ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ChunkStoreCreated,
+            InstanceScoped = true,
+            TargetType = nameof(ChunkStore),
+            TargetId = chunkStore.Id.ToString(),
+            TargetName = chunkStore.Name,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["type"] = chunkStore.Type.ToString(),
+                ["chunker"] = chunkerOptions.Type.ToString()
+            }
+        }, ct);
+
         return new ChunkStoreGql
         {
             Id = chunkStore.Id,
@@ -205,6 +224,16 @@ public sealed class ChunkStoreMutationService
 
         await _rebuildJobChannel.Channel.Writer.WriteAsync(job.Id, ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ChunkStoreRebuildStarted,
+            InstanceScoped = true,
+            TargetType = nameof(ChunkStore),
+            TargetId = chunkStoreId.ToString(),
+            TargetName = store.Name,
+            Metadata = new Dictionary<string, object?> { ["jobId"] = job.Id }
+        }, ct);
+
         return MapJobToGql(job, chunkStoreId);
     }
 
@@ -247,6 +276,20 @@ public sealed class ChunkStoreMutationService
         await _db.SaveChangesAsync(ct);
 
         await _upgradeJobChannel.Writer.WriteAsync(job.Id, ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ChunkStoreUpgradeStarted,
+            InstanceScoped = true,
+            TargetType = nameof(ChunkStore),
+            TargetId = chunkStoreId.ToString(),
+            TargetName = store.Name,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["jobId"] = job.Id,
+                ["targetSerializerVersion"] = jobData.TargetSerializerVersion
+            }
+        }, ct);
 
         return MapJobToGql(job, chunkStoreId);
     }

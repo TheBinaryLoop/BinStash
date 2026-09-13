@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Server.GraphQL.Features.Audit;
 using BinStash.Server.GraphQL.Features.ChunkStores;
 using BinStash.Server.GraphQL.Features.Instance;
 using BinStash.Server.GraphQL.Features.Jobs;
@@ -21,6 +22,7 @@ using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
 using BinStash.Server.GraphQL.Features.StorageClasses;
 using BinStash.Server.GraphQL.Features.Tenants;
+using BinStash.Server.GraphQL.Features.Usage;
 using BinStash.Server.GraphQL.Features.Users;
 
 namespace BinStash.Server.GraphQL;
@@ -105,4 +107,13 @@ public class Query
 
     public Task<List<ChunkStoreTypeInfoGql>> GetEnabledChunkStoreTypes([Service] ChunkStoreQueryService service)
         => service.GetEnabledChunkStoreTypesAsync();
+
+    public Task<TenantUsageGql> GetTenantUsage([Service] UsageQueryService service, CancellationToken cancellationToken)
+        => service.GetTenantUsageAsync(cancellationToken);
+
+    public Task<IQueryable<AuditLogEntryGql>> GetAuditLog([Service] AuditQueryService service)
+        => service.GetTenantAuditLogAsync();
+
+    public Task<IQueryable<AuditLogEntryGql>> GetInstanceAuditLog([Service] AuditQueryService service)
+        => service.GetInstanceAuditLogAsync();
 }

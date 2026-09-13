@@ -22,6 +22,8 @@ using BinStash.Server.GraphQL.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
+using BinStash.Core.Auditing;
+
 namespace BinStash.Server.GraphQL.Features.Repositories;
 
 public sealed class RepositoryMutationService
@@ -29,12 +31,14 @@ public sealed class RepositoryMutationService
     private readonly BinStashDbContext _db;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IAuthorizationService _authorizationService;
+    private readonly IAuditLogWriter _audit;
 
-    public RepositoryMutationService(BinStashDbContext db, IHttpContextAccessor httpContextAccessor, IAuthorizationService authorizationService)
+    public RepositoryMutationService(BinStashDbContext db, IHttpContextAccessor httpContextAccessor, IAuthorizationService authorizationService, IAuditLogWriter audit)
     {
         _db = db;
         _httpContextAccessor = httpContextAccessor;
         _authorizationService = authorizationService;
+        _audit = audit;
     }
     
     public async Task<RepositoryGql> CreateRepositoryAsync(CreateRepositoryInput input, CancellationToken ct)
@@ -95,6 +99,19 @@ public sealed class RepositoryMutationService
 
         await _db.Repositories.AddAsync(repo, ct);
         await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryCreated,
+            TargetType = nameof(Repository),
+            TargetId = repo.Id.ToString(),
+            TargetName = repo.Name,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["storageClass"] = repo.StorageClass,
+                ["chunkStoreId"] = repo.ChunkStoreId
+            }
+        }, ct);
 
         return new RepositoryGql
         {
@@ -157,6 +174,14 @@ public sealed class RepositoryMutationService
 
         await _db.SaveChangesAsync(ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryUpdated,
+            TargetType = nameof(Repository),
+            TargetId = repo.Id.ToString(),
+            TargetName = repo.Name
+        }, ct);
+
         return new RepositoryGql
         {
             Id = repo.Id,
@@ -212,6 +237,19 @@ public sealed class RepositoryMutationService
 
         await _db.SaveChangesAsync(ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryAccessGranted,
+            TargetType = nameof(Repository),
+            TargetId = repoId.ToString(),
+            Metadata = new Dictionary<string, object?>
+            {
+                ["subjectType"] = subject.ToString(),
+                ["subjectId"] = subjectId,
+                ["role"] = role
+            }
+        }, ct);
+
         return new RepositoryAccessGql
         {
             SubjectType = (short)roleAssignment.SubjectType,
@@ -237,6 +275,20 @@ public sealed class RepositoryMutationService
 
         _db.RepositoryRoleAssignments.Remove(roleAssignment);
         await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryAccessRevoked,
+            TargetType = nameof(Repository),
+            TargetId = repoId.ToString(),
+            Metadata = new Dictionary<string, object?>
+            {
+                ["subjectType"] = subject.ToString(),
+                ["subjectId"] = subjectId,
+                ["role"] = roleAssignment.RoleName
+            }
+        }, ct);
+
         return true;
     }
 }

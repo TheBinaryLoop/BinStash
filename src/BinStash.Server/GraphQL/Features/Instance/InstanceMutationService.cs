@@ -19,6 +19,9 @@ using BinStash.Server.Email;
 using BinStash.Server.GraphQL.Auth;
 using Microsoft.AspNetCore.Authorization;
 
+using BinStash.Core.Auditing;
+using BinStash.Core.Entities;
+
 namespace BinStash.Server.GraphQL.Features.Instance;
 
 public sealed class InstanceMutationService
@@ -29,6 +32,7 @@ public sealed class InstanceMutationService
     private readonly InstanceQueryService _queryService;
     private readonly IInstanceEmailTester _emailTester;
     private readonly ILogger<InstanceMutationService> _logger;
+    private readonly IAuditLogWriter _audit;
 
     public InstanceMutationService(
         IHttpContextAccessor httpContextAccessor,
@@ -36,7 +40,8 @@ public sealed class InstanceMutationService
         IConfiguration configuration,
         InstanceQueryService queryService,
         IInstanceEmailTester emailTester,
-        ILogger<InstanceMutationService> logger)
+        ILogger<InstanceMutationService> logger,
+        IAuditLogWriter audit)
     {
         _httpContextAccessor = httpContextAccessor;
         _authorizationService = authorizationService;
@@ -44,6 +49,7 @@ public sealed class InstanceMutationService
         _queryService = queryService;
         _emailTester = emailTester;
         _logger = logger;
+        _audit = audit;
     }
 
     public async Task<SendTestEmailResultGql> SendTestEmailAsync(string recipientEmail, CancellationToken cancellationToken)
@@ -107,6 +113,7 @@ public sealed class InstanceMutationService
         }
 
         Apply(updates, errors);
+        await AuditConfigChangeAsync(AuditActions.InstanceEmailConfigChanged, updates);
         return await _queryService.GetEmailConfigAsync();
     }
 
@@ -130,6 +137,7 @@ public sealed class InstanceMutationService
             updates["Tenancy:DefaultTenantId"] = input.DefaultTenantId;
 
         Apply(updates, errors);
+        await AuditConfigChangeAsync(AuditActions.InstanceTenancyConfigChanged, updates);
         return await _queryService.GetTenancyConfigAsync();
     }
 
@@ -149,6 +157,7 @@ public sealed class InstanceMutationService
         }
 
         Apply(updates, errors);
+        await AuditConfigChangeAsync(AuditActions.InstanceDomainConfigChanged, updates);
         return await _queryService.GetDomainConfigAsync();
     }
 
@@ -178,6 +187,28 @@ public sealed class InstanceMutationService
     }
 
     private static bool IsMask(string value) => string.Equals(value, InstanceQueryService.SecretMask, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Records that instance configuration changed, listing only the configuration KEYS touched.
+    /// The values are never recorded: this dictionary carries the SMTP password and the Brevo API
+    /// key, and an audit trail is exactly the wrong place to persist a secret in clear text.
+    /// </summary>
+    private async Task AuditConfigChangeAsync(string action, Dictionary<string, string?> updates)
+    {
+        if (updates.Count == 0)
+            return;
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = action,
+            InstanceScoped = true,
+            TargetType = "InstanceSettings",
+            Metadata = new Dictionary<string, object?>
+            {
+                ["changedKeys"] = updates.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray()
+            }
+        });
+    }
 
     private async Task EnsureAdminAsync()
     {

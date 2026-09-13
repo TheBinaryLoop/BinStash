@@ -23,6 +23,8 @@ using BinStash.Server.GraphQL.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
+using BinStash.Core.Auditing;
+
 namespace BinStash.Server.GraphQL.Features.ServiceAccounts;
 
 public sealed class ServiceAccountMutationService
@@ -31,13 +33,15 @@ public sealed class ServiceAccountMutationService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IAuthorizationService _authorizationService;
     private readonly ITokenService _tokenService;
+    private readonly IAuditLogWriter _audit;
 
-    public ServiceAccountMutationService(BinStashDbContext db, IHttpContextAccessor httpContextAccessor, IAuthorizationService authorizationService, ITokenService tokenService)
+    public ServiceAccountMutationService(BinStashDbContext db, IHttpContextAccessor httpContextAccessor, IAuthorizationService authorizationService, ITokenService tokenService, IAuditLogWriter audit)
     {
         _db = db;
         _httpContextAccessor = httpContextAccessor;
         _authorizationService = authorizationService;
         _tokenService = tokenService;
+        _audit = audit;
     }
     
     public async Task<ServiceAccountGql> CreateServiceAccountAsync(CreateServiceAccountInput input, CancellationToken ct)
@@ -65,6 +69,14 @@ public sealed class ServiceAccountMutationService
 
         await _db.ServiceAccounts.AddAsync(serviceAccount, ct);
         await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ServiceAccountCreated,
+            TargetType = nameof(ServiceAccount),
+            TargetId = serviceAccount.Id.ToString(),
+            TargetName = serviceAccount.Name
+        }, ct);
 
         return new ServiceAccountGql
         {
@@ -117,6 +129,14 @@ public sealed class ServiceAccountMutationService
 
         await _db.SaveChangesAsync(ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ServiceAccountUpdated,
+            TargetType = nameof(ServiceAccount),
+            TargetId = serviceAccount.Id.ToString(),
+            TargetName = serviceAccount.Name
+        }, ct);
+
         return new ServiceAccountGql
         {
             Id = serviceAccount.Id,
@@ -144,6 +164,14 @@ public sealed class ServiceAccountMutationService
         _db.ServiceAccounts.Remove(serviceAccount);
         await _db.SaveChangesAsync(ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ServiceAccountDeleted,
+            TargetType = nameof(ServiceAccount),
+            TargetId = serviceAccountId.ToString(),
+            TargetName = serviceAccount.Name
+        }, ct);
+
         return true;
     }
 
@@ -162,6 +190,21 @@ public sealed class ServiceAccountMutationService
 
         var (apiKey, rawApiKey) = await _tokenService.CreateApiKeyAsync(
             SubjectType.ServiceAccount, serviceAccount.Id, input.DisplayName, input.ExpiresAt, input.Scopes);
+
+        // The raw key is returned to the caller exactly once and is deliberately NOT audited.
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ApiKeyCreated,
+            TargetType = nameof(ApiKey),
+            TargetId = apiKey.Id.ToString(),
+            TargetName = $"{serviceAccount.Name} / {apiKey.DisplayName}",
+            Metadata = new Dictionary<string, object?>
+            {
+                ["serviceAccountId"] = serviceAccount.Id,
+                ["expiresAt"] = apiKey.ExpiresAt,
+                ["scopes"] = input.Scopes
+            }
+        }, ct);
 
         return new CreateApiKeyResultGql
         {
@@ -189,6 +232,16 @@ public sealed class ServiceAccountMutationService
 
         _db.ApiKeys.Remove(apiKey);
         await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ApiKeyDeleted,
+            TargetType = nameof(ApiKey),
+            TargetId = apiKeyId.ToString(),
+            TargetName = apiKey.DisplayName,
+            Metadata = new Dictionary<string, object?> { ["serviceAccountId"] = serviceAccountId }
+        }, ct);
+
         return true;
     }
 }
