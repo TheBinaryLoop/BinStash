@@ -40,7 +40,24 @@ public sealed class ReleaseGql
     public required DateTimeOffset CreatedAt { get; init; }
     public string? Notes { get; init; }
     public Guid RepoId { get; init; }
-    public object? CustomProperties { get; init; }
+
+    /// <summary>
+    /// Publisher-supplied metadata (the CLI's <c>-p key=value</c>).
+    /// </summary>
+    /// <remarks>
+    /// A typed list rather than the <c>Any</c> scalar. Any's result coercion rejects both
+    /// JsonDocument and plain dictionaries, and it gives generated clients an untyped
+    /// `unknown` — whereas these are a flat string map in practice.
+    /// </remarks>
+    public List<ReleaseCustomPropertyGql>? CustomProperties { get; init; }
+}
+
+public sealed class ReleaseCustomPropertyGql
+{
+    public required string Key { get; init; }
+
+    /// <summary>Non-scalar values are rendered back to compact JSON.</summary>
+    public required string Value { get; init; }
 }
 
 public sealed class ReleaseMetricsGql

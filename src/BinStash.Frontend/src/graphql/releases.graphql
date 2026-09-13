@@ -5,7 +5,10 @@ query Release($id: UUID!) {
     createdAt
     notes
     repoId
-    customProperties
+    customProperties {
+      key
+      value
+    }
     repository { id name storageClass }
     metrics {
       chunksInRelease

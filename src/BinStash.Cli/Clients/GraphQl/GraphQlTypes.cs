@@ -162,6 +162,11 @@ public class GqlChunkStoresData
     public GqlConnection<GqlChunkStore>? ChunkStores { get; set; }
 }
 
+public class GqlTenantsData
+{
+    public GqlConnection<GqlTenant>? Tenants { get; set; }
+}
+
 public class GqlChunkStoreData
 {
     public GqlChunkStore? ChunkStore { get; set; }
@@ -218,6 +223,13 @@ public class GqlChunkStore
     public required string Name { get; set; }
     public required string Type { get; set; }
     public GqlChunkStoreBackendSettings? BackendSettings { get; set; }
+}
+
+public class GqlTenant
+{
+    public Guid Id { get; set; }
+    public required string Name { get; set; }
+    public required string Slug { get; set; }
 }
 
 public class GqlChunkStoreBackendSettings

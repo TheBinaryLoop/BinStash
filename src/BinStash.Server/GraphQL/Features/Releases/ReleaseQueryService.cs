@@ -112,18 +112,46 @@ public sealed class ReleaseQueryService
         return releaseMetrics;
     }
 
-    private static object? ParseJsonOrNull(string? json)
+    /// <summary>
+    /// Parses stored custom properties into a flat, ordered key/value list.
+    /// </summary>
+    /// <remarks>
+    /// Nested objects and arrays are re-serialised to compact JSON rather than dropped, so
+    /// nothing published is silently lost.
+    /// </remarks>
+    private static List<ReleaseCustomPropertyGql>? ParseJsonOrNull(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
             return null;
 
         try
         {
-            return JsonDocument.Parse(json);
+            using var document = JsonDocument.Parse(json);
+
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return [new ReleaseCustomPropertyGql { Key = "value", Value = json }];
+
+            return document.RootElement.EnumerateObject()
+                .Select(property => new ReleaseCustomPropertyGql
+                {
+                    Key = property.Name,
+                    Value = Stringify(property.Value)
+                })
+                .ToList();
         }
-        catch
+        catch (JsonException)
         {
-            return json;
+            // Not valid JSON — surface it raw rather than failing the whole query.
+            return [new ReleaseCustomPropertyGql { Key = "value", Value = json }];
         }
     }
+
+    private static string Stringify(JsonElement element)
+        => element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString() ?? string.Empty,
+            JsonValueKind.Null => string.Empty,
+            JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => element.ToString(),
+            _ => element.GetRawText(),
+        };
 }

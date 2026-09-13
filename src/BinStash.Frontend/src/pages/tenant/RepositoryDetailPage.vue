@@ -26,7 +26,7 @@ import {
   RepositoryDocument,
   RepositoryReleasesDocument,
 } from '@/graphql/generated'
-import { formatBytes, formatDate, formatNumber, formatPercent, formatRelative } from '@/lib/format'
+import { formatBytes, formatDate, formatNumber, formatRelative } from '@/lib/format'
 import { useTenantStore } from '@/stores/tenant'
 
 const route = useRoute()
@@ -161,9 +161,8 @@ const cliCommand = computed(() =>
                     <TableHead>Version</TableHead>
                     <TableHead>Published</TableHead>
                     <TableHead class="text-right">Size</TableHead>
-                    <TableHead class="text-right">On disk</TableHead>
                     <TableHead class="text-right">Files</TableHead>
-                    <TableHead class="text-right">New data</TableHead>
+                    <TableHead class="text-right">Chunks</TableHead>
                     <TableHead class="w-10" />
                   </TableRow>
                 </TableHeader>
@@ -187,16 +186,10 @@ const cliCommand = computed(() =>
                       {{ formatBytes(release!.metrics?.totalLogicalBytes ?? null) }}
                     </TableCell>
                     <TableCell class="tabular">
-                      {{ formatBytes(release!.metrics?.newCompressedBytes ?? null) }}
-                    </TableCell>
-                    <TableCell class="tabular">
                       {{ formatNumber(release!.metrics?.filesInRelease ?? null) }}
                     </TableCell>
                     <TableCell class="tabular">
-                      <span v-if="release!.metrics" class="text-muted-foreground">
-                        {{ formatPercent(release!.metrics.incrementalEffectiveRatio, 0) }}
-                      </span>
-                      <span v-else>—</span>
+                      {{ formatNumber(release!.metrics?.chunksInRelease ?? null) }}
                     </TableCell>
                     <TableCell>
                       <ArrowRight

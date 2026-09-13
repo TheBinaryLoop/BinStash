@@ -72,6 +72,7 @@ namespace BinStash.Cli;
 [JsonSerializable(typeof(GqlResponse<GqlCreateRepositoryData>))]
 [JsonSerializable(typeof(GqlResponse<GqlRepositoryWithReleasesData>))]
 [JsonSerializable(typeof(GqlResponse<GqlChunkStoresData>))]
+[JsonSerializable(typeof(GqlResponse<GqlTenantsData>))]
 [JsonSerializable(typeof(GqlResponse<GqlChunkStoreData>))]
 [JsonSerializable(typeof(GqlResponse<GqlCreateChunkStoreData>))]
 internal partial class SourceGenerationContext : JsonSerializerContext { }

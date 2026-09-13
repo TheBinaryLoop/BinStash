@@ -21,9 +21,6 @@ public sealed class ReleaseType : ObjectType<ReleaseGql>
 {
     protected override void Configure(IObjectTypeDescriptor<ReleaseGql> descriptor)
     {
-        descriptor.Field(x => x.CustomProperties)
-            .Type<AnyType>();
-
         descriptor.Field("repository")
             .Authorize()
             .ResolveWith<Resolvers>(x => x.GetRepositoryAsync(null!, null!, CancellationToken.None!));

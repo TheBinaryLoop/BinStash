@@ -510,8 +510,12 @@ type RebuildJobProgressGql {
   failedBuckets: Int!
 }
 
+type ReleaseCustomPropertyGql {
+  key: String!
+  value: String!
+}
+
 type ReleaseGql {
-  customProperties: Any
   repository: RepositoryGql @authorize @cost(weight: "10")
   metrics: ReleaseMetricsGql @authorize @cost(weight: "10")
   id: UUID!
@@ -519,6 +523,7 @@ type ReleaseGql {
   createdAt: DateTime!
   notes: String
   repoId: UUID!
+  customProperties: [ReleaseCustomPropertyGql!]
 }
 
 type ReleaseMetricsGql {
@@ -977,10 +982,24 @@ input InviteTenantMemberInput {
   roles: [String!]!
 }
 
+input ListFilterInputTypeOfReleaseCustomPropertyGqlFilterInput {
+  all: ReleaseCustomPropertyGqlFilterInput @cost(weight: "10")
+  none: ReleaseCustomPropertyGqlFilterInput @cost(weight: "10")
+  some: ReleaseCustomPropertyGqlFilterInput @cost(weight: "10")
+  any: Boolean @cost(weight: "10")
+}
+
 input RebuildJobProgressGqlSortInput {
   totalBuckets: SortEnumType @cost(weight: "10")
   processedBuckets: SortEnumType @cost(weight: "10")
   failedBuckets: SortEnumType @cost(weight: "10")
+}
+
+input ReleaseCustomPropertyGqlFilterInput {
+  and: [ReleaseCustomPropertyGqlFilterInput!]
+  or: [ReleaseCustomPropertyGqlFilterInput!]
+  key: StringOperationFilterInput
+  value: StringOperationFilterInput
 }
 
 input ReleaseGqlFilterInput {
@@ -991,6 +1010,7 @@ input ReleaseGqlFilterInput {
   createdAt: DateTimeOperationFilterInput
   notes: StringOperationFilterInput
   repoId: UuidOperationFilterInput
+  customProperties: ListFilterInputTypeOfReleaseCustomPropertyGqlFilterInput
 }
 
 input ReleaseGqlSortInput {
@@ -1186,9 +1206,6 @@ enum SortEnumType {
   ASC
   DESC
 }
-
-"The `Any` scalar type represents any valid GraphQL value."
-scalar Any @specifiedBy(url: "https://scalars.graphql.org/chillicream/any.html")
 
 "The `DateTime` scalar type represents a date and time with time zone offset information."
 scalar DateTime
