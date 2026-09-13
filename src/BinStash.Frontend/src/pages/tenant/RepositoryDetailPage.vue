@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ArrowRight, Package, Settings2, ShieldCheck } from '@lucide/vue'
+import { ArrowRight, FolderInput, Package, Settings2, ShieldCheck } from '@lucide/vue'
 import { computed, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
 import CopyButton from '@/components/app/CopyButton.vue'
 import EmptyState from '@/components/app/EmptyState.vue'
+import MoveRepositoryDialog from '@/components/app/MoveRepositoryDialog.vue'
 import PageBreadcrumbs from '@/components/app/PageBreadcrumbs.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
 import { Badge } from '@/components/ui/badge'
@@ -30,6 +31,7 @@ import { formatBytes, formatDate, formatNumber, formatRelative } from '@/lib/for
 import { useTenantStore } from '@/stores/tenant'
 
 const route = useRoute()
+const router = useRouter()
 const tenants = useTenantStore()
 
 const repoId = computed(() => route.params.repoId as string)
@@ -82,6 +84,17 @@ const subjectLabels: Record<number, string> = { 0: 'User', 1: 'Service account',
 const cliCommand = computed(() =>
   repo.value ? `binstash release add --repo ${repo.value.name} --version <version> <path>` : '',
 )
+
+const moveOpen = ref(false)
+
+/**
+ * Follow the repository. Staying put would leave the page querying a repository the active
+ * workspace no longer owns, which reads as "deleted" rather than "moved".
+ */
+async function onMoved(tenantId: string) {
+  await tenants.switchTenant(tenantId)
+  await router.replace({ name: 'repository', params: { tenantId, repoId: repoId.value } })
+}
 </script>
 
 <template>
@@ -107,6 +120,12 @@ const cliCommand = computed(() =>
       >
         <template #badge>
           <Badge variant="secondary" class="font-mono">{{ repo.storageClass }}</Badge>
+        </template>
+        <template #actions>
+          <Button v-if="tenants.isTenantAdmin" variant="outline" class="gap-2" @click="moveOpen = true">
+            <FolderInput class="size-4" />
+            Move
+          </Button>
         </template>
         <template #meta>
           <div class="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
@@ -301,5 +320,13 @@ const cliCommand = computed(() =>
         </AsyncSection>
       </TabsContent>
     </Tabs>
+
+    <MoveRepositoryDialog
+      v-if="repo"
+      v-model:open="moveOpen"
+      :repo-id="repo.id"
+      :repo-name="repo.name"
+      @moved="onMoved"
+    />
   </div>
 </template>

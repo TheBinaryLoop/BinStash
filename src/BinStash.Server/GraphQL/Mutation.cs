@@ -37,6 +37,9 @@ public sealed class Mutation
     public Task<RepositoryGql> UpdateRepository(UpdateRepositoryInput input, [Service] RepositoryMutationService service, CancellationToken cancellationToken)
         => service.UpdateRepositoryAsync(input, cancellationToken);
     
+    public Task<RepositoryGql> MoveRepository(MoveRepositoryInput input, [Service] RepositoryMutationService service, CancellationToken cancellationToken)
+        => service.MoveRepositoryAsync(input, cancellationToken);
+    
     /*public Task DeleteRepository(Guid repoId, [Service] RepositoryMutationService service, CancellationToken cancellationToken)
         => service.DeleteRepositoryAsync(repoId, cancellationToken);*/
     

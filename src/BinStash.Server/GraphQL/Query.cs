@@ -47,6 +47,9 @@ public class Query
     public Task<RepositoryGql?> GetRepositoryByName(string name, [Service] RepositoryQueryService service, CancellationToken cancellationToken)
         => service.GetRepositoryByNameAsync(name, cancellationToken);
     
+    public Task<List<RepositoryMoveTargetGql>> GetRepositoryMoveTargets(Guid repoId, [Service] RepositoryQueryService service, CancellationToken cancellationToken)
+        => service.GetRepositoryMoveTargetsAsync(repoId, cancellationToken);
+    
     public Task<ReleaseGql?> GetRelease(Guid id, [Service] ReleaseQueryService service, CancellationToken cancellationToken)
         => service.GetReleaseByIdAsync(id, cancellationToken);
     
