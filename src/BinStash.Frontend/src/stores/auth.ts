@@ -1,10 +1,12 @@
 import { defineStore } from 'pinia'
-import { apiFetch, throwForStatus } from '../shared/api/http'
+import { computed, ref } from 'vue'
 
-type User = {
-  id: string
+import { apiJson, apiPost, ApiError } from '@/lib/http'
+import { clearApolloStore, setApolloTenant } from '@/lib/apollo'
+
+export interface UserInfo {
   firstName: string
-  middleName?: string
+  middleName?: string | null
   lastName: string
   email: string
   isEmailConfirmed: boolean
@@ -12,70 +14,124 @@ type User = {
   roles: string[]
 }
 
-export const useAuthStore = defineStore('auth', {
-  state: () => ({
-    user: null as User | null,
-    isRestoring: false,
-  }),
-  getters: {
-    isAuthenticated: (s) => !!s.user,
-    isInstanceAdmin: (s) => s.user?.roles?.includes('InstanceAdmin') ?? false,
-  },
-  actions: {
-    async login(email: string, password: string, staySignedIn: boolean) {
-      const useSessionCookies = staySignedIn ? 'false' : 'true'
-      const loginUrl = `/api/auth/login?useCookies=true&useSessionCookies=${useSessionCookies}`
+export interface PublicInstanceConfig {
+  instanceMode?: string | null
+  tenancyMode?: string | null
+}
 
-      const res = await apiFetch(loginUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      })
+export const useAuthStore = defineStore('auth', () => {
+  const user = ref<UserInfo | null>(null)
+  const instanceConfig = ref<PublicInstanceConfig | null>(null)
+  /** Null until the first /manage/info round trip settles; guards must await `ready`. */
+  const initialised = ref(false)
+  let inflight: Promise<void> | null = null
 
-      // throwForStatus handles both problem+json and plain error responses,
-      // throwing an ApiError with a user-readable message on failure.
-      await throwForStatus(res)
+  const isAuthenticated = computed(() => user.value !== null)
+  const isEmailVerified = computed(() => user.value?.isEmailConfirmed === true)
+  const isInstanceAdmin = computed(() => user.value?.roles.includes('InstanceAdmin') === true)
+  const displayName = computed(() =>
+    user.value ? `${user.value.firstName} ${user.value.lastName}`.trim() : '',
+  )
+  const isSingleTenant = computed(
+    () => instanceConfig.value?.tenancyMode?.toLowerCase() === 'single',
+  )
 
-      // If login returns user info inline, use it directly. Otherwise fetch /me.
-      try {
-        const data = await res.json()
-        if (data && typeof data === 'object' && 'email' in data) {
-          this.user = data as User
-          return
-        }
-      } catch {
-        // ignore body parse errors — body may have been empty
-      }
+  /** Idempotent: concurrent callers (router guard + shell) share one request. */
+  async function ready(): Promise<void> {
+    if (initialised.value) return
+    inflight ??= load().finally(() => {
+      inflight = null
+      initialised.value = true
+    })
+    return inflight
+  }
 
-      await this.restore()
-      if (!this.user) throw new Error('Login succeeded but user could not be loaded.')
-    },
+  async function load(): Promise<void> {
+    const [info, config] = await Promise.allSettled([
+      apiJson<UserInfo>('/api/auth/manage/info'),
+      apiJson<PublicInstanceConfig>('/api/instance/config'),
+    ])
 
-    logout() {
-      this.user = null
-      return fetch('/api/auth/logout?useCookies=true', {
-        method: 'POST',
-        credentials: 'include',
-      })
-    },
+    // A 401 here is the normal signed-out path, not an error worth surfacing.
+    user.value = info.status === 'fulfilled' ? info.value : null
+    instanceConfig.value = config.status === 'fulfilled' ? config.value : null
+  }
 
-    async restore() {
-      this.isRestoring = true
-      try {
-        const res = await apiFetch('/api/auth/manage/info', { method: 'GET' })
-        
-        // throwForStatus handles both problem+json and plain error responses,
-        // throwing an ApiError with a user-readable message on failure.
-        //await throwForStatus(res)
+  async function refresh(): Promise<void> {
+    try {
+      user.value = await apiJson<UserInfo>('/api/auth/manage/info')
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) user.value = null
+      else throw error
+    }
+  }
 
-        if (!res.ok) {
-          this.user = null
-          return
-        }
-        this.user = (await res.json()) as User
-      } finally {
-        this.isRestoring = false
-      }
-    },
-  },
+  async function signIn(email: string, password: string, twoFactorCode?: string): Promise<void> {
+    await apiPost('/api/auth/login?useCookies=true', {
+      email,
+      password,
+      ...(twoFactorCode ? { twoFactorCode } : {}),
+    })
+    await refresh()
+  }
+
+  async function register(input: {
+    firstName: string
+    lastName: string
+    middleName?: string
+    email: string
+    password: string
+    invitationCode?: string
+  }): Promise<void> {
+    await apiPost('/api/auth/register', input)
+  }
+
+  async function signOut(): Promise<void> {
+    try {
+      await apiPost('/api/auth/logout', {})
+    } finally {
+      // Always clear locally: a failed logout must not leave cached tenant data behind.
+      user.value = null
+      setApolloTenant(null)
+      await clearApolloStore()
+    }
+  }
+
+  function forgotPassword(email: string) {
+    return apiPost('/api/auth/forgotPassword', { email })
+  }
+
+  function resetPassword(email: string, resetCode: string, newPassword: string) {
+    return apiPost('/api/auth/resetPassword', { email, resetCode, newPassword })
+  }
+
+  function confirmEmail(userId: string, code: string) {
+    return apiJson(
+      `/api/auth/confirmEmail?userId=${encodeURIComponent(userId)}&code=${encodeURIComponent(code)}`,
+    )
+  }
+
+  function resendConfirmationEmail(email: string) {
+    return apiPost('/api/auth/resendConfirmationEmail', { email })
+  }
+
+  return {
+    user,
+    instanceConfig,
+    initialised,
+    isAuthenticated,
+    isEmailVerified,
+    isInstanceAdmin,
+    isSingleTenant,
+    displayName,
+    ready,
+    refresh,
+    signIn,
+    register,
+    signOut,
+    forgotPassword,
+    resetPassword,
+    confirmEmail,
+    resendConfirmationEmail,
+  }
 })

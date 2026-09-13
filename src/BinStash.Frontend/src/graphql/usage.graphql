@@ -1,0 +1,14 @@
+query TenantUsage {
+  tenantUsage {
+    tenantId
+    logicalBytes
+    repositoryCount
+    releaseCount
+    maxStorageBytes
+    isLimited
+    storageUsedFraction
+    isStorageAllowed
+    isIngestAllowed
+    isEgressAllowed
+  }
+}

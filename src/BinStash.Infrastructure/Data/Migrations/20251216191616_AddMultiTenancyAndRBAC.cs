@@ -32,7 +32,50 @@ namespace BinStash.Infrastructure.Data.Migrations
                 table: "Repositories",
                 type: "uuid",
                 nullable: true);
-            
+
+            // Adopt pre-tenancy repositories into a tenant before the column is made NOT NULL.
+            //
+            // Without this the migration cannot be applied to any instance that already has
+            // repositories: every existing row would hold NULL and PostgreSQL rejects
+            // SET NOT NULL with "column \"TenantId\" ... contains null values". Because the
+            // server runs Database.Migrate() at startup, that leaves the service unable to
+            // boot. It only ever appeared to work because every instance that applied it did
+            // so against an empty Repositories table.
+            //
+            // This is a no-op on a fresh database (nothing to adopt, so no tenant is created),
+            // and it is idempotent. Editing an already-applied migration is normally off
+            // limits, but this one is unapplied wherever it matters and is otherwise
+            // impossible to apply at all.
+            migrationBuilder.Sql("""
+                DO $$
+                DECLARE
+                    target_tenant uuid;
+                BEGIN
+                    -- Fresh install: no pre-tenancy data, so there is nothing to adopt.
+                    IF NOT EXISTS (SELECT 1 FROM "Repositories" WHERE "TenantId" IS NULL) THEN
+                        RETURN;
+                    END IF;
+
+                    -- Prefer an existing tenant if one somehow exists; otherwise create the
+                    -- one the legacy repositories are adopted into.
+                    SELECT "Id" INTO target_tenant FROM "Tenants" ORDER BY "CreatedAt" LIMIT 1;
+
+                    IF target_tenant IS NULL THEN
+                        -- A real, random id rather than a sentinel like ...0001: this is an
+                        -- ordinary tenant that the instance will keep using, and a recognisable
+                        -- constant would both look like a placeholder and be identical across
+                        -- every instance that ran this migration.
+                        target_tenant := gen_random_uuid();
+                        INSERT INTO "Tenants" ("Id", "Slug", "Name")
+                        VALUES (target_tenant, 'default', 'Default');
+                    END IF;
+
+                    UPDATE "Repositories"
+                       SET "TenantId" = target_tenant
+                     WHERE "TenantId" IS NULL;
+                END $$;
+                """);
+
             //  Alter column to NOT NULL
             migrationBuilder.AlterColumn<Guid>(
                 name: "TenantId",

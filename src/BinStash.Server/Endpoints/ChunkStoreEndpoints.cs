@@ -13,22 +13,11 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System.Text.Json;
-using System.Threading.Channels;
 using BinStash.Contracts.ChunkStore;
-using BinStash.Contracts.Hashing;
-using BinStash.Contracts.Release;
-using BinStash.Core.Auth.Instance;
 using BinStash.Core.Entities;
-using BinStash.Core.Serialization;
 using BinStash.Core.Storage;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Configuration;
-using BinStash.Server.Extensions;
-using BinStash.Server.GraphQL;
-using BinStash.Server.GraphQL.Features.Jobs;
-using BinStash.Server.HostedServices;
-using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Path = System.IO.Path;
@@ -37,68 +26,20 @@ namespace BinStash.Server.Endpoints;
 
 public static class ChunkStoreEndpoints
 {
-    public static RouteGroupBuilder MapChunkStoreEndpoints(this IEndpointRouteBuilder app)
+    // Chunk-store reads (list, detail, stats, enabled types), creation, and the rebuild/upgrade
+    // jobs are all served via GraphQL. These handlers are reused directly (not as REST routes)
+    // by the setup wizard (SetupEndpoints), which runs before GraphQL auth is available.
+
+    internal static async Task<IResult> ListChunkStoresAsync(BinStashDbContext db)
     {
-        // TODO: Add ProducesError
-        
-        var group = app.MapGroup("/api/chunk-stores")!
-            .WithTags("ChunkStore")
-            .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .RequireInstancePermission(InstancePermission.Admin);
-            //.WithDescription("Endpoints for managing chunk stores. Chunk stores are used to store chunks of data that are referenced by repositories. They can be local or remote, and support various chunking algorithms.");
-
-        group.MapGet("/enabled-types", GetChunkStoreTypes)!
-            .WithDescription("Get available chunk store types.")
-            .WithSummary("Get Chunk Store Types")
-            .Produces(StatusCodes.Status200OK);
-        group.MapPost("/", CreateChunkStoreAsync)!
-            .WithDescription("Creates a new chunk store.")
-            .WithSummary("Create Chunk Store")
-            .Produces<ChunkStoreSummaryDto>(StatusCodes.Status201Created);
-        group.MapGet("/", ListChunkStoresAsync)!
-            .WithDescription("Lists all chunk stores.")
-            .WithSummary("List Chunk Stores")
-            .Produces<List<ChunkStoreSummaryDto>>();
-        group.MapGet("/{id:guid}", GetChunkStoreByIdAsync)!
-            .WithDescription("Gets a chunk store by its ID.")
-            .WithSummary("Get Chunk Store By ID")
-            .Produces<ChunkStoreDetailDto>()
-            .Produces(StatusCodes.Status404NotFound);
-        group.MapGet("/{id:guid}/stats", GetChunkStoreStatsAsync)!
-            .WithDescription("Gets statistics about a chunk store, such as total size, number of chunks, etc.")
-            .WithSummary("Get Chunk Store Stats")
-            .Produces<ChunkStoreStatsDto>()
-            .Produces(StatusCodes.Status404NotFound);
-        
-        group.MapPost("/{id:guid}/rebuild", RebuildChunkStoreAsync)!
-            .WithDescription(
-                "Starts an asynchronous background job to rebuild the chunk store index by scanning all pack-file buckets. Returns 202 Accepted with the job ID. Subscribe via GraphQL subscription 'backgroundJobProgress(jobId)' for real-time progress, or poll GET /api/background-jobs/{jobId}.")
-            .WithSummary("Start Chunk Store Rebuild Job")
-            .Produces<BackgroundJobGql>(StatusCodes.Status202Accepted)
-            .ProducesProblem(StatusCodes.Status409Conflict);
-        group.MapPost("/{id:guid}/upgrade", StartUpgradeReleasesAsync)!
-            .WithDescription("Starts an asynchronous background job to upgrade all releases in the chunk store to the latest serializer version. Returns 202 Accepted with the job ID. Subscribe via GraphQL subscription 'backgroundJobProgress(jobId)' for real-time progress, or query GraphQL 'backgroundJob(id)'.")
-            .WithSummary("Start Release Upgrade Job")
-            .Produces<BackgroundJobGql>(StatusCodes.Status202Accepted)
-            .ProducesProblem(StatusCodes.Status409Conflict);
-        /*group.MapDelete("/{id:guid}", DeleteChunkStoreAsync)
-            .WithDescription("Deletes a chunk store by its ID.")
-            .WithSummary("Delete Chunk Store")
-            .Produces(StatusCodes.Status204NoContent)
-            .Produces(StatusCodes.Status404NotFound);*/
-
-        return group;
+        var stores = await db.ChunkStores.Select(x => new ChunkStoreSummaryDto
+        {
+            Id = x.Id,
+            Name = x.Name
+        }).ToListAsync();
+        return Results.Ok(stores);
     }
 
-    private static IResult GetChunkStoreTypes()
-    {
-        var types = Enum.GetValues<ChunkStoreType>()
-            .Select(x => new { name = x.ToString(), value = (int)x })
-            .ToList();
-        return Results.Ok(types);
-    }
-    
     internal static async Task<IResult> CreateChunkStoreAsync(CreateChunkStoreDto dto, BinStashDbContext db, IOptions<StorageSettings> storageOptions)
     {
         if (string.IsNullOrWhiteSpace(dto.Name))
@@ -214,157 +155,10 @@ public static class ChunkStoreEndpoints
         db.ChunkStores.Add(chunkStore);
         await db.SaveChangesAsync();
 
-        return Results.Created($"/api/chunk-stores/{chunkStore.Id}", new ChunkStoreSummaryDto
+        return Results.Ok(new ChunkStoreSummaryDto
         {
             Id = chunkStore.Id,
             Name = chunkStore.Name
         });
     }
-    
-    internal static async Task<IResult> ListChunkStoresAsync(BinStashDbContext db)
-    {
-        var stores = await db.ChunkStores.Select(x => new ChunkStoreSummaryDto
-        {
-            Id = x.Id,
-            Name = x.Name
-        }).ToListAsync();
-        return Results.Ok(stores);
-    }
-    
-    private static async Task<IResult> GetChunkStoreByIdAsync(Guid id, BinStashDbContext db)
-    {
-        var store = await db.ChunkStores.FindAsync(id);
-        if (store == null)
-            return Results.NotFound();
-
-        return Results.Ok(new ChunkStoreDetailDto
-        {
-            Id = store.Id,
-            Name = store.Name,
-            Type = store.Type.ToString(),
-            Chunker = new ChunkStoreChunkerDto
-            {
-                Type = store.ChunkerOptions.Type.ToString(),
-                MinChunkSize = store.ChunkerOptions.MinChunkSize,
-                AvgChunkSize = store.ChunkerOptions.AvgChunkSize,
-                MaxChunkSize = store.ChunkerOptions.MaxChunkSize,
-            },
-            BackendSettings = MapBackendSettingsToDto(store),
-            Stats = new Dictionary<string, JsonElement>()
-        });
-    }
-
-    private static async Task<IResult> GetChunkStoreStatsAsync(Guid id, BinStashDbContext db)
-    {
-        var store = await db.ChunkStores.FindAsync(id);
-        if (store == null)
-            return Results.NotFound();
-
-        return Results.Ok(new ChunkStoreStatsDto
-        {
-            TotalChunks = await db.Chunks.Where(x => x.ChunkStoreId == id).CountAsync(),
-        });
-    }
-    
-    private static async Task<IResult> RebuildChunkStoreAsync(Guid id, BinStashDbContext db, RebuildJobChannel rebuildJobChannel)
-    {
-        var store = await db.ChunkStores.FindAsync(id);
-        if (store == null)
-            return Results.NotFound();
-
-        // Prevent duplicate running/pending jobs for the same chunk store
-        var hasActiveJob = db.BackgroundJobs.Where(j =>
-            j.JobType == BackgroundJobTypes.ChunkStoreRebuild
-            && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running)
-            && j.JobData != null).AsEnumerable().Any(j => j.JobData!.Contains(id.ToString()));
-
-        if (hasActiveJob)
-            return Results.Conflict("A rebuild job is already running or pending for this chunk store.");
-
-        var jobData = new ChunkStoreRebuildJobData { ChunkStoreId = id };
-
-        var job = new BackgroundJob
-        {
-            Id = Guid.NewGuid(),
-            JobType = BackgroundJobTypes.ChunkStoreRebuild,
-            Status = BackgroundJobStatus.Pending,
-            JobData = JsonSerializer.Serialize(jobData),
-            CreatedAt = DateTimeOffset.UtcNow
-        };
-
-        db.BackgroundJobs.Add(job);
-        await db.SaveChangesAsync();
-
-        // Enqueue the job for the background service
-        await rebuildJobChannel.Channel.Writer.WriteAsync(job.Id);
-
-        return Results.Accepted($"/api/background-jobs/{job.Id}", BackgroundJobService.MapToGql(job));
-    }
-    
-    private static async Task<IResult> StartUpgradeReleasesAsync(Guid id, BinStashDbContext db, Channel<Guid> jobChannel)
-    {
-        var store = await db.ChunkStores.FindAsync(id);
-        if (store == null)
-            return Results.NotFound();
-
-        if (store.Type != ChunkStoreType.Local)
-            return Results.BadRequest("Release upgrade is currently only supported for local chunk stores.");
-
-        // Prevent duplicate running/pending jobs for the same chunk store
-        var hasActiveJob = db.BackgroundJobs.Where(j =>
-            j.JobType == BackgroundJobTypes.ReleaseUpgrade
-            && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running)
-            && j.JobData != null).AsEnumerable().Any(j => j.JobData!.Contains(id.ToString()));
-
-        if (hasActiveJob)
-            return Results.Conflict("An upgrade job is already running or pending for this chunk store.");
-
-        var jobData = new ReleaseUpgradeJobData
-        {
-            ChunkStoreId = id,
-            TargetSerializerVersion = ReleasePackageSerializer.Version
-        };
-
-        var job = new BackgroundJob
-        {
-            Id = Guid.NewGuid(),
-            JobType = BackgroundJobTypes.ReleaseUpgrade,
-            Status = BackgroundJobStatus.Pending,
-            JobData = JsonSerializer.Serialize(jobData),
-            CreatedAt = DateTimeOffset.UtcNow
-        };
-
-        db.BackgroundJobs.Add(job);
-        await db.SaveChangesAsync();
-
-        // Enqueue the job for the background service
-        await jobChannel.Writer.WriteAsync(job.Id);
-
-        return Results.Accepted($"/api/upgrade-jobs/{job.Id}", BackgroundJobService.MapToGql(job));
-    }
-
-    private static async Task<IResult> DeleteChunkStoreAsync(Guid id, BinStashDbContext db)
-    {
-        var store = await db.ChunkStores.FindAsync(id);
-        if (store == null)
-            return Results.NotFound();
-            
-        // TODO: Check if the store is in use by any repository before deleting
-        // TODO: Delete the physical store if it's a local store
-
-        return Results.Conflict();
-    }
-
-    /// <summary>
-    /// Maps the entity's <see cref="ChunkStoreBackendSettings"/> to the API DTO.
-    /// </summary>
-    private static ChunkStoreBackendSettingsDto MapBackendSettingsToDto(ChunkStore store) => store.BackendSettings switch
-    {
-        LocalFolderBackendSettings local => new ChunkStoreBackendSettingsDto
-        {
-            Type = store.Type.ToString(),
-            LocalPath = local.Path
-        },
-        _ => new ChunkStoreBackendSettingsDto { Type = store.Type.ToString() }
-    };
 }

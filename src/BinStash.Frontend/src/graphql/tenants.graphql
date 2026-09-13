@@ -1,0 +1,60 @@
+query MyTenants($first: Int, $after: String) {
+  tenants(first: $first, after: $after, order: [{ name: ASC }]) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes { id name slug createdAt joinedAt myRoles }
+  }
+}
+
+query CurrentTenant {
+  currentTenant { id name slug createdAt joinedAt myRoles }
+}
+
+query TenantMembers {
+  tenantMembers { id email firstName lastName roles joinedAt }
+}
+
+query TenantStorageClasses {
+  tenantStorageClasses { name description isDefault }
+}
+
+query TenantInvitationPreview($tenantId: UUID!, $code: String!) {
+  tenantInvitationPreview(tenantId: $tenantId, code: $code) {
+    tenantId
+    tenantName
+    tenantSlug
+    role
+    invitedEmail
+    expiresAt
+  }
+}
+
+mutation CreateTenant($input: CreateTenantInput!) {
+  createTenant(input: $input) { id name slug createdAt myRoles }
+}
+
+mutation UpdateTenant($input: UpdateTenantInput!) {
+  updateTenant(input: $input) { id name slug createdAt myRoles }
+}
+
+mutation InviteTenantMember($input: InviteTenantMemberInput!) {
+  inviteTenantMember(input: $input)
+}
+
+mutation UpdateTenantMemberRoles($memberId: UUID!, $roles: [String!]!) {
+  updateTenantMemberRoles(memberId: $memberId, roles: $roles) {
+    id email firstName lastName roles joinedAt
+  }
+}
+
+mutation RemoveTenantMember($memberId: UUID!) {
+  removeTenantMember(memberId: $memberId)
+}
+
+mutation LeaveTenant {
+  leaveTenant
+}
+
+mutation AcceptTenantInvitation($tenantId: UUID!, $code: String!) {
+  acceptTenantInvitation(tenantId: $tenantId, code: $code)
+}

@@ -19,5 +19,18 @@ public sealed class ServiceAccountType : ObjectType<ServiceAccountGql>
 {
     protected override void Configure(IObjectTypeDescriptor<ServiceAccountGql> descriptor)
     {
+        descriptor.Field("apiKeys")
+            .Authorize()
+            .Type<ListType<NonNullType<ObjectType<ApiKeyInfoGql>>>>()
+            .ResolveWith<Resolvers>(x => x.GetApiKeys(null!, null!, CancellationToken.None));
+    }
+
+    private sealed class Resolvers
+    {
+        public Task<List<ApiKeyInfoGql>> GetApiKeys(
+            [Parent] ServiceAccountGql serviceAccount,
+            [Service] ServiceAccountQueryService service,
+            CancellationToken ct)
+            => service.GetApiKeysAsync(serviceAccount.Id, ct);
     }
 }

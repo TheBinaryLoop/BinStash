@@ -1,0 +1,21 @@
+query Release($id: UUID!) {
+  release(id: $id) {
+    id
+    version
+    createdAt
+    notes
+    repoId
+    customProperties {
+      key
+      value
+    }
+    repository { id name storageClass }
+    metrics {
+      chunksInRelease
+      totalLogicalBytes
+      metaBytesFull
+      componentsInRelease
+      filesInRelease
+    }
+  }
+}

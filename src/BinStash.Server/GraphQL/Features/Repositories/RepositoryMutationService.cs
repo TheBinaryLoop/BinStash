@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Core.Auth;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Entities;
@@ -21,6 +22,8 @@ using BinStash.Server.GraphQL.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
+using BinStash.Core.Auditing;
+
 namespace BinStash.Server.GraphQL.Features.Repositories;
 
 public sealed class RepositoryMutationService
@@ -28,12 +31,14 @@ public sealed class RepositoryMutationService
     private readonly BinStashDbContext _db;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IAuthorizationService _authorizationService;
+    private readonly IAuditLogWriter _audit;
 
-    public RepositoryMutationService(BinStashDbContext db, IHttpContextAccessor httpContextAccessor, IAuthorizationService authorizationService)
+    public RepositoryMutationService(BinStashDbContext db, IHttpContextAccessor httpContextAccessor, IAuthorizationService authorizationService, IAuditLogWriter audit)
     {
         _db = db;
         _httpContextAccessor = httpContextAccessor;
         _authorizationService = authorizationService;
+        _audit = audit;
     }
     
     public async Task<RepositoryGql> CreateRepositoryAsync(CreateRepositoryInput input, CancellationToken ct)
@@ -94,6 +99,19 @@ public sealed class RepositoryMutationService
 
         await _db.Repositories.AddAsync(repo, ct);
         await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryCreated,
+            TargetType = nameof(Repository),
+            TargetId = repo.Id.ToString(),
+            TargetName = repo.Name,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["storageClass"] = repo.StorageClass,
+                ["chunkStoreId"] = repo.ChunkStoreId
+            }
+        }, ct);
 
         return new RepositoryGql
         {
@@ -156,6 +174,14 @@ public sealed class RepositoryMutationService
 
         await _db.SaveChangesAsync(ct);
 
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryUpdated,
+            TargetType = nameof(Repository),
+            TargetId = repo.Id.ToString(),
+            TargetName = repo.Name
+        }, ct);
+
         return new RepositoryGql
         {
             Id = repo.Id,
@@ -171,5 +197,98 @@ public sealed class RepositoryMutationService
                 MaxChunkSize = repo.ChunkStore.ChunkerOptions.MaxChunkSize
             }
         };
+    }
+
+    public async Task<RepositoryAccessGql> GrantRepositoryAccessAsync(Guid repoId, short subjectType, Guid subjectId, string role, CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureRepositoryPermissionAsync(user, _authorizationService, tenantContext.TenantId, repoId, RepositoryPermission.Admin);
+
+        if (string.IsNullOrWhiteSpace(role))
+            throw new GraphQLException("A role is required.");
+
+        var repoExists = await _db.Repositories.AnyAsync(r => r.TenantId == tenantContext.TenantId && r.Id == repoId, ct);
+        if (!repoExists)
+            throw new GraphQLException("Repository not found.");
+
+        var subject = (SubjectType)subjectType;
+
+        var roleAssignment = await _db.RepositoryRoleAssignments
+            .FirstOrDefaultAsync(x => x.RepositoryId == repoId && x.SubjectType == subject && x.SubjectId == subjectId, ct);
+
+        if (roleAssignment is not null)
+        {
+            roleAssignment.RoleName = role;
+            roleAssignment.GrantedAt = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            roleAssignment = new RepositoryRoleAssignment
+            {
+                RepositoryId = repoId,
+                SubjectType = subject,
+                SubjectId = subjectId,
+                RoleName = role,
+                GrantedAt = DateTimeOffset.UtcNow
+            };
+            await _db.RepositoryRoleAssignments.AddAsync(roleAssignment, ct);
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryAccessGranted,
+            TargetType = nameof(Repository),
+            TargetId = repoId.ToString(),
+            Metadata = new Dictionary<string, object?>
+            {
+                ["subjectType"] = subject.ToString(),
+                ["subjectId"] = subjectId,
+                ["role"] = role
+            }
+        }, ct);
+
+        return new RepositoryAccessGql
+        {
+            SubjectType = (short)roleAssignment.SubjectType,
+            SubjectId = roleAssignment.SubjectId,
+            Role = roleAssignment.RoleName,
+            GrantedAt = roleAssignment.GrantedAt
+        };
+    }
+
+    public async Task<bool> RevokeRepositoryAccessAsync(Guid repoId, short subjectType, Guid subjectId, CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureRepositoryPermissionAsync(user, _authorizationService, tenantContext.TenantId, repoId, RepositoryPermission.Admin);
+
+        var subject = (SubjectType)subjectType;
+
+        var roleAssignment = await _db.RepositoryRoleAssignments
+            .FirstOrDefaultAsync(x => x.RepositoryId == repoId && x.SubjectType == subject && x.SubjectId == subjectId, ct);
+
+        if (roleAssignment is null)
+            return false;
+
+        _db.RepositoryRoleAssignments.Remove(roleAssignment);
+        await _db.SaveChangesAsync(ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryAccessRevoked,
+            TargetType = nameof(Repository),
+            TargetId = repoId.ToString(),
+            Metadata = new Dictionary<string, object?>
+            {
+                ["subjectType"] = subject.ToString(),
+                ["subjectId"] = subjectId,
+                ["role"] = roleAssignment.RoleName
+            }
+        }, ct);
+
+        return true;
     }
 }

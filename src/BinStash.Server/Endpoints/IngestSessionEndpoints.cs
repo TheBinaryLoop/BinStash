@@ -33,6 +33,9 @@ using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
 using ZstdNet;
 
+using BinStash.Core.Auditing;
+using BinStash.Server.Services.Releases;
+
 namespace BinStash.Server.Endpoints;
 
 public static class IngestSessionEndpoints
@@ -484,7 +487,7 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
     
-    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, HttpRequest request)
+    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, IAuditLogWriter audit, HttpRequest request)
     {
         var ingestSession = await db.IngestSessions.FindAsync(sessionId);
         var repo = await db.Repositories.FindAsync(repoId);
@@ -577,7 +580,7 @@ public static class IngestSessionEndpoints
         ulong totalLogicalBytes = 0;
         foreach (var artifact in outputArtifacts)
         {
-            totalLogicalBytes += CalculateLogicalArtifactSize(artifact);
+            totalLogicalBytes += ReleaseMetricsCalculator.CalculateLogicalArtifactSize(artifact);
         }
 
         ingestSession.TotalLogicalBytes = (long)totalLogicalBytes;
@@ -650,6 +653,27 @@ public static class IngestSessionEndpoints
         await db.ReleaseMetrics.AddAsync(releaseMetrics);
         await db.SaveChangesAsync();
 
+        // Provenance: this is the only place a release enters the store, and it is reached
+        // over REST/gRPC rather than GraphQL, so it needs its own audit write. Deliberately
+        // records only the tenant's own quantities — the deduplicated/compressed figures
+        // here are a property of the shared chunk store (see TenantUsageGql).
+        await audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ReleasePublished,
+            TenantId = repo.TenantId,
+            TargetType = nameof(Release),
+            TargetId = releaseId.ToString(),
+            TargetName = $"{repo.Name} {releasePackage.Version}",
+            Metadata = new Dictionary<string, object?>
+            {
+                ["repositoryId"] = repo.Id,
+                ["version"] = releasePackage.Version,
+                ["logicalBytes"] = (long)totalLogicalBytes,
+                ["files"] = releaseMetrics.FilesInRelease,
+                ["ingestSessionId"] = sessionId
+            }
+        });
+
         return Results.Created($"/api/releases/{releaseId}", null);
     }
     
@@ -679,31 +703,4 @@ public static class IngestSessionEndpoints
         return hashes;
     }
 
-    private static ulong CalculateLogicalArtifactSize(OutputArtifact artifact)
-    {
-        return artifact.Backing switch
-        {
-            OpaqueBlobBacking opaque => CalculateOpaqueArtifactSize(opaque),
-            ReconstructedContainerBacking reconstructed => CalculateReconstructedArtifactSize(reconstructed),
-            _ => 0UL
-        };
-    }
-
-    private static ulong CalculateOpaqueArtifactSize(OpaqueBlobBacking backing)
-    {
-        return backing.Length.HasValue ? (ulong)backing.Length.Value : 0UL;
-    }
-
-    private static ulong CalculateReconstructedArtifactSize(ReconstructedContainerBacking backing)
-    {
-        ulong total = 0;
-
-        foreach (var member in backing.Members)
-        {
-            if (member.Length.HasValue)
-                total += (ulong)member.Length.Value;
-        }
-
-        return total;
-    }
 }

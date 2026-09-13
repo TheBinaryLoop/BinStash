@@ -1,0 +1,57 @@
+query InstanceStats {
+  instanceStats { userCount tenantCount repositoryCount }
+}
+
+query InstanceTenants($first: Int, $after: String, $where: TenantGqlFilterInput) {
+  tenants(first: $first, after: $after, where: $where, order: [{ name: ASC }]) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes { id name slug createdAt }
+  }
+}
+
+query InstanceUsers($first: Int, $after: String, $where: UserGqlFilterInput) {
+  users(first: $first, after: $after, where: $where, order: [{ email: ASC }]) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes { id firstName middleName lastName email isEmailVerified isOnboardingCompleted }
+  }
+}
+
+query EmailConfig {
+  emailConfig {
+    provider
+    shared { fromEmail supportEmail }
+    brevo { apiKey }
+    smtp { host port username password security }
+  }
+}
+
+query TenancyConfig {
+  tenancyConfig { mode defaultTenantId }
+}
+
+query DomainConfig {
+  domainConfig { baseUrl }
+}
+
+mutation SetEmailConfig($input: SetEmailConfigInput!) {
+  setEmailConfig(input: $input) {
+    provider
+    shared { fromEmail supportEmail }
+    brevo { apiKey }
+    smtp { host port username password security }
+  }
+}
+
+mutation SetTenancyConfig($input: SetTenancyConfigInput!) {
+  setTenancyConfig(input: $input) { mode defaultTenantId }
+}
+
+mutation SetDomainConfig($input: SetDomainConfigInput!) {
+  setDomainConfig(input: $input) { baseUrl }
+}
+
+mutation SendTestEmail($recipientEmail: String!) {
+  sendTestEmail(recipientEmail: $recipientEmail) { success providerError }
+}

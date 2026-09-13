@@ -36,13 +36,19 @@ using BinStash.Server.Email;
 using BinStash.Server.Email.Providers;
 using BinStash.Server.Extensions;
 using BinStash.Server.GraphQL;
+using BinStash.Server.GraphQL.Features.Audit;
 using BinStash.Server.GraphQL.Features.ChunkStores;
+using BinStash.Server.GraphQL.Features.Instance;
 using BinStash.Server.GraphQL.Features.Jobs;
 using BinStash.Server.GraphQL.Features.Releases;
 using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
+using BinStash.Server.GraphQL.Features.StorageClasses;
 using BinStash.Server.GraphQL.Features.Tenants;
+using BinStash.Server.GraphQL.Features.Usage;
 using BinStash.Server.GraphQL.Features.Users;
+using BinStash.Core.Auditing;
+using BinStash.Server.Auditing;
 using BinStash.Server.Billing;
 using BinStash.Server.Grpc;
 using BinStash.Server.Health;
@@ -111,6 +117,7 @@ public static class Program
         builder.Services.AddHttpClient<BrevoEmailProvider>();
         builder.Services.AddTransient<IEmailSender<BinStashUser>, EmailSenderImplementation>();
         builder.Services.AddTransient<ITenantEmailSender, EmailSenderImplementation>();
+        builder.Services.AddTransient<IInstanceEmailTester, EmailSenderImplementation>();
         builder.Services.AddScoped<ITokenService, TokenService>();
         builder.Services.AddScoped<TenantJoinService>();
         builder.Services.AddScoped<ChunkStoreQueryService>();
@@ -124,6 +131,13 @@ public static class Program
         builder.Services.AddScoped<TenantQueryService>();
         builder.Services.AddScoped<UserQueryService>();
         builder.Services.AddScoped<BackgroundJobService>();
+        builder.Services.AddScoped<InstanceMutationService>();
+        builder.Services.AddScoped<InstanceQueryService>();
+        builder.Services.AddScoped<StorageClassQueryService>();
+        builder.Services.AddScoped<StorageClassMutationService>();
+        builder.Services.AddScoped<AuditQueryService>();
+        builder.Services.AddScoped<UsageQueryService>();
+        builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
         builder.Services.AddNoOpBilling();
         var billingLoader = new BillingPluginLoader();
         billingLoader.LoadAndRegisterServices(builder);
@@ -267,13 +281,25 @@ public static class Program
         builder.Services.AddHostedService<ChunkStoreRebuildBackgroundService>();
 
         builder.Services.AddGraphQLServer()
+            // Cost limits are enforced: the schema exposes filtering/sorting/paging to every
+            // authenticated tenant, so an unbounded query is a noisy-neighbour/DoS vector on a
+            // shared (SaaS) instance. Tune the ceilings rather than turning enforcement off.
             .ModifyCostOptions(options =>
             {
-                options.EnforceCostLimits = false;
+                options.EnforceCostLimits = true;
+                options.MaxFieldCost = 10_000;
+                options.MaxTypeCost = 50_000;
+            })
+            .ModifyPagingOptions(options =>
+            {
+                options.DefaultPageSize = 25;
+                options.MaxPageSize = 100;
+                options.IncludeTotalCount = true;
             })
             .AddAuthorization()
             .AddQueryType<QueryType>()
             .AddMutationType<MutationType>()
+            .AddSubscriptionType<SubscriptionType>()
             .AddInMemorySubscriptions()
             .BindRuntimeType<ulong, UnsignedLongType>()
             .BindRuntimeType<ulong?, UnsignedLongType>()
@@ -287,7 +313,14 @@ public static class Program
         builder.Services.AddOpenApi();
 
         var app = builder.Build();
-        
+
+        // `--export-schema <path>` writes the GraphQL SDL and exits. The frontend's typed codegen
+        // runs against a committed schema.graphql so it works offline and in CI, where no server
+        // (and no database) is available to introspect. Deliberately placed before the migration
+        // step below: building the schema resolves types, not data, so this must not need a DB.
+        if (TryExportSchema(app, args))
+            return;
+
         // Configure the ef core migration process
         using (var scope = app.Services.CreateScope())
         {
@@ -351,5 +384,33 @@ public static class Program
         app.MapFallbackToFile("index.html");
         
         app.Run();
+    }
+
+    /// <summary>
+    /// Handles the <c>--export-schema &lt;path&gt;</c> switch. Returns true when the schema was
+    /// written and the process should exit without serving.
+    /// </summary>
+    private static bool TryExportSchema(WebApplication app, string[] args)
+    {
+        var index = Array.IndexOf(args, "--export-schema");
+        if (index < 0)
+            return false;
+
+        var path = index + 1 < args.Length ? args[index + 1] : "schema.graphql";
+
+        var executor = app.Services
+            .GetRequiredService<HotChocolate.Execution.IRequestExecutorProvider>()
+            .GetExecutorAsync()
+            .AsTask()
+            .GetAwaiter()
+            .GetResult();
+
+        var directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path));
+        if (!string.IsNullOrEmpty(directory))
+            Directory.CreateDirectory(directory);
+
+        File.WriteAllText(path, executor.Schema.ToString());
+        Console.WriteLine($"GraphQL schema written to {System.IO.Path.GetFullPath(path)}");
+        return true;
     }
 }

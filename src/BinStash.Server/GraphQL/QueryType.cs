@@ -14,11 +14,13 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using HotChocolate.Types.Pagination;
+using BinStash.Server.GraphQL.Features.Audit;
 using BinStash.Server.GraphQL.Features.ChunkStores;
 using BinStash.Server.GraphQL.Features.Releases;
 using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
 using BinStash.Server.GraphQL.Features.Tenants;
+using BinStash.Server.GraphQL.Features.Usage;
 
 namespace BinStash.Server.GraphQL;
 
@@ -26,6 +28,11 @@ public sealed class QueryType : ObjectType<Query>
 {
     protected override void Configure(IObjectTypeDescriptor<Query> descriptor)
     {
+        // Fail closed: without this, HotChocolate implicitly binds every public method on Query to a
+        // schema field, so a new resolver would be exposed before anyone declared its authorization.
+        // With explicit binding a field only exists once it is declared here, next to its guard.
+        descriptor.BindFieldsExplicitly();
+
         descriptor
             .Field(x => x.GetCurrentTenant(null!))
             .Type<NonNullType<TenantType>>()
@@ -130,5 +137,86 @@ public sealed class QueryType : ObjectType<Query>
             .Field(x => x.GetBackgroundJob(Guid.Empty, null!, CancellationToken.None))
             .Type<ObjectType<BackgroundJobGql>>()
             .Authorize();
+
+        descriptor
+            .Field(x => x.GetInstanceStats(null!, CancellationToken.None))
+            .Type<ObjectType<InstanceStatsGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetEmailConfig(null!))
+            .Type<ObjectType<EmailConfigGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetTenancyConfig(null!))
+            .Type<ObjectType<TenancyConfigGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetDomainConfig(null!))
+            .Type<ObjectType<DomainConfigGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetStorageClasses(null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetStorageClassDefaultMappings(null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetServiceAccountApiKeys(Guid.Empty, null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetTenantMembers(null!, CancellationToken.None))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetTenantStorageClasses(null!, CancellationToken.None))
+            .Authorize();
+
+        // Invitation preview is intentionally public (unauthenticated onboarding flow).
+        descriptor
+            .Field(x => x.GetTenantInvitationPreview(Guid.Empty, null!, null!, CancellationToken.None))
+            .Type<ObjectType<TenantInvitationPreviewGql>>();
+
+        descriptor
+            .Field(x => x.GetChunkStoreStats(Guid.Empty, null!, CancellationToken.None))
+            .Type<ObjectType<ChunkStoreStatsGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetEnabledChunkStoreTypes(null!))
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetTenantUsage(null!, CancellationToken.None))
+            .Type<NonNullType<ObjectType<TenantUsageGql>>>()
+            .Authorize();
+
+        // Audit trails are paged/filtered/sorted server-side: these tables grow without bound and
+        // the UI only ever shows a window of them.
+        descriptor
+            .Field(x => x.GetAuditLog(null!))
+            .Authorize()
+            .UsePaging<ObjectType<AuditLogEntryGql>>(options: new PagingOptions
+            {
+                IncludeTotalCount = true
+            })
+            .UseFiltering()
+            .UseSorting();
+
+        descriptor
+            .Field(x => x.GetInstanceAuditLog(null!))
+            .Authorize()
+            .UsePaging<ObjectType<AuditLogEntryGql>>(options: new PagingOptions
+            {
+                IncludeTotalCount = true
+            })
+            .UseFiltering()
+            .UseSorting();
     }
 }

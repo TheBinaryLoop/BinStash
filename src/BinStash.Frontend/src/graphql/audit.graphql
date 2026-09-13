@@ -1,0 +1,31 @@
+fragment AuditEntry on AuditLogEntryGql {
+  id
+  tenantId
+  occurredAt
+  action
+  actorType
+  actorId
+  actorDisplay
+  targetType
+  targetId
+  targetName
+  outcome
+  ipAddress
+  metadata
+}
+
+query AuditLog($first: Int, $after: String, $where: AuditLogEntryGqlFilterInput) {
+  auditLog(first: $first, after: $after, where: $where, order: [{ occurredAt: DESC }]) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes { ...AuditEntry }
+  }
+}
+
+query InstanceAuditLog($first: Int, $after: String, $where: AuditLogEntryGqlFilterInput) {
+  instanceAuditLog(first: $first, after: $after, where: $where, order: [{ occurredAt: DESC }]) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes { ...AuditEntry }
+  }
+}

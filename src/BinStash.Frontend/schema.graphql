@@ -1,0 +1,1272 @@
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
+
+type Query {
+  currentTenant: TenantGql! @authorize @cost(weight: "10")
+  tenants(
+    "Returns the first _n_ elements from the list."
+    first: Int
+    "Returns the elements in the list that come after the specified cursor."
+    after: String
+    "Returns the last _n_ elements from the list."
+    last: Int
+    "Returns the elements in the list that come before the specified cursor."
+    before: String
+    where: TenantGqlFilterInput @cost(weight: "10")
+    order: [TenantGqlSortInput!] @cost(weight: "10")
+  ): TenantsConnection
+    @authorize
+    @listSize(
+      assumedSize: 100
+      slicingArguments: ["first", "last"]
+      slicingArgumentDefaultValue: 25
+      sizedFields: ["edges", "nodes"]
+      requireOneSlicingArgument: false
+    )
+    @cost(weight: "10")
+  tenant(id: UUID!): TenantGql @authorize @cost(weight: "10")
+  repositories(
+    "Returns the first _n_ elements from the list."
+    first: Int
+    "Returns the elements in the list that come after the specified cursor."
+    after: String
+    "Returns the last _n_ elements from the list."
+    last: Int
+    "Returns the elements in the list that come before the specified cursor."
+    before: String
+    where: RepositoryGqlFilterInput @cost(weight: "10")
+    order: [RepositoryGqlSortInput!] @cost(weight: "10")
+  ): RepositoriesConnection
+    @authorize
+    @listSize(
+      assumedSize: 100
+      slicingArguments: ["first", "last"]
+      slicingArgumentDefaultValue: 25
+      sizedFields: ["edges", "nodes"]
+      requireOneSlicingArgument: false
+    )
+    @cost(weight: "10")
+  repository(id: UUID!): RepositoryGql @authorize @cost(weight: "10")
+  repositoryByName(name: String!): RepositoryGql @authorize @cost(weight: "10")
+  release(id: UUID!): ReleaseGql @authorize @cost(weight: "10")
+  chunkStores(
+    "Returns the first _n_ elements from the list."
+    first: Int
+    "Returns the elements in the list that come after the specified cursor."
+    after: String
+    "Returns the last _n_ elements from the list."
+    last: Int
+    "Returns the elements in the list that come before the specified cursor."
+    before: String
+    where: ChunkStoreGqlFilterInput @cost(weight: "10")
+    order: [ChunkStoreGqlSortInput!] @cost(weight: "10")
+  ): ChunkStoresConnection
+    @authorize
+    @listSize(
+      assumedSize: 100
+      slicingArguments: ["first", "last"]
+      slicingArgumentDefaultValue: 25
+      sizedFields: ["edges", "nodes"]
+      requireOneSlicingArgument: false
+    )
+    @cost(weight: "10")
+  chunkStore(id: UUID!): ChunkStoreGql @authorize @cost(weight: "10")
+  serviceAccounts(
+    "Returns the first _n_ elements from the list."
+    first: Int
+    "Returns the elements in the list that come after the specified cursor."
+    after: String
+    "Returns the last _n_ elements from the list."
+    last: Int
+    "Returns the elements in the list that come before the specified cursor."
+    before: String
+    where: ServiceAccountGqlFilterInput @cost(weight: "10")
+    order: [ServiceAccountGqlSortInput!] @cost(weight: "10")
+  ): ServiceAccountsConnection
+    @authorize
+    @listSize(
+      assumedSize: 100
+      slicingArguments: ["first", "last"]
+      slicingArgumentDefaultValue: 25
+      sizedFields: ["edges", "nodes"]
+      requireOneSlicingArgument: false
+    )
+    @cost(weight: "10")
+  users(
+    "Returns the first _n_ elements from the list."
+    first: Int
+    "Returns the elements in the list that come after the specified cursor."
+    after: String
+    "Returns the last _n_ elements from the list."
+    last: Int
+    "Returns the elements in the list that come before the specified cursor."
+    before: String
+    where: UserGqlFilterInput @cost(weight: "10")
+    order: [UserGqlSortInput!] @cost(weight: "10")
+  ): UsersConnection
+    @authorize
+    @listSize(
+      assumedSize: 100
+      slicingArguments: ["first", "last"]
+      slicingArgumentDefaultValue: 25
+      sizedFields: ["edges", "nodes"]
+      requireOneSlicingArgument: false
+    )
+    @cost(weight: "10")
+  backgroundJobs(
+    jobType: String
+    chunkStoreId: UUID
+    "Returns the first _n_ elements from the list."
+    first: Int
+    "Returns the elements in the list that come after the specified cursor."
+    after: String
+    "Returns the last _n_ elements from the list."
+    last: Int
+    "Returns the elements in the list that come before the specified cursor."
+    before: String
+    order: [BackgroundJobGqlSortInput!] @cost(weight: "10")
+  ): BackgroundJobsConnection
+    @authorize
+    @listSize(
+      assumedSize: 100
+      slicingArguments: ["first", "last"]
+      slicingArgumentDefaultValue: 25
+      sizedFields: ["edges", "nodes"]
+      requireOneSlicingArgument: false
+    )
+    @cost(weight: "10")
+  backgroundJob(id: UUID!): BackgroundJobGql @authorize @cost(weight: "10")
+  instanceStats: InstanceStatsGql @authorize @cost(weight: "10")
+  emailConfig: EmailConfigGql @authorize @cost(weight: "10")
+  tenancyConfig: TenancyConfigGql @authorize @cost(weight: "10")
+  domainConfig: DomainConfigGql @authorize @cost(weight: "10")
+  storageClasses: [StorageClassDetailsGql!]! @authorize @cost(weight: "10")
+  storageClassDefaultMappings: [StorageClassDefaultMappingGql!]!
+    @authorize
+    @cost(weight: "10")
+  serviceAccountApiKeys(serviceAccountId: UUID!): [ApiKeyInfoGql!]!
+    @authorize
+    @cost(weight: "10")
+  tenantMembers: [TenantMemberGql!]! @authorize @cost(weight: "10")
+  tenantStorageClasses: [TenantStorageClassGql!]! @authorize @cost(weight: "10")
+  tenantInvitationPreview(tenantId: UUID!, code: String!): TenantInvitationPreviewGql
+    @cost(weight: "10")
+  chunkStoreStats(chunkStoreId: UUID!): ChunkStoreStatsGql
+    @authorize
+    @cost(weight: "10")
+  enabledChunkStoreTypes: [ChunkStoreTypeInfoGql!]!
+    @authorize
+    @cost(weight: "10")
+  tenantUsage: TenantUsageGql! @authorize @cost(weight: "10")
+  auditLog(
+    "Returns the first _n_ elements from the list."
+    first: Int
+    "Returns the elements in the list that come after the specified cursor."
+    after: String
+    "Returns the last _n_ elements from the list."
+    last: Int
+    "Returns the elements in the list that come before the specified cursor."
+    before: String
+    where: AuditLogEntryGqlFilterInput @cost(weight: "10")
+    order: [AuditLogEntryGqlSortInput!] @cost(weight: "10")
+  ): AuditLogConnection
+    @authorize
+    @listSize(
+      assumedSize: 100
+      slicingArguments: ["first", "last"]
+      slicingArgumentDefaultValue: 25
+      sizedFields: ["edges", "nodes"]
+      requireOneSlicingArgument: false
+    )
+    @cost(weight: "10")
+  instanceAuditLog(
+    "Returns the first _n_ elements from the list."
+    first: Int
+    "Returns the elements in the list that come after the specified cursor."
+    after: String
+    "Returns the last _n_ elements from the list."
+    last: Int
+    "Returns the elements in the list that come before the specified cursor."
+    before: String
+    where: AuditLogEntryGqlFilterInput @cost(weight: "10")
+    order: [AuditLogEntryGqlSortInput!] @cost(weight: "10")
+  ): InstanceAuditLogConnection
+    @authorize
+    @listSize(
+      assumedSize: 100
+      slicingArguments: ["first", "last"]
+      slicingArgumentDefaultValue: 25
+      sizedFields: ["edges", "nodes"]
+      requireOneSlicingArgument: false
+    )
+    @cost(weight: "10")
+}
+
+type Mutation {
+  createTenant(input: CreateTenantInput!): TenantGql
+    @authorize
+    @cost(weight: "10")
+  updateTenant(input: UpdateTenantInput!): TenantGql
+    @authorize
+    @cost(weight: "10")
+  createRepository(input: CreateRepositoryInput!): RepositoryGql
+    @authorize
+    @cost(weight: "10")
+  updateRepository(input: UpdateRepositoryInput!): RepositoryGql
+    @authorize
+    @cost(weight: "10")
+  createServiceAccount(input: CreateServiceAccountInput!): ServiceAccountGql
+    @authorize
+    @cost(weight: "10")
+  updateServiceAccount(input: UpdateServiceAccountInput!): ServiceAccountGql
+    @authorize
+    @cost(weight: "10")
+  deleteServiceAccount(accountId: UUID!): Boolean @authorize @cost(weight: "10")
+  createChunkStore(input: CreateChunkStoreInput!): ChunkStoreGql
+    @authorize
+    @cost(weight: "10")
+  rebuildChunkStore(chunkStoreId: UUID!): BackgroundJobGql
+    @authorize
+    @cost(weight: "10")
+  upgradeChunkStore(chunkStoreId: UUID!): BackgroundJobGql
+    @authorize
+    @cost(weight: "10")
+  cancelBackgroundJob(jobId: UUID!): BackgroundJobGql
+    @authorize
+    @cost(weight: "10")
+  sendTestEmail(recipientEmail: String!): SendTestEmailResultGql
+    @authorize
+    @cost(weight: "10")
+  setEmailConfig(input: SetEmailConfigInput!): EmailConfigGql
+    @authorize
+    @cost(weight: "10")
+  setTenancyConfig(input: SetTenancyConfigInput!): TenancyConfigGql
+    @authorize
+    @cost(weight: "10")
+  setDomainConfig(input: SetDomainConfigInput!): DomainConfigGql
+    @authorize
+    @cost(weight: "10")
+  setStorageClassDefaultMappings(input: SetStorageClassDefaultMappingsInput!): Boolean!
+    @authorize
+    @cost(weight: "10")
+  grantRepositoryAccess(
+    repoId: UUID!
+    subjectType: Short!
+    subjectId: UUID!
+    role: String!
+  ): RepositoryAccessGql @authorize @cost(weight: "10")
+  revokeRepositoryAccess(repoId: UUID!, subjectType: Short!, subjectId: UUID!): Boolean!
+    @authorize
+    @cost(weight: "10")
+  createServiceAccountApiKey(
+    serviceAccountId: UUID!
+    input: CreateServiceAccountApiKeyInput!
+  ): CreateApiKeyResultGql @authorize @cost(weight: "10")
+  deleteServiceAccountApiKey(serviceAccountId: UUID!, apiKeyId: UUID!): Boolean!
+    @authorize
+    @cost(weight: "10")
+  inviteTenantMember(input: InviteTenantMemberInput!): Boolean!
+    @authorize
+    @cost(weight: "10")
+  updateTenantMemberRoles(memberId: UUID!, roles: [String!]!): TenantMemberGql
+    @authorize
+    @cost(weight: "10")
+  removeTenantMember(memberId: UUID!): Boolean! @authorize @cost(weight: "10")
+  leaveTenant: Boolean! @authorize @cost(weight: "10")
+  acceptTenantInvitation(tenantId: UUID!, code: String!): Boolean!
+    @authorize
+    @cost(weight: "10")
+  deleteTenant(tenantId: UUID!): Boolean! @authorize @cost(weight: "10")
+}
+
+type Subscription {
+  backgroundJobProgress(jobId: UUID!): BackgroundJobProgressDto @authorize
+}
+
+type ApiKeyInfoGql {
+  id: UUID!
+  displayName: String!
+  createdAt: DateTime!
+  expiresAt: DateTime
+  lastUsedAt: DateTime
+  isActive: Boolean!
+  scopes: [String!]!
+}
+
+"A connection to a list of items."
+type AuditLogConnection {
+  "Information to aid in pagination."
+  pageInfo: PageInfo!
+  "A list of edges."
+  edges: [AuditLogEdge!]
+  "A flattened list of the nodes."
+  nodes: [AuditLogEntryGql]
+  "Identifies the total count of items in the connection."
+  totalCount: Int! @cost(weight: "10")
+}
+
+"An edge in a connection."
+type AuditLogEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: AuditLogEntryGql
+}
+
+type AuditLogEntryGql {
+  id: UUID!
+  tenantId: UUID
+  occurredAt: DateTime!
+  action: String!
+  actorType: AuditActorType!
+  actorId: UUID
+  actorDisplay: String
+  targetType: String
+  targetId: String
+  targetName: String
+  outcome: AuditOutcome!
+  ipAddress: String
+  metadata: String
+}
+
+type BackgroundJobGql {
+  id: UUID!
+  jobType: String!
+  status: String!
+  chunkStoreId: UUID!
+  createdAt: DateTime!
+  startedAt: DateTime
+  completedAt: DateTime
+  errorDetails: String
+  rebuildProgress: RebuildJobProgressGql
+  upgradeProgress: UpgradeJobProgressGql
+}
+
+type BackgroundJobProgressDto {
+  jobId: UUID!
+  jobType: String!
+  status: String!
+  totalReleases: Int!
+  processedReleases: Int!
+  failedReleases: Int!
+  skippedReleases: Int!
+  bytesSaved: Long!
+  bytesGrown: Long!
+  totalBuckets: Int!
+  processedBuckets: Int!
+  failedBuckets: Int!
+  chunkStoreId: UUID
+  startedAt: DateTime
+  completedAt: DateTime
+}
+
+"A connection to a list of items."
+type BackgroundJobsConnection {
+  "Information to aid in pagination."
+  pageInfo: PageInfo!
+  "A list of edges."
+  edges: [BackgroundJobsEdge!]
+  "A flattened list of the nodes."
+  nodes: [BackgroundJobGql!]
+  "Identifies the total count of items in the connection."
+  totalCount: Int! @cost(weight: "10")
+}
+
+"An edge in a connection."
+type BackgroundJobsEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: BackgroundJobGql!
+}
+
+type ChunkStoreBackendSettingsGql {
+  backendType: String!
+  localPath: String
+}
+
+type ChunkStoreChunkerGql {
+  type: String!
+  minChunkSize: Int
+  avgChunkSize: Int
+  maxChunkSize: Int
+}
+
+type ChunkStoreGql {
+  id: UUID!
+  name: String!
+  type: String!
+  chunker: ChunkStoreChunkerGql
+  backendSettings: ChunkStoreBackendSettingsGql
+}
+
+"A connection to a list of items."
+type ChunkStoresConnection {
+  "Information to aid in pagination."
+  pageInfo: PageInfo!
+  "A list of edges."
+  edges: [ChunkStoresEdge!]
+  "A flattened list of the nodes."
+  nodes: [ChunkStoreGql!]
+  "Identifies the total count of items in the connection."
+  totalCount: Int! @cost(weight: "10")
+}
+
+"An edge in a connection."
+type ChunkStoresEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: ChunkStoreGql!
+}
+
+type ChunkStoreStatsGql {
+  totalChunks: Int!
+}
+
+type ChunkStoreTypeInfoGql {
+  name: String!
+  value: Int!
+}
+
+type CreateApiKeyResultGql {
+  displayName: String!
+  key: String!
+  expiresAt: DateTime
+}
+
+type DomainConfigGql {
+  baseUrl: String
+}
+
+type EmailBrevoConfigGql {
+  apiKey: String
+}
+
+type EmailConfigGql {
+  provider: String
+  shared: EmailSharedConfigGql
+  brevo: EmailBrevoConfigGql
+  smtp: EmailSmtpConfigGql
+}
+
+type EmailSharedConfigGql {
+  fromEmail: String
+  supportEmail: String
+}
+
+type EmailSmtpConfigGql {
+  host: String
+  port: Int
+  username: String
+  password: String
+  security: String
+}
+
+"A connection to a list of items."
+type InstanceAuditLogConnection {
+  "Information to aid in pagination."
+  pageInfo: PageInfo!
+  "A list of edges."
+  edges: [InstanceAuditLogEdge!]
+  "A flattened list of the nodes."
+  nodes: [AuditLogEntryGql]
+  "Identifies the total count of items in the connection."
+  totalCount: Int! @cost(weight: "10")
+}
+
+"An edge in a connection."
+type InstanceAuditLogEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: AuditLogEntryGql
+}
+
+type InstanceStatsGql {
+  userCount: Int!
+  tenantCount: Int!
+  repositoryCount: Int!
+}
+
+"Information about pagination in a connection."
+type PageInfo {
+  "Indicates whether more edges exist following the set defined by the clients arguments."
+  hasNextPage: Boolean!
+  "Indicates whether more edges exist prior the set defined by the clients arguments."
+  hasPreviousPage: Boolean!
+  "When paginating backwards, the cursor to continue."
+  startCursor: String
+  "When paginating forwards, the cursor to continue."
+  endCursor: String
+}
+
+type RebuildJobProgressGql {
+  totalBuckets: Int!
+  processedBuckets: Int!
+  failedBuckets: Int!
+}
+
+type ReleaseCustomPropertyGql {
+  key: String!
+  value: String!
+}
+
+type ReleaseGql {
+  repository: RepositoryGql @authorize @cost(weight: "10")
+  metrics: ReleaseMetricsGql @authorize @cost(weight: "10")
+  id: UUID!
+  version: String!
+  createdAt: DateTime!
+  notes: String
+  repoId: UUID!
+  customProperties: [ReleaseCustomPropertyGql!]
+}
+
+type ReleaseMetricsGql {
+  chunksInRelease: Int!
+  totalLogicalBytes: UnsignedLong!
+  metaBytesFull: Int!
+  componentsInRelease: Int!
+  filesInRelease: Int!
+}
+
+"A connection to a list of items."
+type ReleasesConnection {
+  "Information to aid in pagination."
+  pageInfo: PageInfo!
+  "A list of edges."
+  edges: [ReleasesEdge!]
+  "A flattened list of the nodes."
+  nodes: [ReleaseGql]
+  "Identifies the total count of items in the connection."
+  totalCount: Int! @cost(weight: "10")
+}
+
+"An edge in a connection."
+type ReleasesEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: ReleaseGql
+}
+
+"A connection to a list of items."
+type RepositoriesConnection {
+  "Information to aid in pagination."
+  pageInfo: PageInfo!
+  "A list of edges."
+  edges: [RepositoriesEdge!]
+  "A flattened list of the nodes."
+  nodes: [RepositoryGql!]
+  "Identifies the total count of items in the connection."
+  totalCount: Int! @cost(weight: "10")
+}
+
+"An edge in a connection."
+type RepositoriesEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: RepositoryGql!
+}
+
+type RepositoryAccessGql {
+  subjectType: Short!
+  subjectId: UUID!
+  role: String!
+  grantedAt: DateTime!
+}
+
+type RepositoryConfigGql {
+  dedupeConfig: RepositoryDedupeConfigGql!
+}
+
+type RepositoryDedupeConfigGql {
+  chunker: String!
+  minChunkSize: Int
+  avgChunkSize: Int
+  maxChunkSize: Int
+  shiftCount: Int
+  boundaryCheckBytes: Int
+}
+
+type RepositoryGql {
+  releases(
+    "Returns the first _n_ elements from the list."
+    first: Int
+    "Returns the elements in the list that come after the specified cursor."
+    after: String
+    "Returns the last _n_ elements from the list."
+    last: Int
+    "Returns the elements in the list that come before the specified cursor."
+    before: String
+    where: ReleaseGqlFilterInput @cost(weight: "10")
+    order: [ReleaseGqlSortInput!] @cost(weight: "10")
+  ): ReleasesConnection
+    @authorize
+    @listSize(
+      assumedSize: 100
+      slicingArguments: ["first", "last"]
+      slicingArgumentDefaultValue: 25
+      sizedFields: ["edges", "nodes"]
+      requireOneSlicingArgument: false
+    )
+    @cost(weight: "10")
+  config: RepositoryConfigGql @authorize @cost(weight: "10")
+  access: [RepositoryAccessGql!] @authorize @cost(weight: "10")
+  id: UUID!
+  name: String!
+  description: String
+  storageClass: String!
+  chunker: ChunkStoreChunkerGql
+  createdAt: DateTime!
+}
+
+type SendTestEmailResultGql {
+  success: Boolean!
+  providerError: String
+}
+
+type ServiceAccountGql {
+  apiKeys: [ApiKeyInfoGql!] @authorize @cost(weight: "10")
+  id: UUID!
+  name: String!
+  createdAt: DateTime!
+}
+
+"A connection to a list of items."
+type ServiceAccountsConnection {
+  "Information to aid in pagination."
+  pageInfo: PageInfo!
+  "A list of edges."
+  edges: [ServiceAccountsEdge!]
+  "A flattened list of the nodes."
+  nodes: [ServiceAccountGql!]
+  "Identifies the total count of items in the connection."
+  totalCount: Int! @cost(weight: "10")
+}
+
+"An edge in a connection."
+type ServiceAccountsEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: ServiceAccountGql!
+}
+
+type StorageClassDefaultMappingGql {
+  storageClassName: String!
+  chunkStoreId: UUID!
+  isDefault: Boolean!
+  isEnabled: Boolean!
+}
+
+type StorageClassDetailsGql {
+  name: String!
+  displayName: String!
+  description: String
+  isDeprecated: Boolean!
+}
+
+type TenancyConfigGql {
+  mode: String
+  defaultTenantId: String
+}
+
+type TenantGql {
+  id: UUID!
+  name: String!
+  slug: String!
+  createdAt: DateTime!
+  joinedAt: DateTime
+  myRoles: [String!]! @cost(weight: "10")
+}
+
+type TenantInvitationPreviewGql {
+  tenantId: UUID!
+  tenantName: String!
+  tenantSlug: String
+  role: String!
+  invitedEmail: String
+  expiresAt: DateTime!
+}
+
+type TenantMemberGql {
+  id: UUID!
+  email: String!
+  firstName: String
+  lastName: String
+  roles: [String!]!
+  joinedAt: DateTime
+}
+
+"A connection to a list of items."
+type TenantsConnection {
+  "Information to aid in pagination."
+  pageInfo: PageInfo!
+  "A list of edges."
+  edges: [TenantsEdge!]
+  "A flattened list of the nodes."
+  nodes: [TenantGql!]
+  "Identifies the total count of items in the connection."
+  totalCount: Int! @cost(weight: "10")
+}
+
+"An edge in a connection."
+type TenantsEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: TenantGql!
+}
+
+type TenantStorageClassGql {
+  name: String!
+  description: String
+  isDefault: Boolean!
+}
+
+type TenantUsageGql {
+  tenantId: UUID!
+  logicalBytes: Long!
+  repositoryCount: Int!
+  releaseCount: Int!
+  maxStorageBytes: Long
+  isLimited: Boolean!
+  storageUsedFraction: Float
+  isStorageAllowed: Boolean!
+  isIngestAllowed: Boolean!
+  isEgressAllowed: Boolean!
+}
+
+type UpgradeJobProgressGql {
+  targetSerializerVersion: UnsignedByte!
+  totalReleases: Int!
+  processedReleases: Int!
+  failedReleases: Int!
+  skippedReleases: Int!
+  bytesSaved: Long!
+  bytesGrown: Long!
+}
+
+type UserGql {
+  id: UUID!
+  firstName: String!
+  middleName: String
+  lastName: String!
+  email: String!
+  isEmailVerified: Boolean!
+  isOnboardingCompleted: Boolean!
+}
+
+"A connection to a list of items."
+type UsersConnection {
+  "Information to aid in pagination."
+  pageInfo: PageInfo!
+  "A list of edges."
+  edges: [UsersEdge!]
+  "A flattened list of the nodes."
+  nodes: [UserGql!]
+  "Identifies the total count of items in the connection."
+  totalCount: Int! @cost(weight: "10")
+}
+
+"An edge in a connection."
+type UsersEdge {
+  "A cursor for use in pagination."
+  cursor: String!
+  "The item at the end of the edge."
+  node: UserGql!
+}
+
+input AuditActorTypeOperationFilterInput {
+  eq: AuditActorType @cost(weight: "10")
+  neq: AuditActorType @cost(weight: "10")
+  in: [AuditActorType!] @cost(weight: "10")
+  nin: [AuditActorType!] @cost(weight: "10")
+}
+
+input AuditLogEntryGqlFilterInput {
+  and: [AuditLogEntryGqlFilterInput!]
+  or: [AuditLogEntryGqlFilterInput!]
+  id: UuidOperationFilterInput
+  tenantId: UuidOperationFilterInput
+  occurredAt: DateTimeOperationFilterInput
+  action: StringOperationFilterInput
+  actorType: AuditActorTypeOperationFilterInput
+  actorId: UuidOperationFilterInput
+  actorDisplay: StringOperationFilterInput
+  targetType: StringOperationFilterInput
+  targetId: StringOperationFilterInput
+  targetName: StringOperationFilterInput
+  outcome: AuditOutcomeOperationFilterInput
+  ipAddress: StringOperationFilterInput
+  metadata: StringOperationFilterInput
+}
+
+input AuditLogEntryGqlSortInput {
+  id: SortEnumType @cost(weight: "10")
+  tenantId: SortEnumType @cost(weight: "10")
+  occurredAt: SortEnumType @cost(weight: "10")
+  action: SortEnumType @cost(weight: "10")
+  actorType: SortEnumType @cost(weight: "10")
+  actorId: SortEnumType @cost(weight: "10")
+  actorDisplay: SortEnumType @cost(weight: "10")
+  targetType: SortEnumType @cost(weight: "10")
+  targetId: SortEnumType @cost(weight: "10")
+  targetName: SortEnumType @cost(weight: "10")
+  outcome: SortEnumType @cost(weight: "10")
+  ipAddress: SortEnumType @cost(weight: "10")
+  metadata: SortEnumType @cost(weight: "10")
+}
+
+input AuditOutcomeOperationFilterInput {
+  eq: AuditOutcome @cost(weight: "10")
+  neq: AuditOutcome @cost(weight: "10")
+  in: [AuditOutcome!] @cost(weight: "10")
+  nin: [AuditOutcome!] @cost(weight: "10")
+}
+
+input BackgroundJobGqlSortInput {
+  id: SortEnumType @cost(weight: "10")
+  jobType: SortEnumType @cost(weight: "10")
+  status: SortEnumType @cost(weight: "10")
+  chunkStoreId: SortEnumType @cost(weight: "10")
+  createdAt: SortEnumType @cost(weight: "10")
+  startedAt: SortEnumType @cost(weight: "10")
+  completedAt: SortEnumType @cost(weight: "10")
+  errorDetails: SortEnumType @cost(weight: "10")
+  rebuildProgress: RebuildJobProgressGqlSortInput @cost(weight: "10")
+  upgradeProgress: UpgradeJobProgressGqlSortInput @cost(weight: "10")
+}
+
+input BooleanOperationFilterInput {
+  eq: Boolean @cost(weight: "10")
+  neq: Boolean @cost(weight: "10")
+}
+
+input ChunkStoreBackendSettingsGqlFilterInput {
+  and: [ChunkStoreBackendSettingsGqlFilterInput!]
+  or: [ChunkStoreBackendSettingsGqlFilterInput!]
+  backendType: StringOperationFilterInput
+  localPath: StringOperationFilterInput
+}
+
+input ChunkStoreBackendSettingsGqlSortInput {
+  backendType: SortEnumType @cost(weight: "10")
+  localPath: SortEnumType @cost(weight: "10")
+}
+
+input ChunkStoreChunkerGqlFilterInput {
+  and: [ChunkStoreChunkerGqlFilterInput!]
+  or: [ChunkStoreChunkerGqlFilterInput!]
+  type: StringOperationFilterInput
+  minChunkSize: IntOperationFilterInput
+  avgChunkSize: IntOperationFilterInput
+  maxChunkSize: IntOperationFilterInput
+}
+
+input ChunkStoreChunkerGqlSortInput {
+  type: SortEnumType @cost(weight: "10")
+  minChunkSize: SortEnumType @cost(weight: "10")
+  avgChunkSize: SortEnumType @cost(weight: "10")
+  maxChunkSize: SortEnumType @cost(weight: "10")
+}
+
+input ChunkStoreChunkerInput {
+  type: String
+  minChunkSize: Int
+  avgChunkSize: Int
+  maxChunkSize: Int
+}
+
+input ChunkStoreGqlFilterInput {
+  and: [ChunkStoreGqlFilterInput!]
+  or: [ChunkStoreGqlFilterInput!]
+  id: UuidOperationFilterInput
+  name: StringOperationFilterInput
+  type: StringOperationFilterInput
+  chunker: ChunkStoreChunkerGqlFilterInput
+  backendSettings: ChunkStoreBackendSettingsGqlFilterInput
+}
+
+input ChunkStoreGqlSortInput {
+  id: SortEnumType @cost(weight: "10")
+  name: SortEnumType @cost(weight: "10")
+  type: SortEnumType @cost(weight: "10")
+  chunker: ChunkStoreChunkerGqlSortInput @cost(weight: "10")
+  backendSettings: ChunkStoreBackendSettingsGqlSortInput @cost(weight: "10")
+}
+
+input CreateChunkStoreInput {
+  name: String!
+  type: String!
+  localPath: String
+  chunker: ChunkStoreChunkerInput
+}
+
+input CreateRepositoryInput {
+  name: String!
+  description: String
+  storageClassName: String
+}
+
+input CreateServiceAccountApiKeyInput {
+  displayName: String!
+  expiresAt: DateTime
+  scopes: [String!]
+}
+
+input CreateServiceAccountInput {
+  name: String!
+}
+
+input CreateTenantInput {
+  name: String!
+  slug: String!
+}
+
+input DateTimeOperationFilterInput {
+  eq: DateTime @cost(weight: "10")
+  neq: DateTime @cost(weight: "10")
+  in: [DateTime] @cost(weight: "10")
+  nin: [DateTime] @cost(weight: "10")
+  gt: DateTime @cost(weight: "10")
+  ngt: DateTime @cost(weight: "10")
+  gte: DateTime @cost(weight: "10")
+  ngte: DateTime @cost(weight: "10")
+  lt: DateTime @cost(weight: "10")
+  nlt: DateTime @cost(weight: "10")
+  lte: DateTime @cost(weight: "10")
+  nlte: DateTime @cost(weight: "10")
+}
+
+input EmailBrevoConfigInput {
+  apiKey: String
+}
+
+input EmailSharedConfigInput {
+  fromEmail: String
+  supportEmail: String
+}
+
+input EmailSmtpConfigInput {
+  host: String
+  port: Int
+  username: String
+  password: String
+  security: String
+}
+
+input IntOperationFilterInput {
+  eq: Int @cost(weight: "10")
+  neq: Int @cost(weight: "10")
+  in: [Int] @cost(weight: "10")
+  nin: [Int] @cost(weight: "10")
+  gt: Int @cost(weight: "10")
+  ngt: Int @cost(weight: "10")
+  gte: Int @cost(weight: "10")
+  ngte: Int @cost(weight: "10")
+  lt: Int @cost(weight: "10")
+  nlt: Int @cost(weight: "10")
+  lte: Int @cost(weight: "10")
+  nlte: Int @cost(weight: "10")
+}
+
+input InviteTenantMemberInput {
+  email: String!
+  roles: [String!]!
+}
+
+input ListFilterInputTypeOfReleaseCustomPropertyGqlFilterInput {
+  all: ReleaseCustomPropertyGqlFilterInput @cost(weight: "10")
+  none: ReleaseCustomPropertyGqlFilterInput @cost(weight: "10")
+  some: ReleaseCustomPropertyGqlFilterInput @cost(weight: "10")
+  any: Boolean @cost(weight: "10")
+}
+
+input RebuildJobProgressGqlSortInput {
+  totalBuckets: SortEnumType @cost(weight: "10")
+  processedBuckets: SortEnumType @cost(weight: "10")
+  failedBuckets: SortEnumType @cost(weight: "10")
+}
+
+input ReleaseCustomPropertyGqlFilterInput {
+  and: [ReleaseCustomPropertyGqlFilterInput!]
+  or: [ReleaseCustomPropertyGqlFilterInput!]
+  key: StringOperationFilterInput
+  value: StringOperationFilterInput
+}
+
+input ReleaseGqlFilterInput {
+  and: [ReleaseGqlFilterInput!]
+  or: [ReleaseGqlFilterInput!]
+  id: UuidOperationFilterInput
+  version: StringOperationFilterInput
+  createdAt: DateTimeOperationFilterInput
+  notes: StringOperationFilterInput
+  repoId: UuidOperationFilterInput
+  customProperties: ListFilterInputTypeOfReleaseCustomPropertyGqlFilterInput
+}
+
+input ReleaseGqlSortInput {
+  id: SortEnumType @cost(weight: "10")
+  version: SortEnumType @cost(weight: "10")
+  createdAt: SortEnumType @cost(weight: "10")
+  notes: SortEnumType @cost(weight: "10")
+  repoId: SortEnumType @cost(weight: "10")
+}
+
+input RepositoryGqlFilterInput {
+  and: [RepositoryGqlFilterInput!]
+  or: [RepositoryGqlFilterInput!]
+  id: UuidOperationFilterInput
+  name: StringOperationFilterInput
+  description: StringOperationFilterInput
+  storageClass: StringOperationFilterInput
+  chunker: ChunkStoreChunkerGqlFilterInput
+  createdAt: DateTimeOperationFilterInput
+}
+
+input RepositoryGqlSortInput {
+  id: SortEnumType @cost(weight: "10")
+  name: SortEnumType @cost(weight: "10")
+  description: SortEnumType @cost(weight: "10")
+  storageClass: SortEnumType @cost(weight: "10")
+  chunker: ChunkStoreChunkerGqlSortInput @cost(weight: "10")
+  createdAt: SortEnumType @cost(weight: "10")
+}
+
+input ServiceAccountGqlFilterInput {
+  and: [ServiceAccountGqlFilterInput!]
+  or: [ServiceAccountGqlFilterInput!]
+  id: UuidOperationFilterInput
+  name: StringOperationFilterInput
+  createdAt: DateTimeOperationFilterInput
+}
+
+input ServiceAccountGqlSortInput {
+  id: SortEnumType @cost(weight: "10")
+  name: SortEnumType @cost(weight: "10")
+  createdAt: SortEnumType @cost(weight: "10")
+}
+
+input SetDomainConfigInput {
+  baseUrl: String
+}
+
+input SetEmailConfigInput {
+  provider: String
+  shared: EmailSharedConfigInput
+  brevo: EmailBrevoConfigInput
+  smtp: EmailSmtpConfigInput
+}
+
+input SetStorageClassDefaultMappingsInput {
+  mappings: [StorageClassDefaultMappingInput!]!
+}
+
+input SetTenancyConfigInput {
+  mode: String
+  defaultTenantId: String
+}
+
+input StorageClassDefaultMappingInput {
+  storageClassName: String!
+  chunkStoreId: UUID!
+  isDefault: Boolean!
+  isEnabled: Boolean!
+}
+
+input StringOperationFilterInput {
+  and: [StringOperationFilterInput!]
+  or: [StringOperationFilterInput!]
+  eq: String @cost(weight: "10")
+  neq: String @cost(weight: "10")
+  contains: String @cost(weight: "20")
+  ncontains: String @cost(weight: "20")
+  in: [String] @cost(weight: "10")
+  nin: [String] @cost(weight: "10")
+  startsWith: String @cost(weight: "20")
+  nstartsWith: String @cost(weight: "20")
+  endsWith: String @cost(weight: "20")
+  nendsWith: String @cost(weight: "20")
+}
+
+input TenantGqlFilterInput {
+  and: [TenantGqlFilterInput!]
+  or: [TenantGqlFilterInput!]
+  id: UuidOperationFilterInput
+  name: StringOperationFilterInput
+  slug: StringOperationFilterInput
+  createdAt: DateTimeOperationFilterInput
+  joinedAt: DateTimeOperationFilterInput
+}
+
+input TenantGqlSortInput {
+  id: SortEnumType @cost(weight: "10")
+  name: SortEnumType @cost(weight: "10")
+  slug: SortEnumType @cost(weight: "10")
+  createdAt: SortEnumType @cost(weight: "10")
+  joinedAt: SortEnumType @cost(weight: "10")
+}
+
+input UpdateRepositoryInput {
+  repoId: UUID!
+  name: String = ""
+  description: String
+}
+
+input UpdateServiceAccountInput {
+  id: UUID!
+  name: String = ""
+}
+
+input UpdateTenantInput {
+  tenantId: UUID!
+  name: String = ""
+  slug: String = ""
+}
+
+input UpgradeJobProgressGqlSortInput {
+  targetSerializerVersion: SortEnumType @cost(weight: "10")
+  totalReleases: SortEnumType @cost(weight: "10")
+  processedReleases: SortEnumType @cost(weight: "10")
+  failedReleases: SortEnumType @cost(weight: "10")
+  skippedReleases: SortEnumType @cost(weight: "10")
+  bytesSaved: SortEnumType @cost(weight: "10")
+  bytesGrown: SortEnumType @cost(weight: "10")
+}
+
+input UserGqlFilterInput {
+  and: [UserGqlFilterInput!]
+  or: [UserGqlFilterInput!]
+  id: UuidOperationFilterInput
+  firstName: StringOperationFilterInput
+  middleName: StringOperationFilterInput
+  lastName: StringOperationFilterInput
+  email: StringOperationFilterInput
+  isEmailVerified: BooleanOperationFilterInput
+  isOnboardingCompleted: BooleanOperationFilterInput
+}
+
+input UserGqlSortInput {
+  id: SortEnumType @cost(weight: "10")
+  firstName: SortEnumType @cost(weight: "10")
+  middleName: SortEnumType @cost(weight: "10")
+  lastName: SortEnumType @cost(weight: "10")
+  email: SortEnumType @cost(weight: "10")
+  isEmailVerified: SortEnumType @cost(weight: "10")
+  isOnboardingCompleted: SortEnumType @cost(weight: "10")
+}
+
+input UuidOperationFilterInput {
+  eq: UUID @cost(weight: "10")
+  neq: UUID @cost(weight: "10")
+  in: [UUID] @cost(weight: "10")
+  nin: [UUID] @cost(weight: "10")
+  gt: UUID @cost(weight: "10")
+  ngt: UUID @cost(weight: "10")
+  gte: UUID @cost(weight: "10")
+  ngte: UUID @cost(weight: "10")
+  lt: UUID @cost(weight: "10")
+  nlt: UUID @cost(weight: "10")
+  lte: UUID @cost(weight: "10")
+  nlte: UUID @cost(weight: "10")
+}
+
+"Defines when a policy shall be executed."
+enum ApplyPolicy {
+  "Before the resolver was executed."
+  BEFORE_RESOLVER
+  "After the resolver was executed."
+  AFTER_RESOLVER
+  "The policy is applied in the validation step before the execution."
+  VALIDATION
+}
+
+enum AuditActorType {
+  USER
+  SERVICE_ACCOUNT
+  SYSTEM
+  ANONYMOUS
+}
+
+enum AuditOutcome {
+  SUCCESS
+  DENIED
+  FAILED
+}
+
+enum SortEnumType {
+  ASC
+  DESC
+}
+
+"The `DateTime` scalar type represents a date and time with time zone offset information."
+scalar DateTime
+  @specifiedBy(url: "https://scalars.graphql.org/chillicream/date-time.html")
+
+"The `Long` scalar type represents a signed 64-bit integer."
+scalar Long
+  @specifiedBy(url: "https://scalars.graphql.org/chillicream/long.html")
+
+"The `Short` scalar type represents a signed 16-bit integer."
+scalar Short
+  @specifiedBy(url: "https://scalars.graphql.org/chillicream/short.html")
+
+"The `UnsignedByte` scalar type represents an unsigned 8-bit integer."
+scalar UnsignedByte
+  @specifiedBy(
+    url: "https://scalars.graphql.org/chillicream/unsigned-byte.html"
+  )
+
+"The `UnsignedLong` scalar type represents an unsigned 64-bit integer."
+scalar UnsignedLong
+  @specifiedBy(
+    url: "https://scalars.graphql.org/chillicream/unsigned-long.html"
+  )
+
+"The `UUID` scalar type represents a Universally Unique Identifier (UUID) as defined by RFC 9562."
+scalar UUID
+  @specifiedBy(url: "https://scalars.graphql.org/chillicream/uuid.html")
+
+"The authorize directive."
+directive @authorize(
+  "The name of the authorization policy that determines access to the annotated resource."
+  policy: String
+  "Roles that are allowed to access the annotated resource."
+  roles: [String!]
+  "Defines when the authorize directive shall be applied. By default the authorize directive is applied before the resolver is executed."
+  apply: ApplyPolicy! = BEFORE_RESOLVER
+) repeatable on OBJECT | FIELD_DEFINITION
+
+"The purpose of the `cost` directive is to define a `weight` for GraphQL types, fields, and arguments. Static analysis can use these weights when calculating the overall cost of a query or response."
+directive @cost(
+  "The `weight` argument defines what value to add to the overall cost for every appearance, or possible appearance, of a type, field, argument, etc."
+  weight: String!
+) on
+  | SCALAR
+  | OBJECT
+  | FIELD_DEFINITION
+  | ARGUMENT_DEFINITION
+  | ENUM
+  | INPUT_FIELD_DEFINITION
+
+"The purpose of the `@listSize` directive is to either inform the static analysis about the size of returned lists (if that information is statically available), or to point the analysis to where to find that information."
+directive @listSize(
+  "The `assumedSize` argument can be used to statically define the maximum length of a list returned by a field."
+  assumedSize: Int
+  "The `slicingArguments` argument can be used to define which of the field's arguments with numeric type are slicing arguments, so that their value determines the size of the list returned by that field. It may specify a list of multiple slicing arguments."
+  slicingArguments: [String!]
+  "The `slicingArgumentDefaultValue` argument can be used to define a default value for a slicing argument, which is used if the argument is not present in a query."
+  slicingArgumentDefaultValue: Int
+  "The `sizedFields` argument can be used to define that the value of the `assumedSize` argument or of a slicing argument does not affect the size of a list returned by a field itself, but that of a list returned by one of its sub-fields."
+  sizedFields: [String!]
+  "The `requireOneSlicingArgument` argument can be used to inform the static analysis that it should expect that exactly one of the defined slicing arguments is present in a query. If that is not the case (i.e., if none or multiple slicing arguments are present), the static analysis may throw an error."
+  requireOneSlicingArgument: Boolean = true
+) on FIELD_DEFINITION

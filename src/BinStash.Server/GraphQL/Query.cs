@@ -13,12 +13,16 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Server.GraphQL.Features.Audit;
 using BinStash.Server.GraphQL.Features.ChunkStores;
+using BinStash.Server.GraphQL.Features.Instance;
 using BinStash.Server.GraphQL.Features.Jobs;
 using BinStash.Server.GraphQL.Features.Releases;
 using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
+using BinStash.Server.GraphQL.Features.StorageClasses;
 using BinStash.Server.GraphQL.Features.Tenants;
+using BinStash.Server.GraphQL.Features.Usage;
 using BinStash.Server.GraphQL.Features.Users;
 
 namespace BinStash.Server.GraphQL;
@@ -67,4 +71,49 @@ public class Query
     
     public Task<BackgroundJobGql?> GetBackgroundJob(Guid id, [Service] BackgroundJobService service, CancellationToken cancellationToken)
         => service.GetBackgroundJobAsync(id, cancellationToken);
+
+    public Task<InstanceStatsGql> GetInstanceStats([Service] InstanceQueryService service, CancellationToken cancellationToken)
+        => service.GetInstanceStatsAsync(cancellationToken);
+
+    public Task<EmailConfigGql> GetEmailConfig([Service] InstanceQueryService service)
+        => service.GetEmailConfigAsync();
+
+    public Task<TenancyConfigGql> GetTenancyConfig([Service] InstanceQueryService service)
+        => service.GetTenancyConfigAsync();
+
+    public Task<DomainConfigGql> GetDomainConfig([Service] InstanceQueryService service)
+        => service.GetDomainConfigAsync();
+
+    public Task<List<StorageClassDetailsGql>> GetStorageClasses([Service] StorageClassQueryService service, CancellationToken cancellationToken)
+        => service.GetStorageClassesAsync(cancellationToken);
+
+    public Task<List<StorageClassDefaultMappingGql>> GetStorageClassDefaultMappings([Service] StorageClassQueryService service, CancellationToken cancellationToken)
+        => service.GetStorageClassDefaultMappingsAsync(cancellationToken);
+
+    public Task<List<ApiKeyInfoGql>> GetServiceAccountApiKeys(Guid serviceAccountId, [Service] ServiceAccountQueryService service, CancellationToken cancellationToken)
+        => service.GetApiKeysAsync(serviceAccountId, cancellationToken);
+
+    public Task<List<TenantMemberGql>> GetTenantMembers([Service] TenantQueryService service, CancellationToken cancellationToken)
+        => service.GetTenantMembersAsync(cancellationToken);
+
+    public Task<List<TenantStorageClassGql>> GetTenantStorageClasses([Service] TenantQueryService service, CancellationToken cancellationToken)
+        => service.GetTenantStorageClassesAsync(cancellationToken);
+
+    public Task<TenantInvitationPreviewGql?> GetTenantInvitationPreview(Guid tenantId, string code, [Service] TenantQueryService service, CancellationToken cancellationToken)
+        => service.GetTenantInvitationPreviewAsync(tenantId, code, cancellationToken);
+
+    public Task<ChunkStoreStatsGql?> GetChunkStoreStats(Guid chunkStoreId, [Service] ChunkStoreQueryService service, CancellationToken cancellationToken)
+        => service.GetChunkStoreStatsAsync(chunkStoreId, cancellationToken);
+
+    public Task<List<ChunkStoreTypeInfoGql>> GetEnabledChunkStoreTypes([Service] ChunkStoreQueryService service)
+        => service.GetEnabledChunkStoreTypesAsync();
+
+    public Task<TenantUsageGql> GetTenantUsage([Service] UsageQueryService service, CancellationToken cancellationToken)
+        => service.GetTenantUsageAsync(cancellationToken);
+
+    public Task<IQueryable<AuditLogEntryGql>> GetAuditLog([Service] AuditQueryService service)
+        => service.GetTenantAuditLogAsync();
+
+    public Task<IQueryable<AuditLogEntryGql>> GetInstanceAuditLog([Service] AuditQueryService service)
+        => service.GetInstanceAuditLogAsync();
 }

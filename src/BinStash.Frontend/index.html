@@ -1,20 +1,29 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>BinStash</title>
-  </head>
-  <body class="font-inter antialiased bg-gray-100 dark:bg-gray-900 text-gray-600 dark:text-gray-400">
     <script>
-        if (localStorage.getItem('sidebar-expanded') == 'true') {
-            document.querySelector('body').classList.add('sidebar-expanded');
-        } else {
-            document.querySelector('body').classList.remove('sidebar-expanded');
+      // Resolve the theme before first paint so a reload never flashes the wrong one.
+      // Mirrors the logic in stores/theme.ts; keep the storage key in sync.
+      ;(() => {
+        try {
+          const stored = localStorage.getItem('binstash.theme')
+          const dark =
+            stored === 'dark' ||
+            (stored !== 'light' && !window.matchMedia('(prefers-color-scheme: light)').matches)
+          document.documentElement.classList.toggle('dark', dark)
+        } catch {
+          /* private mode — fall back to the dark default already on <html> */
         }
+      })()
     </script>
+  </head>
+  <body>
     <div id="app"></div>
-    <script type="module" src="/src/app/main.ts"></script>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

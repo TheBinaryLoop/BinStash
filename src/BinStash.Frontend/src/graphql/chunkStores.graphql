@@ -1,0 +1,102 @@
+fragment ChunkStoreSummary on ChunkStoreGql {
+  id
+  name
+  type
+  chunker { type minChunkSize avgChunkSize maxChunkSize }
+  backendSettings { backendType localPath }
+}
+
+query ChunkStores($first: Int, $after: String, $where: ChunkStoreGqlFilterInput) {
+  chunkStores(first: $first, after: $after, where: $where, order: [{ name: ASC }]) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes { ...ChunkStoreSummary }
+  }
+}
+
+query ChunkStore($id: UUID!) {
+  chunkStore(id: $id) { ...ChunkStoreSummary }
+}
+
+query ChunkStoreStats($chunkStoreId: UUID!) {
+  chunkStoreStats(chunkStoreId: $chunkStoreId) { totalChunks }
+}
+
+query EnabledChunkStoreTypes {
+  enabledChunkStoreTypes { name value }
+}
+
+fragment BackgroundJobSummary on BackgroundJobGql {
+  id
+  jobType
+  status
+  chunkStoreId
+  createdAt
+  startedAt
+  completedAt
+  errorDetails
+  rebuildProgress { totalBuckets processedBuckets failedBuckets }
+  upgradeProgress {
+    targetSerializerVersion
+    totalReleases
+    processedReleases
+    failedReleases
+    skippedReleases
+    bytesSaved
+    bytesGrown
+  }
+}
+
+query BackgroundJobs($first: Int, $after: String, $jobType: String, $chunkStoreId: UUID) {
+  backgroundJobs(
+    first: $first
+    after: $after
+    jobType: $jobType
+    chunkStoreId: $chunkStoreId
+    order: [{ createdAt: DESC }]
+  ) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes { ...BackgroundJobSummary }
+  }
+}
+
+query BackgroundJob($id: UUID!) {
+  backgroundJob(id: $id) { ...BackgroundJobSummary }
+}
+
+mutation CreateChunkStore($input: CreateChunkStoreInput!) {
+  createChunkStore(input: $input) { ...ChunkStoreSummary }
+}
+
+mutation RebuildChunkStore($chunkStoreId: UUID!) {
+  rebuildChunkStore(chunkStoreId: $chunkStoreId) { ...BackgroundJobSummary }
+}
+
+mutation UpgradeChunkStore($chunkStoreId: UUID!) {
+  upgradeChunkStore(chunkStoreId: $chunkStoreId) { ...BackgroundJobSummary }
+}
+
+mutation CancelBackgroundJob($jobId: UUID!) {
+  cancelBackgroundJob(jobId: $jobId) { ...BackgroundJobSummary }
+}
+
+subscription BackgroundJobProgress($jobId: UUID!) {
+  backgroundJobProgress(jobId: $jobId) {
+    jobId
+    jobType
+    status
+    totalReleases
+    processedReleases
+    failedReleases
+    skippedReleases
+    bytesSaved
+    bytesGrown
+    totalBuckets
+    processedBuckets
+    failedBuckets
+    chunkStoreId
+    startedAt
+    completedAt
+  }
+}
