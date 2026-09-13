@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "pnpm run codegen && vite",
+    "build": "pnpm run codegen && vite build",
     "preview": "vite preview",
-    "typecheck": "vue-tsc --noEmit",
+    "typecheck": "pnpm run codegen && vue-tsc --noEmit",
     "codegen": "graphql-codegen --config codegen.ts",
     "codegen:watch": "graphql-codegen --config codegen.ts --watch",
     "schema": "dotnet run --project ../BinStash.Server -- --export-schema ./schema.graphql"
