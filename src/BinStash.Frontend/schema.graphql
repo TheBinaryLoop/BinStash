@@ -234,6 +234,12 @@ type Mutation {
   upgradeChunkStore(chunkStoreId: UUID!): BackgroundJobGql
     @authorize
     @cost(weight: "10")
+  collectChunkStoreGarbage(
+    chunkStoreId: UUID!
+    dryRun: Boolean! = false
+    skipReclaim: Boolean! = false
+    retentionHours: Float
+  ): BackgroundJobGql @authorize @cost(weight: "10")
   cancelBackgroundJob(jobId: UUID!): BackgroundJobGql
     @authorize
     @cost(weight: "10")
@@ -343,6 +349,7 @@ type BackgroundJobGql {
   errorDetails: String
   rebuildProgress: RebuildJobProgressGql
   upgradeProgress: UpgradeJobProgressGql
+  gcProgress: GcJobProgressGql
 }
 
 type BackgroundJobProgressDto {
@@ -464,6 +471,24 @@ type EmailSmtpConfigGql {
   username: String
   password: String
   security: String
+}
+
+type GcJobProgressGql {
+  phase: String!
+  totalBuckets: Int!
+  processedBuckets: Int!
+  totalReleases: Int!
+  markedReleases: Int!
+  reachableObjects: Long!
+  quarantinedObjects: Long!
+  quarantinedBytes: Long!
+  reclaimedObjects: Long!
+  reclaimedBytes: Long!
+  packsCompacted: Int!
+  packsDeleted: Int!
+  packBytesDeleted: Long!
+  resurrectedObjects: Long!
+  dryRun: Boolean!
 }
 
 "A connection to a list of items."
@@ -842,6 +867,7 @@ input BackgroundJobGqlSortInput {
   errorDetails: SortEnumType @cost(weight: "10")
   rebuildProgress: RebuildJobProgressGqlSortInput @cost(weight: "10")
   upgradeProgress: UpgradeJobProgressGqlSortInput @cost(weight: "10")
+  gcProgress: GcJobProgressGqlSortInput @cost(weight: "10")
 }
 
 input BooleanOperationFilterInput {
@@ -960,6 +986,24 @@ input EmailSmtpConfigInput {
   username: String
   password: String
   security: String
+}
+
+input GcJobProgressGqlSortInput {
+  phase: SortEnumType @cost(weight: "10")
+  totalBuckets: SortEnumType @cost(weight: "10")
+  processedBuckets: SortEnumType @cost(weight: "10")
+  totalReleases: SortEnumType @cost(weight: "10")
+  markedReleases: SortEnumType @cost(weight: "10")
+  reachableObjects: SortEnumType @cost(weight: "10")
+  quarantinedObjects: SortEnumType @cost(weight: "10")
+  quarantinedBytes: SortEnumType @cost(weight: "10")
+  reclaimedObjects: SortEnumType @cost(weight: "10")
+  reclaimedBytes: SortEnumType @cost(weight: "10")
+  packsCompacted: SortEnumType @cost(weight: "10")
+  packsDeleted: SortEnumType @cost(weight: "10")
+  packBytesDeleted: SortEnumType @cost(weight: "10")
+  resurrectedObjects: SortEnumType @cost(weight: "10")
+  dryRun: SortEnumType @cost(weight: "10")
 }
 
 input IntOperationFilterInput {

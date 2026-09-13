@@ -83,6 +83,11 @@ public sealed class MutationType : ObjectType<Mutation>
             .Authorize();
 
         descriptor
+            .Field(x => x.CollectChunkStoreGarbage(Guid.Empty, null!, CancellationToken.None, false, false, null))
+            .Type<ObjectType<BackgroundJobGql>>()
+            .Authorize();
+
+        descriptor
             .Field(x => x.CancelBackgroundJob(Guid.Empty, null!, CancellationToken.None))
             .Type<ObjectType<BackgroundJobGql>>()
             .Authorize();

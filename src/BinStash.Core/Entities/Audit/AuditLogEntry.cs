@@ -113,6 +113,7 @@ public static class AuditActions
 
     public const string ChunkStoreCreated = "chunk_store.created";
     public const string ChunkStoreRebuildStarted = "chunk_store.rebuild.started";
+    public const string ChunkStoreGcStarted = "chunk_store.gc.started";
     public const string ChunkStoreUpgradeStarted = "chunk_store.upgrade.started";
 
     public const string InstanceEmailConfigChanged = "instance.email_config.changed";

@@ -30,7 +30,7 @@ public sealed class ChunkStoreService : IChunkStoreService
         _storageFactory = storageFactory;
     }
 
-    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData)
+    public async Task<(bool Success, bool WasNew, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData)
     {
         ArgumentNullException.ThrowIfNull(store);
 
@@ -58,7 +58,7 @@ public sealed class ChunkStoreService : IChunkStoreService
         return await storage.RetrieveChunkAsync(chunkId);
     }
 
-    public Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob)
+    public Task<(bool Success, Hash32 FileHash, bool WasNew, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob)
     {
         if (recordBlob.IsEmpty)
             throw new ArgumentException("Record blob cannot be empty.", nameof(recordBlob));

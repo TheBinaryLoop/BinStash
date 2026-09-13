@@ -22,13 +22,13 @@ namespace BinStash.Server.Services.ChunkStores;
 
 public interface IChunkStoreService
 {
-    Task<(bool Success, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData);
+    Task<(bool Success, bool WasNew, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData);
     Task<byte[]?> RetrieveChunkAsync(ChunkStore store, string chunkId);
     /// <summary>
     /// Stores a serialised <c>FileDefinitionRecord</c> blob in the pack store.
     /// The index key is the <c>FileHash</c> embedded in the record (BLAKE3 of the original file bytes).
     /// </summary>
-    Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob);
+    Task<(bool Success, Hash32 FileHash, bool WasNew, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> recordBlob);
 
     /// <summary>
     /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its file hash

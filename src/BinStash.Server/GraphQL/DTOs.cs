@@ -170,6 +170,9 @@ public sealed class BackgroundJobGql
 
     /// <summary>Progress data for <c>ReleaseUpgrade</c> jobs.</summary>
     public UpgradeJobProgressGql? UpgradeProgress { get; init; }
+
+    /// <summary>Progress data for <c>ChunkStoreGc</c> jobs.</summary>
+    public GcJobProgressGql? GcProgress { get; init; }
 }
 
 public sealed class SendTestEmailResultGql
@@ -313,6 +316,57 @@ public sealed class RebuildJobProgressGql
     public int TotalBuckets { get; init; }
     public int ProcessedBuckets { get; init; }
     public int FailedBuckets { get; init; }
+}
+
+/// <summary>
+/// Progress of an online chunk-store garbage-collection run.
+///
+/// <para>
+/// Quarantined and reclaimed are deliberately separate numbers. Quarantining is reversible and
+/// happens in the run that finds the content unreachable; reclaiming destroys bytes and happens
+/// only once the retention window has passed, usually in a later run. A run that reports a large
+/// quarantine and no reclaim has not failed — it has not waited long enough yet.
+/// </para>
+/// </summary>
+public sealed class GcJobProgressGql
+{
+    /// <summary>Current phase: Snapshot, Mark, Sweep, Reclaim or Completed.</summary>
+    public required string Phase { get; init; }
+
+    public int TotalBuckets { get; init; }
+    public int ProcessedBuckets { get; init; }
+    public int TotalReleases { get; init; }
+    public int MarkedReleases { get; init; }
+
+    /// <summary>Distinct objects found reachable from the releases on this store.</summary>
+    public long ReachableObjects { get; init; }
+
+    /// <summary>Objects hidden from deduplication by this run. Still recoverable.</summary>
+    public long QuarantinedObjects { get; init; }
+    public long QuarantinedBytes { get; init; }
+
+    /// <summary>Objects whose bytes this run destroyed.</summary>
+    public long ReclaimedObjects { get; init; }
+
+    /// <summary>
+    /// Size of the dead pack entries this run dropped. Not the same as space returned to the
+    /// volume — see <see cref="PackBytesDeleted"/> for that.
+    /// </summary>
+    public long ReclaimedBytes { get; init; }
+
+    public int PacksCompacted { get; init; }
+    public int PacksDeleted { get; init; }
+
+    /// <summary>Bytes actually returned to the filesystem by unlinking superseded pack files.</summary>
+    public long PackBytesDeleted { get; init; }
+
+    /// <summary>
+    /// Quarantined objects an ingest needed again and took back. Persistently non-zero means the
+    /// retention window is short relative to how long ingests run.
+    /// </summary>
+    public long ResurrectedObjects { get; init; }
+
+    public bool DryRun { get; init; }
 }
 
 public sealed class UpgradeJobProgressGql

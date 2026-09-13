@@ -21,6 +21,7 @@ using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
 using BinStash.Core.Storage;
+using BinStash.Core.Storage.Gc;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using BinStash.Infrastructure.Templates;
@@ -103,6 +104,7 @@ public static class Program
         builder.Services.AddSingleton<IValidateOptions<JwtSettings>, JwtSettingsValidator>();
         builder.Services.AddOptions<JwtSettings>().ValidateOnStart();
         builder.Services.Configure<StorageSettings>(builder.Configuration.GetSection("Storage"));
+        builder.Services.Configure<GarbageCollectionOptions>(builder.Configuration.GetSection(GarbageCollectionOptions.SectionName));
         builder.Services.AddSingleton<IValidateOptions<StorageSettings>, StorageSettingsValidator>();
         builder.Services.AddOptions<StorageSettings>().ValidateOnStart();
         builder.Services.Configure<VersionGateSettings>(builder.Configuration.GetSection("VersionGate"));
@@ -279,6 +281,14 @@ public static class Program
         builder.Services.AddSingleton<RebuildJobChannel>();
         builder.Services.AddScoped<IChunkStoreRebuildService, ChunkStoreRebuildService>();
         builder.Services.AddHostedService<ChunkStoreRebuildBackgroundService>();
+
+        // Chunk-store garbage collection: GcJobChannel → ChunkStoreGcBackgroundService → ChunkStoreGcService.
+        // GcQuarantineService is on the ingest hot path too — it is what lets an ingest that was
+        // told "you already have this" recover an object collection has since quarantined.
+        builder.Services.AddSingleton<GcJobChannel>();
+        builder.Services.AddScoped<IChunkStoreGcService, ChunkStoreGcService>();
+        builder.Services.AddScoped<IGcQuarantineService, GcQuarantineService>();
+        builder.Services.AddHostedService<ChunkStoreGcBackgroundService>();
 
         builder.Services.AddGraphQLServer()
             // Cost limits are enforced: the schema exposes filtering/sorting/paging to every

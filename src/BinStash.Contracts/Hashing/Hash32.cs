@@ -22,6 +22,9 @@ namespace BinStash.Contracts.Hashing;
 [JsonConverter(typeof(Hash32TypeConverter))]
 public readonly struct Hash32 : IEquatable<Hash32>, IComparable<Hash32>
 {
+    /// <summary>Size of the hash in bytes.</summary>
+    public const int Size = 32;
+
     private readonly ulong _h0, _h1, _h2, _h3; // pack 32 bytes into 4x ulong
 
     public Hash32(byte[] bytes) : this(bytes.AsSpan())

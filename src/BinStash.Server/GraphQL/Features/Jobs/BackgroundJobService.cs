@@ -131,6 +131,45 @@ public sealed class BackgroundJobService(
                 RebuildProgress = rebuildProgress,
             };
         }
+        else if (job.JobType == BackgroundJobTypes.ChunkStoreGc)
+        {
+            var jobData = job.JobData is not null
+                ? JsonSerializer.Deserialize<ChunkStoreGcJobData>(job.JobData)
+                : null;
+            var progress = job.ProgressData is not null
+                ? JsonSerializer.Deserialize<ChunkStoreGcProgressData>(job.ProgressData)
+                : null;
+
+            return new BackgroundJobGql
+            {
+                Id = job.Id,
+                JobType = job.JobType,
+                Status = job.Status.ToString(),
+                ChunkStoreId = jobData?.ChunkStoreId ?? Guid.Empty,
+                CreatedAt = job.CreatedAt,
+                StartedAt = job.StartedAt,
+                CompletedAt = job.CompletedAt,
+                ErrorDetails = job.ErrorDetails,
+                GcProgress = new GcJobProgressGql
+                {
+                    Phase = progress?.Phase ?? ChunkStoreGcPhases.Pending,
+                    TotalBuckets = progress?.TotalBuckets ?? 0,
+                    ProcessedBuckets = progress?.ProcessedBuckets ?? 0,
+                    TotalReleases = progress?.TotalReleases ?? 0,
+                    MarkedReleases = progress?.MarkedReleases ?? 0,
+                    ReachableObjects = progress?.ReachableObjects ?? 0,
+                    QuarantinedObjects = progress?.QuarantinedObjects ?? 0,
+                    QuarantinedBytes = progress?.QuarantinedBytes ?? 0,
+                    ReclaimedObjects = progress?.ReclaimedObjects ?? 0,
+                    ReclaimedBytes = progress?.ReclaimedBytes ?? 0,
+                    PacksCompacted = progress?.PacksCompacted ?? 0,
+                    PacksDeleted = progress?.PacksDeleted ?? 0,
+                    PackBytesDeleted = progress?.PackBytesDeleted ?? 0,
+                    ResurrectedObjects = progress?.ResurrectedObjects ?? 0,
+                    DryRun = jobData?.DryRun ?? false
+                }
+            };
+        }
         else if (job.JobType == BackgroundJobTypes.ReleaseUpgrade)
         {
             var jobData = job.JobData is not null

@@ -83,6 +83,7 @@ public class IngestMeterTests : IDisposable
             chunkStoreService,
             authorizationService,
             meteringService,
+            new GcQuarantineService(_db, NullLogger<GcQuarantineService>.Instance),
             NullLogger<IngestGrpcService>.Instance);
 
         var stream = new SingleItemAsyncStreamReader<UploadChunkRequest>(request);
@@ -112,14 +113,14 @@ public class IngestMeterTests : IDisposable
 
     private sealed class AlwaysSucceedChunkStoreService : IChunkStoreService
     {
-        public Task<(bool Success, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData)
-            => Task.FromResult((true, chunkData.Length));
+        public Task<(bool Success, bool WasNew, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData)
+            => Task.FromResult((true, true, chunkData.Length));
 
         public Task<byte[]?> RetrieveChunkAsync(ChunkStore store, string chunkId)
             => Task.FromResult<byte[]?>(null);
 
-        public Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> data)
-            => Task.FromResult((true, default(Hash32), data.Length));
+        public Task<(bool Success, Hash32 FileHash, bool WasNew, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> data)
+            => Task.FromResult((true, default(Hash32), true, data.Length));
 
         public Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string fileHash)
             => Task.FromResult<byte[]?>(null);

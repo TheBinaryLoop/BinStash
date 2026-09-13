@@ -15,8 +15,11 @@
 
 using System.Collections.Concurrent;
 using BinStash.Contracts.Hashing;
+using BinStash.Core.Storage.Gc;
 using BinStash.Core.Storage.Stats;
+using BinStash.Core.Entities;
 using BinStash.Infrastructure.Storage.FileDefinition;
+using BinStash.Infrastructure.Storage.Gc;
 using BinStash.Infrastructure.Storage.Indexing;
 using BinStash.Infrastructure.Storage.Packing;
 using BinStash.Infrastructure.Storage.Stats;
@@ -29,8 +32,13 @@ namespace BinStash.Infrastructure.Storage;
 /// </summary>
 public class ObjectStore : IDisposable, IAsyncDisposable
 {
-    private const long MaxPackSize = 4L * 1024 * 1024 * 1024; // 4 GiB max pack file size
-    
+    /// <summary>
+    /// Default pack file size cap. Pack files are append-only and rotate at this size; keeping
+    /// them bounded is what lets compaction rewrite one without reading the whole bucket.
+    /// </summary>
+    public const long DefaultMaxPackSize = 4L * 1024 * 1024 * 1024; // 4 GiB
+
+    private readonly long _maxPackSize;
     private readonly string _basePath;
     private readonly AsyncLruHandlerCache<HandlerCacheKey> _handlerCache;
     private readonly ConcurrentBag<string> _rebuildFailures = new();
@@ -41,13 +49,22 @@ public class ObjectStore : IDisposable, IAsyncDisposable
     /// </summary>
     public IReadOnlyList<string> RebuildFailures => _rebuildFailures.ToArray();
 
-    public ObjectStore(string basePath, int maxOpenHandlers = 256)
+    /// <param name="basePath">Root directory of the store.</param>
+    /// <param name="maxOpenHandlers">Upper bound on simultaneously open bucket handlers.</param>
+    /// <param name="maxPackSize">
+    /// Pack file rotation size. Overridable mainly so tests can exercise rollover and compaction
+    /// without writing gigabytes; production has no reason to move off the default.
+    /// </param>
+    public ObjectStore(string basePath, int maxOpenHandlers = 256, long maxPackSize = DefaultMaxPackSize)
     {
         if (string.IsNullOrEmpty(basePath))
             throw new ArgumentException("Storage directory cannot be null or empty.", nameof(basePath));
-        
+
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPackSize);
+
         Directory.CreateDirectory(basePath);
         _basePath = basePath;
+        _maxPackSize = maxPackSize;
 
         _handlerCache = new AsyncLruHandlerCache<HandlerCacheKey>(maxOpenHandlers, CreateHandler);
     }
@@ -56,9 +73,9 @@ public class ObjectStore : IDisposable, IAsyncDisposable
     {
         return key.Category switch
         {
-            "chunks" => new IndexedPackFileHandler(Path.Combine(_basePath, "Chunks", key.Prefix[..2]), "chunks", key.Prefix, MaxPackSize, ComputeHash),
+            "chunks" => new IndexedPackFileHandler(Path.Combine(_basePath, "Chunks", key.Prefix[..2]), "chunks", key.Prefix, _maxPackSize, ComputeHash),
 
-            "fileDefs" => new IndexedPackFileHandler(Path.Combine(_basePath, "FileDefs", key.Prefix[..2]), "fileDefs", key.Prefix, MaxPackSize, ComputeFileDefHash),
+            "fileDefs" => new IndexedPackFileHandler(Path.Combine(_basePath, "FileDefs", key.Prefix[..2]), "fileDefs", key.Prefix, _maxPackSize, ComputeFileDefHash),
 
             _ => throw new NotSupportedException($"Unknown handler category '{key.Category}'.")
         };
@@ -69,6 +86,58 @@ public class ObjectStore : IDisposable, IAsyncDisposable
 
     private ValueTask<HandlerLease> AcquireFileDefHandlerAsync(string prefix, CancellationToken ct = default)
         => _handlerCache.AcquireAsync(new HandlerCacheKey("fileDefs", prefix), ct);
+
+    /// <summary>
+    /// Leases the pack-file handler backing a garbage-collection bucket.
+    /// </summary>
+    internal ValueTask<HandlerLease> AcquireGcHandlerAsync(GcBucketId bucket, CancellationToken ct = default)
+        => _handlerCache.AcquireAsync(new HandlerCacheKey(CategoryName(bucket.Category), bucket.Prefix), ct);
+
+    internal static string CategoryName(GcObjectCategory category) => category switch
+    {
+        GcObjectCategory.Chunk => "chunks",
+        GcObjectCategory.FileDefinition => "fileDefs",
+        _ => throw new ArgumentOutOfRangeException(nameof(category), category, "Unknown GC object category.")
+    };
+
+    /// <summary>
+    /// Scratch space for garbage-collection runs, deliberately inside the store so it shares the
+    /// store's volume and capacity rather than the machine's temp directory.
+    /// </summary>
+    internal string GcWorkingDirectory => Path.Combine(_basePath, ".gc");
+
+    /// <summary>The number of prefix buckets each category is partitioned into.</summary>
+    internal const int PrefixBucketCount = 4096;
+
+    /// <summary>The three-hex-character prefixes, in ascending order.</summary>
+    internal static readonly IReadOnlyList<string> Prefixes =
+        Enumerable.Range(0, PrefixBucketCount).Select(static i => i.ToString("x3")).ToArray();
+
+    /// <summary>
+    /// True when a bucket has at least one pack file. Buckets are created lazily, and on any
+    /// store smaller than a few million objects most of the 8192 are empty — skipping them
+    /// turns a full-store maintenance sweep from 8192 handler opens into a directory listing.
+    /// </summary>
+    internal bool BucketHasData(GcBucketId bucket)
+    {
+        var dir = Path.Combine(_basePath, bucket.Category == GcObjectCategory.Chunk ? "Chunks" : "FileDefs", bucket.Prefix[..2]);
+        if (!Directory.Exists(dir))
+            return false;
+
+        var namePrefix = $"{CategoryName(bucket.Category)}{bucket.Prefix}";
+        return Directory.EnumerateFiles(dir, $"{namePrefix}-*.pack").Any()
+               || File.Exists(Path.Combine(dir, $"{namePrefix}.log"))
+               || Directory.EnumerateFiles(dir, $"{namePrefix}.seg-*.idx").Any();
+    }
+
+    private ObjectStoreGarbageCollector? _garbageCollector;
+
+    /// <summary>
+    /// The online garbage collector for this store. See <see cref="IChunkStoreGarbageCollector"/>
+    /// for the concurrency rules it upholds.
+    /// </summary>
+    public IChunkStoreGarbageCollector GarbageCollector
+        => _garbageCollector ??= new ObjectStoreGarbageCollector(this);
     
     public async Task<bool> RebuildStorageAsync()
     {
@@ -297,7 +366,16 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         return $"{category}/{prefix}: {error?.Message ?? "rebuild failed with no reported error."}";
     }
 
-    public async Task<int> WriteChunkAsync(ReadOnlyMemory<byte> chunkData)
+    /// <summary>
+    /// Stores a chunk, deduplicating on its BLAKE3 hash.
+    /// </summary>
+    /// <returns>
+    /// Whether the chunk's bytes were newly appended, and the physical size of its pack entry.
+    /// The size is reported for an existing chunk too, so a caller can reconcile a database
+    /// catalogue that has fallen behind the store — see
+    /// <see cref="Indexing.IndexedPackFileHandler.WriteIndexedDataAsync"/>.
+    /// </returns>
+    public async Task<(bool WasNew, int Length)> WriteChunkAsync(ReadOnlyMemory<byte> chunkData)
     {
         var hash = ComputeHash(chunkData.Span);
         var stringHash = hash.ToHexString();
@@ -325,16 +403,16 @@ public class ObjectStore : IDisposable, IAsyncDisposable
     /// <c>FileDefinitionRecord.Serialize()</c>).
     /// </param>
     /// <returns>
-    /// The file hash (BLAKE3 of original file content) and the number of compressed bytes
-    /// physically written (0 if the entry already existed).
+    /// The file hash (BLAKE3 of original file content), whether the blob was newly appended,
+    /// and the physical size of its pack entry (reported for an existing entry as well).
     /// </returns>
-    public async Task<(Hash32 FileHash, int BytesWritten)> WriteFileDefinitionAsync(ReadOnlyMemory<byte> blob)
+    public async Task<(Hash32 FileHash, bool WasNew, int BytesWritten)> WriteFileDefinitionAsync(ReadOnlyMemory<byte> blob)
     {
         var fileHash = FileDefinitionRecord.Deserialize(blob.Span).FileHash;
         var prefix   = fileHash.ToHexString()[..3];
         using var lease = await AcquireFileDefHandlerAsync(prefix).ConfigureAwait(false);
-        var written = await lease.Handler.WriteIndexedDataAsync(fileHash, blob).ConfigureAwait(false);
-        return (fileHash, written);
+        var (wasNew, written) = await lease.Handler.WriteIndexedDataAsync(fileHash, blob).ConfigureAwait(false);
+        return (fileHash, wasNew, written);
     }
 
     /// <summary>
@@ -372,6 +450,38 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         return await File.ReadAllBytesAsync(filePath);
     }
     
+    /// <summary>
+    /// Enumerates every stored release package. Streams the directory rather than materialising
+    /// it: a long-lived store holds one file per release ever published.
+    /// </summary>
+    internal async IAsyncEnumerable<GcReleasePackageRef> EnumerateReleasePackagesAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var root = Path.Join(_basePath, "Releases");
+        if (!Directory.Exists(root))
+            yield break;
+
+        foreach (var path in Directory.EnumerateFiles(root, "*.rdef", SearchOption.AllDirectories))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var name = Path.GetFileNameWithoutExtension(path);
+            if (name.Length != 64)
+                continue;
+
+            FileInfo info;
+            try { info = new FileInfo(path); }
+            catch { continue; }
+
+            if (!info.Exists)
+                continue;
+
+            yield return new GcReleasePackageRef(name, info.Length, info.LastWriteTimeUtc);
+        }
+
+        await Task.CompletedTask.ConfigureAwait(false);
+    }
+
     public Task<bool> DeleteReleasePackageAsync(string hash)
     {
         var folder = Path.Join(_basePath, "Releases", hash[..3]);

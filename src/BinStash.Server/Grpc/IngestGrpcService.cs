@@ -40,14 +40,16 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
     private readonly IChunkStoreService _chunkStoreService;
     private readonly IAuthorizationService _authorizationService;
     private readonly IUsageMeteringService _meteringSvc;
+    private readonly IGcQuarantineService _quarantine;
     private readonly ILogger<IngestGrpcService> _logger;
 
-    public IngestGrpcService(BinStashDbContext db, IChunkStoreService chunkStoreService, IAuthorizationService authorizationService, IUsageMeteringService meteringSvc, ILogger<IngestGrpcService> logger)
+    public IngestGrpcService(BinStashDbContext db, IChunkStoreService chunkStoreService, IAuthorizationService authorizationService, IUsageMeteringService meteringSvc, IGcQuarantineService quarantine, ILogger<IngestGrpcService> logger)
     {
         _db = db;
         _chunkStoreService = chunkStoreService;
         _authorizationService = authorizationService;
         _meteringSvc = meteringSvc;
+        _quarantine = quarantine;
         _logger = logger;
     }
 
@@ -153,9 +155,17 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
                 if (!storeResult.Success)
                     throw new RpcException(new Status(StatusCode.Internal, $"Failed to store file definition ({fileHash.ToHexString()}) in chunk store."));
 
-                metadataBytesWritten += storeResult.BytesWritten;
-                filesWrittenNew++;
+                if (storeResult.WasNew)
+                {
+                    metadataBytesWritten += storeResult.BytesWritten;
+                    filesWrittenNew++;
+                }
 
+                // The catalogue said this definition was missing, so a row is owed whether or not
+                // the blob turned out to be there already. It can be there without a row after a
+                // crash between the two writes, or because garbage collection quarantined it —
+                // which drops the row deliberately and leaves the bytes. Writing the row here is
+                // what heals both cases.
                 fileDefinitionsToAdd.Add(new FileDefinition
                 {
                     Checksum     = fileHash,
@@ -173,7 +183,16 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
         ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
 
         if (fileDefinitionsToAdd.Count > 0)
+        {
             _db.FileDefinitions.AddRange(fileDefinitionsToAdd);
+
+            // Re-establishing the catalogue row un-quarantines the object; leaving the tombstone
+            // behind would let a later reclaim pass delete bytes this session now depends on.
+            await _quarantine.ResurrectAsync(
+                store.Id, GcObjectCategory.FileDefinition,
+                fileDefinitionsToAdd.Select(static f => f.Checksum).ToList(),
+                context.CancellationToken);
+        }
 
         try
         {
@@ -254,6 +273,7 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
 
         var chunksSeenTotal = 0;
         var chunksSeenUnique = 0;
+        var chunksWrittenNew = 0;
 
         // Buffer incoming chunks and process in batches to minimise per-chunk DB round trips.
         const int batchSize = 64;
@@ -278,23 +298,28 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
                 if (actualHash != hash)
                     throw new RpcException(new Status(StatusCode.InvalidArgument, "Checksum mismatch for chunk."));
 
-                var (success, bytesWritten) = await _chunkStoreService.StoreChunkAsync(store, actualHash.ToHexString(), data);
+                var (success, wasNew, bytesWritten) = await _chunkStoreService.StoreChunkAsync(store, actualHash.ToHexString(), data);
                 if (!success)
                     throw new RpcException(new Status(StatusCode.Internal, "Failed to store chunk."));
 
-                if (bytesWritten > 0)
+                if (wasNew)
                 {
                     newlyWrittenCompressedBytes[hash] = bytesWritten;
                     newlyWrittenLogicalBytes[hash] = data.Length;
-
-                    chunksToAdd.Add(new Chunk
-                    {
-                        Checksum = hash,
-                        ChunkStoreId = store.Id,
-                        Length = data.Length,
-                        CompressedLength = bytesWritten
-                    });
+                    chunksWrittenNew++;
                 }
+
+                // A row is owed whenever the catalogue said the chunk was missing, even if the
+                // bytes were already in the pack store — see the file-definition path above for
+                // the two ways that happens. Only the byte counters key off wasNew, because only
+                // they are measuring what this ingest actually added.
+                chunksToAdd.Add(new Chunk
+                {
+                    Checksum = hash,
+                    ChunkStoreId = store.Id,
+                    Length = data.Length,
+                    CompressedLength = bytesWritten
+                });
             }
 
             pendingBatch.Clear();
@@ -326,14 +351,21 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
 
         ingestSession.ChunksSeenTotal += chunksSeenTotal;
         ingestSession.ChunksSeenUnique += chunksSeenUnique;
-        ingestSession.ChunksSeenNew += chunksToAdd.Count;
+        ingestSession.ChunksSeenNew += chunksWrittenNew;
         ingestSession.NewUniqueLogicalBytes += newlyWrittenLogicalBytes.Values.Sum();
         ingestSession.NewCompressedBytes += newlyWrittenCompressedBytes.Values.Sum();
         ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;
         ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
 
         if (chunksToAdd.Count > 0)
+        {
             _db.Chunks.AddRange(chunksToAdd);
+
+            await _quarantine.ResurrectAsync(
+                store.Id, GcObjectCategory.Chunk,
+                chunksToAdd.Select(static c => c.Checksum).ToList(),
+                context.CancellationToken);
+        }
 
         try
         {
@@ -356,7 +388,7 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
         {
             ChunksSeenTotal = chunksSeenTotal,
             ChunksSeenUnique = chunksSeenUnique,
-            ChunksWrittenNew = chunksToAdd.Count,
+            ChunksWrittenNew = chunksWrittenNew,
             NewUniqueLogicalBytes = newlyWrittenLogicalBytes.Values.Sum(),
             NewCompressedBytes = newlyWrittenCompressedBytes.Values.Sum()
         };
