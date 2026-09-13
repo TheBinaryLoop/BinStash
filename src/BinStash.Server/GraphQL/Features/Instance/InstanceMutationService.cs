@@ -69,11 +69,11 @@ public sealed class InstanceMutationService
             // Provider/configuration failures are returned as data (not thrown) so the UI can
             // distinguish a misconfigured provider from a transport/authorization error.
             //
-            // Only the recipient's DOMAIN is logged. Logs are shipped and retained on different
-            // terms from the database, and the full address adds nothing here that the exception
-            // does not already give us — while "every @example.com delivery fails" is exactly the
-            // pattern worth being able to see.
-            _logger.LogWarning(ex, "Test email to a {Domain} address failed.", DomainOf(recipientEmail));
+            // Nothing derived from the recipient address is logged. This is an admin-triggered
+            // one-off whose failure detail is already returned to the caller in ProviderError,
+            // so the address buys nothing here — and logs are shipped and retained on different
+            // terms from the database.
+            _logger.LogWarning(ex, "Test email failed to send.");
             return new SendTestEmailResultGql { Success = false, ProviderError = ex.Message };
         }
     }
@@ -213,17 +213,6 @@ public sealed class InstanceMutationService
                 ["changedKeys"] = updates.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray()
             }
         });
-    }
-
-    /// <summary>
-    /// The domain portion of an email address, for diagnostics that must not carry the
-    /// address itself. Returns a placeholder rather than the input when it cannot be parsed,
-    /// so a malformed value can never leak through this path either.
-    /// </summary>
-    private static string DomainOf(string email)
-    {
-        var at = email.LastIndexOf('@');
-        return at >= 0 && at < email.Length - 1 ? email[(at + 1)..] : "(unparseable)";
     }
 
     private async Task EnsureAdminAsync()
