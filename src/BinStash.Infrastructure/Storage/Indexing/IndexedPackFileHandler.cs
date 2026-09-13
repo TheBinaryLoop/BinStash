@@ -526,11 +526,21 @@ internal sealed class IndexedPackFileHandler : IDisposable
     // Rebuild / maintenance
 
     /// <summary>
+    /// The exception that caused the most recent <see cref="RebuildIndexFile"/>
+    /// to return <c>false</c>, or <c>null</c> if it succeeded. A rebuild failure
+    /// is otherwise indistinguishable from any other, which makes a store that
+    /// needs migrating very hard to diagnose from the outside.
+    /// </summary>
+    public Exception? LastRebuildError { get; private set; }
+
+    /// <summary>
     /// Scans all pack files for this prefix, rebuilds the index from scratch,
     /// and writes a single sorted segment (choosing the level based on entry count).
     /// </summary>
     public async Task<bool> RebuildIndexFile()
     {
+        LastRebuildError = null;
+
         await EnsureIndexLoadedAsync().ConfigureAwait(false);
         await _writeLock.WaitAsync().ConfigureAwait(false);
 
@@ -599,8 +609,9 @@ internal sealed class IndexedPackFileHandler : IDisposable
 
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            LastRebuildError = ex;
             return false;
         }
         finally

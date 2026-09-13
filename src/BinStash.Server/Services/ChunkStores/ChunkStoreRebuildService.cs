@@ -37,6 +37,12 @@ public sealed class ChunkStoreRebuildService : IChunkStoreRebuildService
     // Broadcast frequency: emit a progress event after this many bucket completions
     private const int BroadcastEvery = 64;
 
+    /// <summary>
+    /// Cap on the distinct failure reasons recorded against a failed rebuild job —
+    /// a store-wide problem repeats the same reason across thousands of buckets.
+    /// </summary>
+    private const int MaxReportedRebuildReasons = 10;
+
     private readonly IServiceProvider _services;
     private readonly ITopicEventSender _eventSender;
     private readonly ILogger<ChunkStoreRebuildService> _logger;
@@ -171,6 +177,26 @@ public sealed class ChunkStoreRebuildService : IChunkStoreRebuildService
                 : BackgroundJobStatus.Failed;
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.ProgressData = JsonSerializer.Serialize(progress);
+
+            // A bucket count on its own says nothing about *why* a rebuild failed.
+            // Distinct reasons are few (usually one per store-wide cause), so record
+            // them on the job and log them rather than leaving the operator guessing.
+            var failureReasons = chunkStoreService.GetLastRebuildFailures(store);
+            if (failureReasons.Count > 0)
+            {
+                var distinctReasons = failureReasons
+                    .Select(static r => r[(r.IndexOf(": ", StringComparison.Ordinal) + 2)..])
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(MaxReportedRebuildReasons)
+                    .ToArray();
+
+                job.ErrorDetails = JsonSerializer.Serialize(
+                    distinctReasons.Select(static r => new { Error = r }).ToArray());
+
+                foreach (var reason in distinctReasons)
+                    _logger.LogError("Rebuild job {JobId} bucket failure: {Reason}", jobId, reason);
+            }
+
             await db.SaveChangesAsync(CancellationToken.None);
             await BroadcastProgressAsync(job, jobData, CancellationToken.None);
 

@@ -45,6 +45,9 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage, IDisposable, IAs
     {
         return _objectStore.RebuildStorageWithProgressAsync(progress, cancellationToken);
     }
+
+    /// <inheritdoc/>
+    public IReadOnlyList<string> LastRebuildFailures => _objectStore.RebuildFailures;
     
     public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, ReadOnlyMemory<byte> data)
     {
