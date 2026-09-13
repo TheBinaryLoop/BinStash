@@ -313,7 +313,14 @@ public static class Program
         builder.Services.AddOpenApi();
 
         var app = builder.Build();
-        
+
+        // `--export-schema <path>` writes the GraphQL SDL and exits. The frontend's typed codegen
+        // runs against a committed schema.graphql so it works offline and in CI, where no server
+        // (and no database) is available to introspect. Deliberately placed before the migration
+        // step below: building the schema resolves types, not data, so this must not need a DB.
+        if (TryExportSchema(app, args))
+            return;
+
         // Configure the ef core migration process
         using (var scope = app.Services.CreateScope())
         {
@@ -377,5 +384,33 @@ public static class Program
         app.MapFallbackToFile("index.html");
         
         app.Run();
+    }
+
+    /// <summary>
+    /// Handles the <c>--export-schema &lt;path&gt;</c> switch. Returns true when the schema was
+    /// written and the process should exit without serving.
+    /// </summary>
+    private static bool TryExportSchema(WebApplication app, string[] args)
+    {
+        var index = Array.IndexOf(args, "--export-schema");
+        if (index < 0)
+            return false;
+
+        var path = index + 1 < args.Length ? args[index + 1] : "schema.graphql";
+
+        var executor = app.Services
+            .GetRequiredService<HotChocolate.Execution.IRequestExecutorProvider>()
+            .GetExecutorAsync()
+            .AsTask()
+            .GetAwaiter()
+            .GetResult();
+
+        var directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path));
+        if (!string.IsNullOrEmpty(directory))
+            Directory.CreateDirectory(directory);
+
+        File.WriteAllText(path, executor.Schema.ToString());
+        Console.WriteLine($"GraphQL schema written to {System.IO.Path.GetFullPath(path)}");
+        return true;
     }
 }
