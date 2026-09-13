@@ -2,10 +2,6 @@ query TenantUsage {
   tenantUsage {
     tenantId
     logicalBytes
-    storedBytes
-    compressedBytes
-    deduplicationSavedBytes
-    compressionSavedBytes
     repositoryCount
     releaseCount
     maxStorageBytes

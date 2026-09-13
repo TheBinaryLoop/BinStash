@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useTenantStore } from '@/stores/tenant'
 
+const props = withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false })
+
 const tenants = useTenantStore()
 const router = useRouter()
 
@@ -32,7 +34,9 @@ async function select(tenantId: string) {
     <DropdownMenuTrigger as-child>
       <Button
         variant="ghost"
-        class="hover:bg-accent h-auto w-full justify-between gap-2 px-2 py-2 text-left"
+        class="hover:bg-accent h-auto text-left"
+        :class="props.collapsed ? 'w-auto p-1.5' : 'w-full justify-between gap-2 px-2 py-1.5'"
+        :aria-label="props.collapsed ? (active?.name ?? 'Select workspace') : undefined"
       >
         <span class="flex min-w-0 items-center gap-2.5">
           <span
@@ -40,14 +44,14 @@ async function select(tenantId: string) {
           >
             {{ (active?.name ?? '?').slice(0, 2).toUpperCase() }}
           </span>
-          <span class="min-w-0">
+          <span v-if="!props.collapsed" class="min-w-0">
             <span class="block truncate text-sm font-medium">{{ active?.name ?? 'Select workspace' }}</span>
             <span v-if="active" class="text-muted-foreground block truncate font-mono text-xs">
               {{ active.slug }}
             </span>
           </span>
         </span>
-        <ChevronsUpDown class="text-muted-foreground size-4 shrink-0" />
+        <ChevronsUpDown v-if="!props.collapsed" class="text-muted-foreground size-4 shrink-0" />
       </Button>
     </DropdownMenuTrigger>
 

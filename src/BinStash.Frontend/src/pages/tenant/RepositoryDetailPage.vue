@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router'
 import AsyncSection from '@/components/app/AsyncSection.vue'
 import CopyButton from '@/components/app/CopyButton.vue'
 import EmptyState from '@/components/app/EmptyState.vue'
+import PageBreadcrumbs from '@/components/app/PageBreadcrumbs.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -85,6 +86,13 @@ const cliCommand = computed(() =>
 
 <template>
   <div class="space-y-6">
+    <PageBreadcrumbs
+      :items="[
+        { label: 'Repositories', to: { name: 'repositories', params: { tenantId: tenants.activeTenantId } } },
+        { label: repo?.name ?? '…' },
+      ]"
+    />
+
     <AsyncSection
       :loading="repository.loading.value"
       :error="repository.error.value"

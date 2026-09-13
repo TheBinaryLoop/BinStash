@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ArrowLeft, Download, Package } from '@lucide/vue'
+import { Download, Package } from '@lucide/vue'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
 import CopyButton from '@/components/app/CopyButton.vue'
+import PageBreadcrumbs from '@/components/app/PageBreadcrumbs.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
 import StatCard from '@/components/app/StatCard.vue'
 import { Badge } from '@/components/ui/badge'
@@ -67,15 +68,16 @@ const composition = computed(() => {
 
 <template>
   <div class="space-y-6">
-    <Button
-      variant="ghost"
-      size="sm"
-      class="text-muted-foreground -ml-2 gap-1.5"
-      @click="$router.push({ name: 'repository', params: { tenantId: tenants.activeTenantId, repoId } })"
-    >
-      <ArrowLeft class="size-3.5" />
-      {{ release?.repository?.name ?? 'Repository' }}
-    </Button>
+    <PageBreadcrumbs
+      :items="[
+        { label: 'Repositories', to: { name: 'repositories', params: { tenantId: tenants.activeTenantId } } },
+        {
+          label: release?.repository?.name ?? '…',
+          to: { name: 'repository', params: { tenantId: tenants.activeTenantId, repoId } },
+        },
+        { label: release?.version ?? '…' },
+      ]"
+    />
 
     <AsyncSection
       :loading="loading"

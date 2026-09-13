@@ -38,11 +38,8 @@ query RepositoryReleases($id: UUID!, $first: Int, $after: String, $order: [Relea
         notes
         metrics {
           totalLogicalBytes
-          newCompressedBytes
           chunksInRelease
-          newChunks
           filesInRelease
-          incrementalEffectiveRatio
         }
       }
     }

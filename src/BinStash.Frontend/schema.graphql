@@ -523,19 +523,10 @@ type ReleaseGql {
 
 type ReleaseMetricsGql {
   chunksInRelease: Int!
-  newChunks: Int!
   totalLogicalBytes: UnsignedLong!
-  newUniqueLogicalBytes: Long!
-  newCompressedBytes: Long!
   metaBytesFull: Int!
   componentsInRelease: Int!
   filesInRelease: Int!
-  incrementalCompressionRatio: Float!
-  incrementalDeduplicationRatio: Float!
-  incrementalEffectiveRatio: Float!
-  compressionSavedBytes: Long!
-  deduplicationSavedBytes: Long!
-  newDataPercent: Float!
 }
 
 "A connection to a list of items."
@@ -737,10 +728,6 @@ type TenantStorageClassGql {
 type TenantUsageGql {
   tenantId: UUID!
   logicalBytes: Long!
-  storedBytes: Long!
-  compressedBytes: Long!
-  deduplicationSavedBytes: Long!
-  compressionSavedBytes: Long!
   repositoryCount: Int!
   releaseCount: Int!
   maxStorageBytes: Long

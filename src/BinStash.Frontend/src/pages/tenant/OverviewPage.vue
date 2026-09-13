@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Boxes, FolderGit2, HardDrive, Package, Plus, Users } from '@lucide/vue'
+import { ArrowRight, FolderGit2, HardDrive, Package, Plus } from '@lucide/vue'
 import { computed } from 'vue'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
@@ -27,12 +27,6 @@ const repoTotal = computed(() => repositories.result.value?.repositories?.totalC
 
 const params = computed(() => ({ tenantId: tenants.activeTenantId }))
 
-/** Savings are the product's whole value proposition, so lead with them. */
-const reclaimed = computed(() =>
-  stats.value
-    ? stats.value.deduplicationSavedBytes + stats.value.compressionSavedBytes
-    : 0,
-)
 </script>
 
 <template>
@@ -56,7 +50,7 @@ const reclaimed = computed(() =>
       :skeleton-rows="2"
       @retry="usage.refetch()"
     >
-      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="grid gap-3 sm:grid-cols-3">
         <StatCard
           label="Repositories"
           :value="formatNumber(stats?.repositoryCount ?? 0)"
@@ -70,17 +64,10 @@ const reclaimed = computed(() =>
           numeric
         />
         <StatCard
-          label="On disk"
-          :value="formatBytes(stats?.compressedBytes ?? 0)"
-          hint="After dedup and compression"
+          label="Stored"
+          :value="formatBytes(stats?.logicalBytes ?? 0)"
+          hint="Total size of all releases"
           :icon="HardDrive"
-          numeric
-        />
-        <StatCard
-          label="Reclaimed"
-          :value="formatBytes(reclaimed)"
-          hint="Saved by dedup + compression"
-          :icon="Boxes"
           numeric
         />
       </div>
@@ -100,23 +87,19 @@ const reclaimed = computed(() =>
 
         <UsageMeter
           v-if="stats"
-          :used="stats.compressedBytes"
+          :used="stats.logicalBytes"
           :limit="stats.maxStorageBytes"
           :is-limited="stats.isLimited"
         />
 
         <dl v-if="stats" class="space-y-1.5 text-xs">
           <div class="flex justify-between gap-3">
-            <dt class="text-muted-foreground">Logical size</dt>
-            <dd class="font-mono tabular-nums">{{ formatBytes(stats.logicalBytes) }}</dd>
+            <dt class="text-muted-foreground">Repositories</dt>
+            <dd class="font-mono tabular-nums">{{ formatNumber(stats.repositoryCount) }}</dd>
           </div>
           <div class="flex justify-between gap-3">
-            <dt class="text-muted-foreground">After dedup</dt>
-            <dd class="font-mono tabular-nums">{{ formatBytes(stats.storedBytes) }}</dd>
-          </div>
-          <div class="flex justify-between gap-3">
-            <dt class="text-muted-foreground">After compression</dt>
-            <dd class="font-mono tabular-nums">{{ formatBytes(stats.compressedBytes) }}</dd>
+            <dt class="text-muted-foreground">Releases</dt>
+            <dd class="font-mono tabular-nums">{{ formatNumber(stats.releaseCount) }}</dd>
           </div>
         </dl>
       </section>

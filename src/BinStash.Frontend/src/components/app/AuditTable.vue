@@ -86,8 +86,8 @@ const rows = computed(() =>
         </TableHeader>
 
         <TableBody>
-          <TableRow v-for="{ entry, metadata } in rows" :key="entry.id" class="align-top">
-            <TableCell>
+          <TableRow v-for="{ entry, metadata } in rows" :key="entry.id" class="align-middle">
+            <TableCell class="py-2">
               <Tooltip>
                 <TooltipTrigger class="cursor-default text-left">
                   <span class="text-sm">{{ formatRelative(entry.occurredAt) }}</span>
@@ -96,18 +96,23 @@ const rows = computed(() =>
               </Tooltip>
             </TableCell>
 
-            <TableCell>
-              <p class="text-sm font-medium">{{ humanizeAction(entry.action) }}</p>
-              <p class="text-muted-foreground font-mono text-xs">{{ entry.action }}</p>
-              <dl v-if="metadata.length" class="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5">
-                <div v-for="[key, value] in metadata" :key="key" class="flex gap-1 text-xs">
-                  <dt class="text-muted-foreground">{{ key }}:</dt>
-                  <dd class="font-mono">{{ value }}</dd>
-                </div>
-              </dl>
+            <TableCell class="py-2">
+              <div class="flex items-baseline gap-2">
+                <span class="text-sm font-medium">{{ humanizeAction(entry.action) }}</span>
+                <span class="text-muted-foreground truncate font-mono text-xs">{{ entry.action }}</span>
+              </div>
+              <p
+                v-if="metadata.length"
+                class="text-muted-foreground truncate text-xs"
+                :title="metadata.map(([k, v]) => `${k}: ${v}`).join('  ·  ')"
+              >
+                <span v-for="[key, value] in metadata" :key="key" class="mr-3 whitespace-nowrap">
+                  {{ key }}: <span class="font-mono">{{ value }}</span>
+                </span>
+              </p>
             </TableCell>
 
-            <TableCell>
+            <TableCell class="py-2">
               <div class="flex items-center gap-1.5">
                 <component
                   :is="actorIcons[entry.actorType] ?? UserIcon"
@@ -115,14 +120,14 @@ const rows = computed(() =>
                 />
                 <span class="truncate text-sm">{{ entry.actorDisplay ?? 'Unknown' }}</span>
               </div>
-              <p v-if="entry.ipAddress" class="text-muted-foreground font-mono text-xs">
+              <p v-if="entry.ipAddress" class="text-muted-foreground truncate font-mono text-[0.6875rem]">
                 {{ entry.ipAddress }}
               </p>
             </TableCell>
 
-            <TableCell>
+            <TableCell class="py-2">
               <p v-if="entry.targetName" class="truncate text-sm">{{ entry.targetName }}</p>
-              <p v-if="entry.targetType" class="text-muted-foreground text-xs">
+              <p v-if="entry.targetType" class="text-muted-foreground truncate text-[0.6875rem]">
                 {{ entry.targetType }}
               </p>
               <p v-if="!entry.targetName && !entry.targetType" class="text-muted-foreground text-sm">
@@ -130,13 +135,13 @@ const rows = computed(() =>
               </p>
             </TableCell>
 
-            <TableCell v-if="showTenant">
+            <TableCell v-if="showTenant" class="py-2">
               <span class="text-muted-foreground font-mono text-xs">
                 {{ entry.tenantId ? entry.tenantId.slice(0, 8) : 'instance' }}
               </span>
             </TableCell>
 
-            <TableCell>
+            <TableCell class="py-2">
               <Badge
                 :variant="entry.outcome === 'SUCCESS' ? 'secondary' : 'destructive'"
                 class="text-xs"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Hammer, RefreshCw } from '@lucide/vue'
+import { Hammer, RefreshCw } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -8,6 +8,7 @@ import AsyncSection from '@/components/app/AsyncSection.vue'
 import ConfirmDialog from '@/components/app/ConfirmDialog.vue'
 import CopyButton from '@/components/app/CopyButton.vue'
 import JobProgress from '@/components/app/JobProgress.vue'
+import PageBreadcrumbs from '@/components/app/PageBreadcrumbs.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
 import StatCard from '@/components/app/StatCard.vue'
 import { Badge } from '@/components/ui/badge'
@@ -69,15 +70,12 @@ async function confirmUpgrade() {
 
 <template>
   <div class="space-y-6">
-    <Button
-      variant="ghost"
-      size="sm"
-      class="text-muted-foreground -ml-2 gap-1.5"
-      @click="$router.push({ name: 'chunk-stores' })"
-    >
-      <ArrowLeft class="size-3.5" />
-      Chunk stores
-    </Button>
+    <PageBreadcrumbs
+      :items="[
+        { label: 'Chunk stores', to: { name: 'chunk-stores' } },
+        { label: detail?.name ?? '…' },
+      ]"
+    />
 
     <AsyncSection
       :loading="store.loading.value"

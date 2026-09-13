@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { apiJson, apiPost, ApiError } from '@/lib/http'
-import { resetApolloStore, setApolloTenant } from '@/lib/apollo'
+import { clearApolloStore, setApolloTenant } from '@/lib/apollo'
 
 export interface UserInfo {
   firstName: string
@@ -93,7 +93,7 @@ export const useAuthStore = defineStore('auth', () => {
       // Always clear locally: a failed logout must not leave cached tenant data behind.
       user.value = null
       setApolloTenant(null)
-      await resetApolloStore()
+      await clearApolloStore()
     }
   }
 

@@ -45,36 +45,27 @@ public sealed class ReleaseGql
 
 public sealed class ReleaseMetricsGql
 {
+    // Describes THIS release only.
+    //
+    // Metrics derived from what was already in the chunk store are deliberately absent:
+    // new chunks, newly-added unique/compressed bytes, dedup ratios, saved bytes and
+    // "new data percent". Tenants share a chunk store, so those numbers are a function of
+    // OTHER tenants' content — publishing a release and reading back "0% new data" tells
+    // you another tenant already stored byte-identical content. That is a cross-tenant
+    // side channel, and it is also not what a tenant is billed on (billing is on
+    // undeduplicated, uncompressed logical bytes).
+    //
+    // These figures remain meaningful instance-wide and belong on instance-admin surfaces.
     public required int ChunksInRelease { get; set; }
-    public required int NewChunks { get; set; }
 
-    // Full logical size of the release as users see it
+    // Full logical size of the release as users see it. This is the billable quantity.
     public required ulong TotalLogicalBytes { get; set; }
-
-    // Unique uncompressed bytes newly added by this release
-    public required long NewUniqueLogicalBytes { get; set; }
-
-    // Unique compressed bytes newly added by this release
-    public required long NewCompressedBytes { get; set; }
 
     // Total metadata bytes for full release package
     public required int MetaBytesFull { get; set; }
 
-    // Reserved for later diff/patch metadata
-    //public int MetaBytesFullDiff { get; set; }
-
     public required int ComponentsInRelease { get; set; }
     public required int FilesInRelease { get; set; }
-
-    // Derived-but-stored metrics for easy querying/charting
-    public required double IncrementalCompressionRatio { get; set; }
-    public required double IncrementalDeduplicationRatio { get; set; }
-    public required double IncrementalEffectiveRatio { get; set; }
-
-    public required long CompressionSavedBytes { get; set; }
-    public required long DeduplicationSavedBytes { get; set; }
-
-    public required double NewDataPercent { get; set; }
 }
 
 public sealed class ServiceAccountGql

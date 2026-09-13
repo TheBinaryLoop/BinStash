@@ -9,10 +9,12 @@ import UserMenu from '@/components/app/UserMenu.vue'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { Menu } from '@lucide/vue'
+import { useSidebar } from '@/composables/useSidebar'
 import { useTenantStore } from '@/stores/tenant'
 
 const tenants = useTenantStore()
 const mobileNavOpen = ref(false)
+const { widthStyle } = useSidebar()
 
 const groups = computed(() => [
   {
@@ -43,15 +45,15 @@ const backToWorkspace = computed(() => ({
 </script>
 
 <template>
-  <div class="bg-background min-h-dvh">
+  <div class="bg-background min-h-dvh" :style="widthStyle">
     <aside
       class="border-hairline fixed inset-y-0 left-0 z-30 hidden w-(--sidebar-width) border-r lg:block"
     >
       <AppSidebar :groups="groups">
-        <template #header>
-          <div class="flex items-center gap-2.5 px-2 py-2">
+        <template #header="{ collapsed }">
+          <div class="flex w-full items-center gap-2.5" :class="collapsed ? 'justify-center' : 'px-2'">
             <AppLogo :size="24" />
-            <div class="min-w-0">
+            <div v-if="!collapsed" class="min-w-0">
               <p class="truncate text-sm font-semibold">Instance</p>
               <p class="text-muted-foreground truncate text-xs">Administration</p>
             </div>
@@ -62,8 +64,8 @@ const backToWorkspace = computed(() => ({
             :to="backToWorkspace"
             class="text-muted-foreground hover:text-foreground flex items-center gap-2 rounded-md px-2 py-1.5 text-sm"
           >
-            <ArrowLeft class="size-4" />
-            <span>Back to workspace</span>
+            <ArrowLeft class="size-4 shrink-0" />
+            <span class="truncate">Back to workspace</span>
           </RouterLink>
         </template>
       </AppSidebar>
@@ -81,7 +83,7 @@ const backToWorkspace = computed(() => ({
           </SheetTrigger>
           <SheetContent side="left" class="w-(--sidebar-width) p-0">
             <SheetTitle class="sr-only">Navigation</SheetTitle>
-            <AppSidebar :groups="groups" @click="mobileNavOpen = false" />
+            <AppSidebar :groups="groups" :collapsible="false" @click="mobileNavOpen = false" />
           </SheetContent>
         </Sheet>
 

@@ -19,33 +19,35 @@ namespace BinStash.Server.GraphQL.Features.Usage;
 /// Consumption and entitlement for a single tenant.
 /// </summary>
 /// <remarks>
+/// Reports ONLY undeduplicated, uncompressed logical bytes, because that is what a tenant
+/// is billed on and it is the only storage figure that is purely a function of the
+/// tenant's own data.
+///
+/// Deduplicated/compressed footprint and the savings derived from them are deliberately
+/// NOT exposed here. Tenants share a chunk store, so those numbers depend on what other
+/// tenants have uploaded: a tenant watching its own "bytes saved" move after an upload
+/// learns that someone else already stored identical content. Those figures are still
+/// meaningful for the instance as a whole and belong on instance-admin surfaces.
+///
 /// Limits come from <see cref="Core.Billing.IBillingProvider"/>, which resolves to the NoOp
-/// implementation in the AGPL build. That deliberately reports "unlimited", so this type stays
-/// meaningful on a self-hosted instance with no billing plugin loaded — clients should branch on
-/// <see cref="IsLimited"/> rather than assuming a finite quota.
+/// implementation in the AGPL build. That deliberately reports "unlimited", so clients
+/// should branch on <see cref="IsLimited"/> rather than assuming a finite quota.
 /// </remarks>
 public sealed class TenantUsageGql
 {
     public Guid TenantId { get; set; }
 
-    /// <summary>Logical size of all releases as users see them, before dedup/compression.</summary>
+    /// <summary>
+    /// Logical size of all releases as published, before deduplication or compression.
+    /// The billable quantity.
+    /// </summary>
     public long LogicalBytes { get; set; }
-
-    /// <summary>Unique uncompressed bytes actually retained after deduplication.</summary>
-    public long StoredBytes { get; set; }
-
-    /// <summary>Unique compressed bytes on disk. The number a storage bill is based on.</summary>
-    public long CompressedBytes { get; set; }
-
-    public long DeduplicationSavedBytes { get; set; }
-
-    public long CompressionSavedBytes { get; set; }
 
     public int RepositoryCount { get; set; }
 
     public int ReleaseCount { get; set; }
 
-    /// <summary>Quota ceiling, or null when the active plan does not impose one.</summary>
+    /// <summary>Quota ceiling in logical bytes, or null when the plan imposes none.</summary>
     public long? MaxStorageBytes { get; set; }
 
     /// <summary>False when no finite storage quota applies (self-hosted / NoOp billing).</summary>

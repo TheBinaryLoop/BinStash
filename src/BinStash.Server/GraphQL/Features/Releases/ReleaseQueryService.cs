@@ -100,17 +100,8 @@ public sealed class ReleaseQueryService
             {
                 ChunksInRelease = r.ChunksInRelease,
                 ComponentsInRelease = r.ComponentsInRelease,
-                CompressionSavedBytes = r.CompressionSavedBytes,
-                DeduplicationSavedBytes = r.DeduplicationSavedBytes,
                 FilesInRelease = r.FilesInRelease,
-                IncrementalCompressionRatio = r.IncrementalCompressionRatio,
-                IncrementalDeduplicationRatio = r.IncrementalDeduplicationRatio,
-                IncrementalEffectiveRatio = r.IncrementalEffectiveRatio,
                 MetaBytesFull = r.MetaBytesFull,
-                NewChunks = r.NewChunks,
-                NewCompressedBytes = r.NewCompressedBytes,
-                NewDataPercent = r.NewDataPercent,
-                NewUniqueLogicalBytes = r.NewUniqueLogicalBytes,
                 TotalLogicalBytes = r.TotalLogicalBytes
             })
             .FirstOrDefaultAsync(ct);

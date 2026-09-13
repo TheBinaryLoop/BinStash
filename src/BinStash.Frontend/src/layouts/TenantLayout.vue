@@ -20,11 +20,13 @@ import UserMenu from '@/components/app/UserMenu.vue'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { useCommandPalette } from '@/composables/useCommandPalette'
+import { useSidebar } from '@/composables/useSidebar'
 import { useTenantStore } from '@/stores/tenant'
 
 const tenants = useTenantStore()
 const mobileNavOpen = ref(false)
 const { show: showPalette } = useCommandPalette()
+const { widthStyle } = useSidebar()
 
 const groups = computed(() => {
   const params = { tenantId: tenants.activeTenantId }
@@ -52,14 +54,14 @@ const groups = computed(() => {
 </script>
 
 <template>
-  <div class="bg-background min-h-dvh">
+  <div class="bg-background min-h-dvh" :style="widthStyle">
     <aside
       class="border-hairline fixed inset-y-0 left-0 z-30 hidden w-(--sidebar-width) border-r lg:block"
     >
       <AppSidebar :groups="groups">
-        <template #header><TenantSwitcher /></template>
+        <template #header="{ collapsed }"><TenantSwitcher :collapsed="collapsed" /></template>
         <template #footer>
-          <p class="text-muted-foreground px-2 py-1 font-mono text-[0.6875rem]">BinStash</p>
+          <p class="text-muted-foreground px-2 font-mono text-[0.6875rem]">BinStash</p>
         </template>
       </AppSidebar>
     </aside>
@@ -76,7 +78,7 @@ const groups = computed(() => {
           </SheetTrigger>
           <SheetContent side="left" class="w-(--sidebar-width) p-0">
             <SheetTitle class="sr-only">Navigation</SheetTitle>
-            <AppSidebar :groups="groups" @click="mobileNavOpen = false">
+            <AppSidebar :groups="groups" :collapsible="false" @click="mobileNavOpen = false">
               <template #header><TenantSwitcher /></template>
             </AppSidebar>
           </SheetContent>
@@ -101,7 +103,7 @@ const groups = computed(() => {
       </header>
 
       <main class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <RouterView />
+        <RouterView :key="tenants.activeTenantId ?? 'none'" />
       </main>
     </div>
 

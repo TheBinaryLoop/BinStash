@@ -153,9 +153,20 @@ export const apolloClient = new ApolloClient({
 })
 
 /**
- * Drops all cached data. Called on sign-out and on tenant switch: cached entities
- * are tenant-scoped and must never leak across either boundary.
+ * Drops all cached data AND refetches every active query. Called on tenant switch, where
+ * both halves matter: cached entities are tenant-scoped so they must not leak across the
+ * boundary, and the tenant travels in a header rather than in variables, so Apollo has no
+ * way to tell that a mounted query's result is now stale. `clearStore()` alone would empty
+ * the cache and leave the screen showing nothing until something happened to refetch.
  */
 export async function resetApolloStore() {
+  await apolloClient.resetStore()
+}
+
+/**
+ * Clears without refetching. Used on sign-out, where refetching would immediately fire
+ * authenticated queries we know will 401.
+ */
+export async function clearApolloStore() {
   await apolloClient.clearStore()
 }

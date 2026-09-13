@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Ban, CircleCheck, HardDrive, Layers, Package, TrendingDown } from '@lucide/vue'
+import { Ban, CircleCheck, HardDrive, Info, Layers, Package } from '@lucide/vue'
 import { computed } from 'vue'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
@@ -10,21 +10,16 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { useQuery } from '@/composables/useGraphql'
 import { TenantUsageDocument } from '@/graphql/generated'
-import { formatBytes, formatNumber, formatPercent } from '@/lib/format'
+import { formatBytes, formatNumber } from '@/lib/format'
 
+/**
+ * Everything here is expressed in undeduplicated, uncompressed logical bytes — what the
+ * workspace is billed on. Deduplicated footprint and the savings it produces are NOT
+ * shown: the chunk store is shared between workspaces, so those numbers depend on other
+ * tenants' content and would leak it. They belong on instance-admin surfaces.
+ */
 const { result, loading, error, refetch } = useQuery(TenantUsageDocument, {})
 const usage = computed(() => result.value?.tenantUsage)
-
-const reclaimed = computed(() =>
-  usage.value ? usage.value.deduplicationSavedBytes + usage.value.compressionSavedBytes : 0,
-)
-
-/** How much smaller the stored footprint is than what users uploaded. */
-const overallReduction = computed(() => {
-  const stats = usage.value
-  if (!stats || stats.logicalBytes <= 0) return null
-  return 1 - stats.compressedBytes / stats.logicalBytes
-})
 
 const entitlements = computed(() => {
   const stats = usage.value
@@ -38,21 +33,16 @@ const entitlements = computed(() => {
 
 const anyBlocked = computed(() => entitlements.value.some((entitlement) => !entitlement.allowed))
 
-// Each stage of the pipeline, so it is obvious where the savings come from.
-const pipeline = computed(() => {
+const averageReleaseSize = computed(() => {
   const stats = usage.value
-  if (!stats || stats.logicalBytes <= 0) return []
-  return [
-    { label: 'Logical (as uploaded)', bytes: stats.logicalBytes },
-    { label: 'After deduplication', bytes: stats.storedBytes },
-    { label: 'After compression', bytes: stats.compressedBytes },
-  ].map((stage) => ({ ...stage, fraction: stage.bytes / stats.logicalBytes }))
+  if (!stats || stats.releaseCount === 0) return null
+  return stats.logicalBytes / stats.releaseCount
 })
 </script>
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Usage" description="What this workspace stores, and what deduplication saves.">
+    <PageHeader title="Usage" description="What this workspace stores, and how it counts against your plan.">
       <template #badge>
         <Badge v-if="usage && !usage.isLimited" variant="secondary">No plan limit</Badge>
       </template>
@@ -74,19 +64,12 @@ const pipeline = computed(() => {
           </AlertDescription>
         </Alert>
 
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="grid gap-3 sm:grid-cols-3">
           <StatCard
-            label="On disk"
-            :value="formatBytes(usage.compressedBytes)"
-            hint="Billable footprint"
+            label="Stored"
+            :value="formatBytes(usage.logicalBytes)"
+            hint="Billable — total size of all releases"
             :icon="HardDrive"
-            numeric
-          />
-          <StatCard
-            label="Reclaimed"
-            :value="formatBytes(reclaimed)"
-            :hint="overallReduction !== null ? `${formatPercent(overallReduction, 0)} smaller` : undefined"
-            :icon="TrendingDown"
             numeric
           />
           <StatCard
@@ -98,6 +81,7 @@ const pipeline = computed(() => {
           <StatCard
             label="Releases"
             :value="formatNumber(usage.releaseCount)"
+            :hint="averageReleaseSize !== null ? `${formatBytes(averageReleaseSize)} average` : undefined"
             :icon="Package"
             numeric
           />
@@ -106,77 +90,53 @@ const pipeline = computed(() => {
         <div class="grid gap-4 lg:grid-cols-3">
           <section class="bg-card hairline space-y-4 rounded-lg p-5 lg:col-span-2">
             <div>
-              <h2 class="text-sm font-medium">Storage pipeline</h2>
+              <h2 class="text-sm font-medium">Plan usage</h2>
               <p class="text-muted-foreground text-xs">
-                Every release is chunked, deduplicated against what is already stored, then
-                compressed.
+                Measured on the total size of your releases as published.
               </p>
             </div>
 
-            <div class="space-y-3">
-              <div v-for="stage in pipeline" :key="stage.label" class="space-y-1.5">
-                <div class="flex items-baseline justify-between gap-4 text-xs">
-                  <span>{{ stage.label }}</span>
-                  <span class="font-mono tabular-nums">{{ formatBytes(stage.bytes) }}</span>
-                </div>
-                <div class="bg-muted h-2 overflow-hidden rounded-full">
-                  <div
-                    class="bg-primary/70 h-full rounded-full transition-[width] duration-500"
-                    :style="{ width: `${Math.max(stage.fraction * 100, 1)}%` }"
-                  />
-                </div>
-              </div>
-            </div>
+            <UsageMeter
+              :used="usage.logicalBytes"
+              :limit="usage.maxStorageBytes"
+              :is-limited="usage.isLimited"
+            />
 
-            <dl class="border-hairline grid grid-cols-2 gap-3 border-t pt-4 text-xs">
-              <div>
-                <dt class="text-muted-foreground">Saved by deduplication</dt>
-                <dd class="mt-0.5 font-mono tabular-nums">
-                  {{ formatBytes(usage.deduplicationSavedBytes) }}
-                </dd>
-              </div>
-              <div>
-                <dt class="text-muted-foreground">Saved by compression</dt>
-                <dd class="mt-0.5 font-mono tabular-nums">
-                  {{ formatBytes(usage.compressionSavedBytes) }}
-                </dd>
-              </div>
-            </dl>
+            <div
+              class="border-hairline text-muted-foreground flex gap-2.5 border-t pt-4 text-xs"
+            >
+              <Info class="mt-px size-3.5 shrink-0" />
+              <p>
+                BinStash deduplicates and compresses your data before writing it to disk, so the
+                space it physically occupies is smaller than the figure above. Because that
+                storage is shared across workspaces, billing is based on your releases'
+                uncompressed, undeduplicated size rather than on the shared footprint.
+              </p>
+            </div>
           </section>
 
-          <div class="space-y-4">
-            <section class="bg-card hairline space-y-4 rounded-lg p-5">
-              <h2 class="text-sm font-medium">Quota</h2>
-              <UsageMeter
-                :used="usage.compressedBytes"
-                :limit="usage.maxStorageBytes"
-                :is-limited="usage.isLimited"
-              />
-              <p v-if="!usage.isLimited" class="text-muted-foreground text-xs">
-                This instance has no billing plugin configured, so storage is unmetered.
-              </p>
-            </section>
-
-            <section class="bg-card hairline space-y-3 rounded-lg p-5">
-              <h2 class="text-sm font-medium">Entitlements</h2>
-              <ul class="space-y-2">
-                <li
-                  v-for="entitlement in entitlements"
-                  :key="entitlement.label"
-                  class="flex items-center justify-between gap-3 text-sm"
+          <section class="bg-card hairline h-fit space-y-3 rounded-lg p-5">
+            <h2 class="text-sm font-medium">Entitlements</h2>
+            <ul class="space-y-2">
+              <li
+                v-for="entitlement in entitlements"
+                :key="entitlement.label"
+                class="flex items-center justify-between gap-3 text-sm"
+              >
+                <span>{{ entitlement.label }}</span>
+                <span
+                  class="flex items-center gap-1.5 text-xs"
+                  :class="entitlement.allowed ? 'text-success' : 'text-destructive'"
                 >
-                  <span>{{ entitlement.label }}</span>
-                  <span
-                    class="flex items-center gap-1.5 text-xs"
-                    :class="entitlement.allowed ? 'text-success' : 'text-destructive'"
-                  >
-                    <component :is="entitlement.allowed ? CircleCheck : Ban" class="size-3.5" />
-                    {{ entitlement.allowed ? 'Allowed' : 'Blocked' }}
-                  </span>
-                </li>
-              </ul>
-            </section>
-          </div>
+                  <component :is="entitlement.allowed ? CircleCheck : Ban" class="size-3.5" />
+                  {{ entitlement.allowed ? 'Allowed' : 'Blocked' }}
+                </span>
+              </li>
+            </ul>
+            <p v-if="!usage.isLimited" class="text-muted-foreground border-hairline border-t pt-3 text-xs">
+              This instance has no billing plugin configured, so storage is unmetered.
+            </p>
+          </section>
         </div>
       </div>
     </AsyncSection>

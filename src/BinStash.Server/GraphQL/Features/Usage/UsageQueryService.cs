@@ -52,8 +52,9 @@ public sealed class UsageQueryService
 
         var tenantId = tenantContext.TenantId;
 
-        // Metrics hang off releases, which hang off repositories, which carry the tenant. Sum in
-        // one pass rather than per-repository to keep this O(1) queries regardless of repo count.
+        // Only logical bytes are summed. Stored/compressed footprint is a property of the
+        // SHARED chunk store, not of this tenant, so it is neither billable here nor safe to
+        // report back (see TenantUsageGql).
         var totals = await _db.ReleaseMetrics
             .AsNoTracking()
             .Join(_db.Releases.AsNoTracking(), rm => rm.ReleaseId, r => r.Id, (rm, r) => new { rm, r.RepoId })
@@ -63,10 +64,6 @@ public sealed class UsageQueryService
             .Select(g => new
             {
                 LogicalBytes = (long)g.Sum(x => (decimal)x.rm.TotalLogicalBytes),
-                StoredBytes = g.Sum(x => x.rm.NewUniqueLogicalBytes),
-                CompressedBytes = g.Sum(x => x.rm.NewCompressedBytes),
-                DeduplicationSavedBytes = g.Sum(x => x.rm.DeduplicationSavedBytes),
-                CompressionSavedBytes = g.Sum(x => x.rm.CompressionSavedBytes),
                 ReleaseCount = g.Count()
             })
             .FirstOrDefaultAsync(ct);
@@ -79,22 +76,19 @@ public sealed class UsageQueryService
 
         // NoOp billing reports long.MaxValue, which is "no plan limit" rather than a real ceiling.
         var isLimited = limits.MaxStorageBytes is > 0 and < long.MaxValue;
-        var compressedBytes = totals?.CompressedBytes ?? 0;
+        var logicalBytes = totals?.LogicalBytes ?? 0;
 
         return new TenantUsageGql
         {
             TenantId = tenantId,
-            LogicalBytes = totals?.LogicalBytes ?? 0,
-            StoredBytes = totals?.StoredBytes ?? 0,
-            CompressedBytes = compressedBytes,
-            DeduplicationSavedBytes = totals?.DeduplicationSavedBytes ?? 0,
-            CompressionSavedBytes = totals?.CompressionSavedBytes ?? 0,
+            LogicalBytes = logicalBytes,
             ReleaseCount = totals?.ReleaseCount ?? 0,
             RepositoryCount = repositoryCount,
             MaxStorageBytes = isLimited ? limits.MaxStorageBytes : null,
             IsLimited = isLimited,
+            // Quota is measured against logical bytes, matching how the tenant is billed.
             StorageUsedFraction = isLimited
-                ? (double)compressedBytes / limits.MaxStorageBytes
+                ? (double)logicalBytes / limits.MaxStorageBytes
                 : null,
             IsStorageAllowed = limits.IsStorageAllowed,
             IsIngestAllowed = limits.IsIngestAllowed,
