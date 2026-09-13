@@ -57,9 +57,11 @@ pipeline {
       }
       post {
         always {
-          // Published through the xUnit plugin rather than the `junit` step so both this stage and
-          // the .NET Test stage below feed the same publisher instead of two competing ones.
-          xunit checksName: '', tools: [JUnit(pattern: 'src/BinStash.Frontend/junit.xml', skipNoTestFiles: true, stopProcessingIfError: true)]
+          // The `junit` step, not the xUnit plugin used by the .NET stage: xUnit validates the
+          // report against the Surefire XSD, whose SUREFIRE_TIME allows at most three decimals,
+          // and vitest writes full float seconds (time="0.8954164"). JUnitResultArchiver does not
+          // validate, and the two publishers contribute to the same build test result.
+          junit allowEmptyResults: true, testResults: 'src/BinStash.Frontend/junit.xml'
           publishHTML([
             allowMissing: true,
             alwaysLinkToLastBuild: true,
