@@ -23,6 +23,8 @@ using BinStash.Server.Services.ChunkStores;
 using HotChocolate.Subscriptions;
 using Microsoft.EntityFrameworkCore;
 
+using BinStash.Server.Services.Releases;
+
 namespace BinStash.Server.Services.ReleaseUpgrade;
 
 /// <summary>
@@ -122,8 +124,18 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
                 return;
             }
 
+            // Releases needing a format upgrade, plus releases already at the target version
+            // whose content metrics were never recorded (builds before 2026-03 did not write
+            // logical size or chunk count). Both cases need the package read; only the first
+            // needs it rewritten.
+            var releasesMissingMetrics = db.ReleaseMetrics
+                .Where(m => m.TotalLogicalBytes == 0 || m.ChunksInRelease == 0)
+                .Select(m => m.ReleaseId);
+
             var releasesToUpgrade = await db.Releases
-                .Where(r => repoIds.Contains(r.RepoId) && r.SerializerVersion < jobData.TargetSerializerVersion)
+                .Where(r => repoIds.Contains(r.RepoId)
+                            && (r.SerializerVersion < jobData.TargetSerializerVersion
+                                || releasesMissingMetrics.Contains(r.Id)))
                 .ToListAsync(cancellationToken);
 
             progress.TotalReleases = releasesToUpgrade.Count;
@@ -184,10 +196,36 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
                     // Step 2: Deserialize (backward-compatible)
                     var (package, _) = await ReleasePackageSerializer.DeserializeAsync(oldData, cancellationToken);
 
-                    // Step 2b: Populate null Length fields from FileDefinition table.
+                    // Step 2a: Populate null Length fields from FileDefinition table.
                     // V1/V2 formats did not store file lengths; the V6 serializer requires them.
                     // Look up missing lengths via ContentHash → FileDefinition.Length.
+                    //
+                    // This MUST run before the metrics below: logical size is the sum of those
+                    // very Length fields, so recomputing first would score every V1/V2 release
+                    // as 0 bytes — precisely the gap the backfill exists to close.
                     await PopulateMissingLengthsAsync(db, package, store.Id, cancellationToken);
+
+                    // Step 2b: Refresh the derived content metrics while the package is open.
+                    // Deliberately isolated: a metrics failure must not abort a format upgrade
+                    // that has already rewritten stored data.
+                    try
+                    {
+                        await RecalculateMetricsAsync(db, chunkStoreService, store, package, release.Id, cancellationToken);
+                    }
+                    catch (Exception metricsEx)
+                    {
+                        _logger.LogWarning(metricsEx,
+                            "Upgrade job {JobId}: could not recompute metrics for release {ReleaseId}",
+                            jobId, release.Id);
+                    }
+
+                    if (release.SerializerVersion >= jobData.TargetSerializerVersion)
+                    {
+                        // Already on the target format — it was selected only to backfill
+                        // metrics, so do not rewrite the .rdef.
+                        progress.SkippedReleases++;
+                        continue;
+                    }
 
                     // Step 3: Re-serialize to latest version
                     var (newData, _) = await ReleasePackageSerializer.SerializeAsync(package, cancellationToken: cancellationToken);
@@ -298,6 +336,26 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
     /// The <see cref="FileDefinition.Checksum"/> (BLAKE3 whole-file hash) matches
     /// <see cref="OpaqueBlobBacking.ContentHash"/> and <see cref="ContainerMemberBinding.ContentHash"/>.
     /// </summary>
+    /// <summary>
+    /// Recomputes and persists the release's logical size and chunk count.
+    /// </summary>
+    private static async Task RecalculateMetricsAsync(
+        BinStashDbContext db,
+        IChunkStoreService chunkStoreService,
+        ChunkStore store,
+        ReleasePackage package,
+        Guid releaseId,
+        CancellationToken ct)
+    {
+        var metrics = await db.ReleaseMetrics.FirstOrDefaultAsync(m => m.ReleaseId == releaseId, ct);
+        if (metrics is null)
+            return;
+
+        metrics.TotalLogicalBytes = ReleaseMetricsCalculator.CalculateLogicalBytes(package);
+        metrics.ChunksInRelease = await ReleaseMetricsCalculator.CountUniqueChunksAsync(
+            package, store, chunkStoreService, ct);
+    }
+
     private static async Task PopulateMissingLengthsAsync(BinStashDbContext db, ReleasePackage package, Guid chunkStoreId, CancellationToken cancellationToken)
     {
         // Collect content hashes that need length lookup

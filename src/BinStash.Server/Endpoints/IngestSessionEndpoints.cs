@@ -34,6 +34,7 @@ using Microsoft.EntityFrameworkCore;
 using ZstdNet;
 
 using BinStash.Core.Auditing;
+using BinStash.Server.Services.Releases;
 
 namespace BinStash.Server.Endpoints;
 
@@ -579,7 +580,7 @@ public static class IngestSessionEndpoints
         ulong totalLogicalBytes = 0;
         foreach (var artifact in outputArtifacts)
         {
-            totalLogicalBytes += CalculateLogicalArtifactSize(artifact);
+            totalLogicalBytes += ReleaseMetricsCalculator.CalculateLogicalArtifactSize(artifact);
         }
 
         ingestSession.TotalLogicalBytes = (long)totalLogicalBytes;
@@ -702,31 +703,4 @@ public static class IngestSessionEndpoints
         return hashes;
     }
 
-    private static ulong CalculateLogicalArtifactSize(OutputArtifact artifact)
-    {
-        return artifact.Backing switch
-        {
-            OpaqueBlobBacking opaque => CalculateOpaqueArtifactSize(opaque),
-            ReconstructedContainerBacking reconstructed => CalculateReconstructedArtifactSize(reconstructed),
-            _ => 0UL
-        };
-    }
-
-    private static ulong CalculateOpaqueArtifactSize(OpaqueBlobBacking backing)
-    {
-        return backing.Length.HasValue ? (ulong)backing.Length.Value : 0UL;
-    }
-
-    private static ulong CalculateReconstructedArtifactSize(ReconstructedContainerBacking backing)
-    {
-        ulong total = 0;
-
-        foreach (var member in backing.Members)
-        {
-            if (member.Length.HasValue)
-                total += (ulong)member.Length.Value;
-        }
-
-        return total;
-    }
 }
