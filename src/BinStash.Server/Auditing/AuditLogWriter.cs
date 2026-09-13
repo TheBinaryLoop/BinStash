@@ -62,7 +62,9 @@ public sealed class AuditLogWriter : IAuditLogWriter
             var http = _httpContextAccessor.HttpContext;
             var user = http?.User;
 
-            var (actorType, actorId, actorDisplay) = ResolveActor(user);
+            var (actorType, actorId, actorDisplay) = draft.SystemActor
+                ? (AuditActorType.System, (Guid?)null, draft.SystemActorDisplay ?? "system")
+                : ResolveActor(user);
 
             var entry = new AuditLogEntry
             {
