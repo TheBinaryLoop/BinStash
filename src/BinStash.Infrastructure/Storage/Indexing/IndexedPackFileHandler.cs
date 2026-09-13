@@ -16,6 +16,7 @@
 using System.Collections.Concurrent;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Serialization.Utils;
+using BinStash.Core.Storage.Gc;
 using BinStash.Infrastructure.Storage.Packing;
 
 namespace BinStash.Infrastructure.Storage.Indexing;
@@ -68,6 +69,27 @@ internal sealed class IndexedPackFileHandler : IDisposable
     private const int LogFlushThreshold = 4096;
 
     private const int CompactionFanIn = 16; // 16 level-N segs → 1 level-(N+1) seg
+
+    /// <summary>
+    /// How long a replaced <see cref="SortedIndexSegment"/> is kept mapped after it has been
+    /// swapped out of <see cref="_segments"/>.
+    ///
+    /// <para>
+    /// Reads resolve against a lock-free snapshot of the segment list, so a reader can still be
+    /// inside <see cref="SortedIndexSegment.TryFind"/> on a segment the write path has already
+    /// replaced. Disposing that segment immediately unmaps the view underneath the reader.
+    /// The segment's <em>file</em> may be deleted at once (both platforms keep an open mapping
+    /// alive across unlink); only the managed disposal has to wait. A lookup takes microseconds,
+    /// so a minute is many orders of magnitude of headroom.
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan SegmentDisposalGrace = TimeSpan.FromSeconds(60);
+
+    /// <summary>Filename suffix marking a pack file that copy-forward compaction has superseded.</summary>
+    internal const string RetiredMarkerSuffix = ".retired";
+
+    /// <summary>Filename suffix of a compaction output that has not been published yet.</summary>
+    internal const string CompactionTempSuffix = ".packtmp";
 
     // -----------------------------------------------------------------------
     // Identityf
@@ -123,6 +145,29 @@ internal sealed class IndexedPackFileHandler : IDisposable
     private int _currentFileNumber = int.MinValue;
     private FileStream? _currentStream;
     private long _currentStreamLength;
+
+    /// <summary>
+    /// Highest pack file number this handler has handed out, or <see cref="int.MinValue"/> when
+    /// no number has been allocated yet.
+    ///
+    /// <para>
+    /// Both the append path (rollover at 4 GiB) and compaction need fresh pack numbers, and they
+    /// run concurrently by design — compaction streams bytes without holding the write lock.
+    /// Routing every allocation through <see cref="AllocatePackFileNumberUnderLock"/> and this
+    /// single counter is what stops the two from ever picking the same number and interleaving
+    /// their writes into one file.
+    /// </para>
+    /// </summary>
+    private int _highestAllocatedFileNumber = int.MinValue;
+
+    // -----------------------------------------------------------------------
+    // Deferred segment disposal
+
+    /// <summary>
+    /// Segments swapped out of <see cref="_segments"/> that are not safe to unmap yet.
+    /// Drained opportunistically; see <see cref="SegmentDisposalGrace"/>.
+    /// </summary>
+    private readonly ConcurrentQueue<(SortedIndexSegment Segment, long DueTicks)> _retiredSegments = new();
 
     // -----------------------------------------------------------------------
     // LRU cache integration
@@ -426,7 +471,7 @@ internal sealed class IndexedPackFileHandler : IDisposable
         // Close + delete old segment files
         foreach (var seg in toMerge)
         {
-            seg.Segment.Dispose();
+            RetireSegment(seg.Segment);
             TryDeleteFile(seg.SegmentPath);
             TryDeleteFile(Path.ChangeExtension(seg.SegmentPath, ".bloom"));
         }
@@ -455,21 +500,38 @@ internal sealed class IndexedPackFileHandler : IDisposable
     // -----------------------------------------------------------------------
     // Public write API
 
-    public async Task<int> WriteIndexedDataAsync(Hash32 hash, ReadOnlyMemory<byte> data)
+    /// <summary>
+    /// Stores <paramref name="data"/> under <paramref name="hash"/>, deduplicating against the
+    /// existing index.
+    /// </summary>
+    /// <returns>
+    /// <c>WasNew</c> — whether bytes were actually appended, and <c>Length</c> — the physical
+    /// size of the pack entry either way.
+    ///
+    /// <para>
+    /// The length is reported even for a duplicate on purpose. Callers maintain a database
+    /// catalogue alongside the pack store, and the two can legitimately disagree: a crash
+    /// between the pack append and the catalogue insert, or a garbage-collection quarantine
+    /// that dropped the catalogue row while deliberately leaving the bytes in place. If a
+    /// duplicate reported nothing, the caller would have no size to write and the catalogue
+    /// would stay permanently out of step with the store.
+    /// </para>
+    /// </returns>
+    public async Task<(bool WasNew, int Length)> WriteIndexedDataAsync(Hash32 hash, ReadOnlyMemory<byte> data)
     {
         ThrowIfDisposed();
         await EnsureIndexLoadedAsync().ConfigureAwait(false);
 
         // Fast-path: lock-free duplicate check
-        if (TryFindInIndex(hash, out _))
-            return 0;
+        if (TryFindInIndex(hash, out var existing))
+            return (false, existing.Length);
 
         await _writeLock.WaitAsync().ConfigureAwait(false);
         try
         {
             // Double-check under write lock
-            if (TryFindInIndex(hash, out _))
-                return 0;
+            if (TryFindInIndex(hash, out existing))
+                return (false, existing.Length);
 
             var dataStream = await GetWritableDataFileAsync().ConfigureAwait(false);
             var fileNo     = _currentFileNumber;
@@ -489,7 +551,7 @@ internal sealed class IndexedPackFileHandler : IDisposable
                 await RunCompactionIfNeededAsync().ConfigureAwait(false);
             }
 
-            return length;
+            return (true, length);
         }
         finally
         {
@@ -546,9 +608,11 @@ internal sealed class IndexedPackFileHandler : IDisposable
 
         try
         {
-            var pattern   = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
-            var dataFiles = Directory.EnumerateFiles(_directory, pattern)
-                .OrderBy(ParsePackFileNumber)
+            // Retired packs hold only entries that compaction already copied forward;
+            // re-indexing them would resurrect the garbage the copy-forward dropped.
+            var dataFiles = EnumeratePackFileNumbers(includeRetired: false)
+                .Order()
+                .Select(PackFilePath)
                 .ToArray();
 
             var rebuilt = new ConcurrentDictionary<Hash32, IndexEntry>();
@@ -573,39 +637,12 @@ internal sealed class IndexedPackFileHandler : IDisposable
                 }
             }
 
-            // Tear down existing index files + state
-            DisposeAndClearSegments();
-            DeleteAllIndexFiles();
-            CloseLogAppendStream();
-
-            _logDict       = new ConcurrentDictionary<Hash32, IndexEntry>();
-            _logEntryCount = 0;
-            _segments      = SegmentList.Empty;
-
-            if (rebuilt.Count == 0)
-                return true;
-
-            var sorted = rebuilt
-                .OrderBy(static kvp => kvp.Key)
-                .Select(static kvp => (kvp.Key, kvp.Value))
-                .ToList();
-
-            var level    = sorted.Count > SortedIndexSegment.Level1MaxEntries ? 2
-                         : sorted.Count > SortedIndexSegment.Level0MaxEntries ? 1
-                         : 0;
-            var namePrefix = Path.GetFileName(_indexFilePrefix);
-            var segPath   = Path.Combine(_directory, $"{namePrefix}.seg-{level}00.idx");
-            var bloomPath = Path.ChangeExtension(segPath, ".bloom");
-
-            var bloom = new PackIndexBloomFilter(sorted.Count);
-            foreach (var (hash, _) in sorted)
-                bloom.Add(hash);
-
-            await FileAtomicHelper.WriteAtomicAsync(bloomPath, bloom.Serialize()).ConfigureAwait(false);
-            await SortedIndexSegment.WriteAsync(segPath, sorted).ConfigureAwait(false);
-
-            var seg = new SortedIndexSegment(segPath);
-            _segments = new SegmentList([new SegmentEntry(segPath, seg, bloom)]);
+            // Swap the freshly derived index in without ever leaving the bucket unindexed —
+            // a rebuild runs against a live store, and a reader that lands in the gap would be
+            // told a perfectly healthy object does not exist.
+            await PublishIndexUnderLockAsync(
+                rebuilt.ToDictionary(static kvp => kvp.Key, static kvp => kvp.Value),
+                CancellationToken.None).ConfigureAwait(false);
 
             return true;
         }
@@ -640,9 +677,9 @@ internal sealed class IndexedPackFileHandler : IDisposable
 
         try
         {
-            var pattern   = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
-            var dataFiles = Directory.EnumerateFiles(_directory, pattern)
-                .OrderBy(ParsePackFileNumber)
+            var dataFiles = EnumeratePackFileNumbers(includeRetired: false)
+                .Order()
+                .Select(PackFilePath)
                 .ToArray();
 
             foreach (var dataFile in dataFiles)
@@ -691,6 +728,538 @@ internal sealed class IndexedPackFileHandler : IDisposable
         {
             _writeLock.Release();
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Garbage collection primitives
+    //
+    // The invariant these rely on: a pack file is append-only and is never modified in
+    // place. Position within a bucket is therefore a total order on write time, and the
+    // bytes behind an address a reader already resolved cannot move or change under it.
+    // Reclaim honours that by copying live entries into a *new* pack and retiring the old
+    // one afterwards, never by rewriting it.
+
+    /// <summary>
+    /// Captures the bucket's current append position.
+    ///
+    /// <para>
+    /// Everything at or beyond the returned position is written after this call, so it
+    /// cannot have been part of the object graph a mark phase starting now will observe.
+    /// Treating those entries as implicitly live is what lets the collector run against
+    /// live ingest traffic without coordinating with writers.
+    /// </para>
+    /// </summary>
+    public async Task<GcBucketWatermark> SnapshotWatermarkAsync(CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var numbers = EnumeratePackFileNumbers(includeRetired: false).ToArray();
+            if (numbers.Length == 0)
+                return GcBucketWatermark.Empty;
+
+            var highest = numbers.Max();
+
+            // The append stream's own length is authoritative while it is open; the file
+            // length can lag behind buffered writes.
+            var length = _currentFileNumber == highest && _currentStream is not null
+                ? _currentStreamLength
+                : new FileInfo(PackFilePath(highest)).Length;
+
+            return new GcBucketWatermark(highest, length);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Materialises the bucket's entire index as a hash → location map, resolving shadowed
+    /// entries exactly the way <see cref="TryFindInIndex"/> does so that the snapshot and the
+    /// live read path can never disagree.
+    /// </summary>
+    public async Task<Dictionary<Hash32, IndexEntry>> SnapshotIndexAsync(CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
+
+        var log  = _logDict;      // volatile field read once
+        var segs = _segments;     // volatile field read once
+
+        var result = new Dictionary<Hash32, IndexEntry>(log.Count + 1024);
+
+        foreach (var kvp in log)
+            result[kvp.Key] = kvp.Value;
+
+        foreach (var seg in segs.Entries)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // TryAdd, not indexer assignment: lookup order is log first, then segments
+            // newest-first, and the first hit wins. Mirroring that here keeps the snapshot
+            // faithful even when the same hash appears in more than one tier.
+            foreach (var (hash, entry) in seg.Segment.ReadAllEntries())
+                result.TryAdd(hash, entry);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Physically removes <paramref name="doomed"/> from the bucket and republishes the index
+    /// without them.
+    ///
+    /// <para>
+    /// Work is done per source pack file. A pack is only touched when it is sealed (not the
+    /// one currently being appended to), not already retired, and dead enough to be worth the
+    /// rewrite. Its surviving entries are streamed into a freshly allocated pack, the bucket
+    /// index is rebuilt to point at the new locations, and only then is the source marked
+    /// retired — it stays on disk and readable until
+    /// <see cref="PurgeObsoletePacksAsync"/> confirms nothing references it any more.
+    /// </para>
+    /// <para>
+    /// Objects in packs that were skipped are counted in
+    /// <see cref="GcReclaimResult.DeferredObjects"/>; the caller must keep their tombstones.
+    /// </para>
+    /// </summary>
+    public async Task<GcReclaimResult> ReclaimAsync(
+        IReadOnlyCollection<GcObjectRef> doomed,
+        GarbageCollectionOptions options,
+        CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(options);
+
+        var result = new GcReclaimResult();
+        if (doomed.Count == 0)
+            return result;
+
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
+
+        var doomedByPack = doomed
+            .GroupBy(static d => d.FileNo)
+            .ToDictionary(static g => g.Key, static g => g.ToList());
+
+        // The pack being appended to right now is off-limits: rewriting it would race the
+        // writer, and its entries would be re-added behind our back. Deferring costs a run.
+        int appendFileNo;
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            appendFileNo = _currentFileNumber;
+            if (appendFileNo == int.MinValue)
+                appendFileNo = EnumeratePackFileNumbers(includeRetired: false).DefaultIfEmpty(int.MinValue).Max();
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+
+        var compactedPacks = 0;
+
+        foreach (var (fileNo, deadEntries) in doomedByPack.OrderByDescending(static kv => kv.Value.Sum(static d => (long)d.Length)))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (fileNo == appendFileNo || File.Exists(RetiredMarkerPath(fileNo)) || !File.Exists(PackFilePath(fileNo)))
+            {
+                result.DeferredObjects += deadEntries.Count;
+                continue;
+            }
+
+            if (compactedPacks >= options.MaxPacksToCompactPerRun)
+            {
+                result.DeferredObjects += deadEntries.Count;
+                continue;
+            }
+
+            var packLength = new FileInfo(PackFilePath(fileNo)).Length;
+            var deadBytes  = deadEntries.Sum(static d => (long)d.Length);
+
+            if (packLength > 0 && (double)deadBytes / packLength < options.MinimumPackGarbageRatio)
+            {
+                // Not worth the read+write amplification yet. The tombstones stay, and once
+                // more of the same pack dies the ratio will carry it over the line.
+                result.DeferredObjects += deadEntries.Count;
+                continue;
+            }
+
+            var reclaimed = await CompactPackFileAsync(fileNo, deadEntries, result.Warnings, ct).ConfigureAwait(false);
+            if (reclaimed is null)
+            {
+                result.DeferredObjects += deadEntries.Count;
+                continue;
+            }
+
+            compactedPacks++;
+            result.PacksCompacted += reclaimed.RewroteLiveEntries ? 1 : 0;
+            result.PacksRetired   += reclaimed.RewroteLiveEntries ? 0 : 1;
+            result.ReclaimedBytes += reclaimed.FreedBytes;
+            result.ReclaimedHashes.AddRange(reclaimed.RemovedHashes);
+            result.DeferredObjects += deadEntries.Count - reclaimed.RemovedHashes.Count;
+        }
+
+        return result;
+    }
+
+    private sealed record PackCompactionOutcome(List<Hash32> RemovedHashes, long FreedBytes, bool RewroteLiveEntries);
+
+    /// <summary>
+    /// Copies the live entries of one pack file forward into a new pack, republishes the
+    /// bucket index, and retires the source. Returns <see langword="null"/> when the pack
+    /// could not be processed and should be retried by a later run.
+    /// </summary>
+    private async Task<PackCompactionOutcome?> CompactPackFileAsync(
+        int fileNo, List<GcObjectRef> deadEntries, List<string> warnings, CancellationToken ct)
+    {
+        var sourcePath = PackFilePath(fileNo);
+        var deadSet    = deadEntries.Select(static d => d.Hash).ToHashSet();
+        var deadOffsets= deadEntries.Select(static d => d.Offset).ToHashSet();
+
+        // Phase A — stream the source into a new pack, outside the write lock. This is the
+        // expensive part and it must not block ingest. Nothing published yet, so a crash here
+        // leaves only an unreferenced temp file.
+        int outputFileNo;
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            outputFileNo = AllocatePackFileNumberUnderLock();
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+
+        var tempPath   = $"{_dataFilePrefix}-{outputFileNo}{CompactionTempSuffix}";
+        var outputPath = PackFilePath(outputFileNo);
+        var relocations = new List<(Hash32 Hash, IndexEntry Entry)>();
+        long freedBytes = 0;
+
+        try
+        {
+            await using (var source = new FileStream(
+                             sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
+                             bufferSize: 256 * 1024,
+                             options: FileOptions.Asynchronous | FileOptions.SequentialScan))
+            await using (var target = new FileStream(
+                             tempPath, FileMode.Create, FileAccess.Write, FileShare.None,
+                             bufferSize: 256 * 1024,
+                             options: FileOptions.Asynchronous))
+            {
+                // ignoreChecks: a corrupt entry must not abort the whole pass. Entries that
+                // fail to parse are treated as garbage and dropped, which is the only way a
+                // store with historic corruption can ever be cleaned up.
+                await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(source, ignoreChecks: true, ct).ConfigureAwait(false))
+                {
+                    if (deadOffsets.Contains(entry.Offset))
+                    {
+                        freedBytes += entry.Length;
+                        continue;
+                    }
+
+                    Hash32 hash;
+                    try
+                    {
+                        hash = _computeHash(entry.Data);
+                    }
+                    catch
+                    {
+                        // Unparseable payload: not referenced by anything that can read it.
+                        freedBytes += entry.Length;
+                        continue;
+                    }
+
+                    var (newOffset, newLength) = await PackFileEntry.WriteAsync(target, entry.Data, ct).ConfigureAwait(false);
+                    relocations.Add((hash, new IndexEntry(outputFileNo, newOffset, newLength)));
+                }
+
+                await target.FlushAsync(ct).ConfigureAwait(false);
+                target.Flush(flushToDisk: true);
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            TryDeleteFile(tempPath);
+            warnings.Add($"could not rewrite {Path.GetFileName(sourcePath)} ({ex.GetType().Name}: {ex.Message}); its tombstones are kept for a later run");
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
+            TryDeleteFile(tempPath);
+            throw;
+        }
+
+        // Phase B — publish. Short and under the write lock: rename the output into place,
+        // rebuild the bucket index around the relocations, then retire the source.
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var index = await SnapshotIndexAsync(ct).ConfigureAwait(false);
+
+            var removed = new List<Hash32>(deadSet.Count);
+            foreach (var dead in deadEntries)
+            {
+                // Only drop the index entry if it still points at the bytes we removed. A
+                // concurrent re-upload of the same content would have written a fresh entry
+                // elsewhere, and that one must survive.
+                if (index.TryGetValue(dead.Hash, out var current) &&
+                    current.FileNo == dead.FileNo && current.Offset == dead.Offset)
+                {
+                    index.Remove(dead.Hash);
+                    removed.Add(dead.Hash);
+                }
+            }
+
+            foreach (var (hash, entry) in relocations)
+            {
+                // Same rule in the other direction: never move a hash whose live location has
+                // already been superseded by something newer than this pack.
+                if (index.TryGetValue(hash, out var current) && current.FileNo == fileNo)
+                    index[hash] = entry;
+                else if (!index.ContainsKey(hash))
+                    index[hash] = entry;
+            }
+
+            if (relocations.Count > 0)
+                File.Move(tempPath, outputPath, overwrite: true);
+            else
+                TryDeleteFile(tempPath);
+
+            await PublishIndexUnderLockAsync(index, ct).ConfigureAwait(false);
+
+            // Retiring after the index no longer references the pack means a crash at any
+            // point above leaves a consistent store — at worst some space stays occupied.
+            await File.WriteAllTextAsync(
+                RetiredMarkerPath(fileNo),
+                DateTimeOffset.UtcNow.ToString("O"),
+                ct).ConfigureAwait(false);
+
+            return new PackCompactionOutcome(removed, freedBytes, relocations.Count > 0);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Replaces the whole bucket index with a single sorted segment built from
+    /// <paramref name="index"/>, and empties the append log.
+    ///
+    /// <para>
+    /// Collapsing to one segment is what keeps relocation correct. Segment lookup order is
+    /// positional, so an entry that moved could otherwise stay shadowed by a stale copy in an
+    /// older tier. With exactly one segment and an empty log there is nowhere for a stale copy
+    /// to hide, and because ordinary writes never overwrite an existing hash, no duplicate can
+    /// reappear afterwards.
+    /// </para>
+    /// </summary>
+    private async Task PublishIndexUnderLockAsync(Dictionary<Hash32, IndexEntry> index, CancellationToken ct)
+    {
+        var sorted = index
+            .OrderBy(static kvp => kvp.Key)
+            .Select(static kvp => (kvp.Key, kvp.Value))
+            .ToList();
+
+        // Build the replacement completely before anything live is touched. Reads resolve
+        // against these fields without taking a lock, so the old index has to stay whole and
+        // usable right up to the instant the new one takes over — tearing it down first opens a
+        // window in which a perfectly healthy object appears not to exist.
+        SegmentList replacement;
+
+        if (sorted.Count == 0)
+        {
+            replacement = SegmentList.Empty;
+        }
+        else
+        {
+            var level = sorted.Count > SortedIndexSegment.Level1MaxEntries ? 2
+                      : sorted.Count > SortedIndexSegment.Level0MaxEntries ? 1
+                      : 0;
+
+            var segPath   = FreeSegmentPath(level);
+            var bloomPath = Path.ChangeExtension(segPath, ".bloom");
+
+            var bloom = new PackIndexBloomFilter(sorted.Count);
+            foreach (var (hash, _) in sorted)
+                bloom.Add(hash);
+
+            await FileAtomicHelper.WriteAtomicAsync(bloomPath, bloom.Serialize(), ct).ConfigureAwait(false);
+            await SortedIndexSegment.WriteAsync(segPath, sorted, ct).ConfigureAwait(false);
+
+            replacement = new SegmentList([new SegmentEntry(segPath, new SortedIndexSegment(segPath), bloom)]);
+        }
+
+        var previous = _segments;
+
+        // The handover. Segments first: until the log is cleared a reader may combine the new
+        // segment with log entries that predate it, and that combination is still correct —
+        // a log entry only ever points at a pack this method has not retired yet.
+        _segments = replacement;
+
+        CloseLogAppendStream();
+        _logDict       = new ConcurrentDictionary<Hash32, IndexEntry>();
+        _logEntryCount = 0;
+        await File.WriteAllBytesAsync(_logFilePath, [], ct).ConfigureAwait(false);
+
+        // Only now are the replaced segments unreferenced. Their files go immediately (an open
+        // mapping outlives the unlink on every platform we target); the mappings themselves are
+        // handed to the deferred disposer, because a reader may still be inside one.
+        foreach (var entry in previous.Entries)
+        {
+            RetireSegment(entry.Segment);
+            TryDeleteFile(entry.SegmentPath);
+            TryDeleteFile(Path.ChangeExtension(entry.SegmentPath, ".bloom"));
+        }
+
+        // Any segment file left over from an earlier lifecycle is now stale too: the new segment
+        // is authoritative for the whole bucket.
+        var namePrefix = Path.GetFileName(_indexFilePrefix);
+        var keep = replacement.Entries.Select(static e => e.SegmentPath).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var stale in Directory.EnumerateFiles(_directory, $"{namePrefix}.seg-*.idx").ToArray())
+        {
+            if (keep.Contains(stale))
+                continue;
+
+            TryDeleteFile(stale);
+            TryDeleteFile(Path.ChangeExtension(stale, ".bloom"));
+        }
+    }
+
+    /// <summary>
+    /// The first unused segment filename at <paramref name="level"/>.
+    ///
+    /// <para>
+    /// Publishing must not reuse the name of a segment that is still mapped: on Linux the
+    /// rename would strand readers on the old inode (harmless but confusing), and on Windows it
+    /// would fail outright. A bucket only ever holds a handful of segments, so the first free
+    /// slot is found immediately.
+    /// </para>
+    /// </summary>
+    private string FreeSegmentPath(int level)
+    {
+        var namePrefix = Path.GetFileName(_indexFilePrefix);
+
+        for (var seq = 0; seq < 100; seq++)
+        {
+            var path = Path.Combine(_directory, $"{namePrefix}.seg-{level}{seq:D2}.idx");
+            if (!File.Exists(path))
+                return path;
+        }
+
+        throw new InvalidOperationException($"No free level-{level} segment slot for bucket '{namePrefix}'.");
+    }
+
+    /// <summary>
+    /// Deletes pack files that nothing references any more and whose drain window has elapsed,
+    /// plus any leftover compaction temporaries.
+    ///
+    /// <para>
+    /// Deletion is gated on a live check of the index rather than on a marker alone. That makes
+    /// the operation self-validating: whatever state a crashed or half-finished run left behind,
+    /// a pack is only unlinked once the index provably no longer points into it. It also makes
+    /// this the recovery path — packs orphaned by a run that died between copying forward and
+    /// retiring are picked up here without any journal to replay.
+    /// </para>
+    /// </summary>
+    public async Task<GcPurgeResult> PurgeObsoletePacksAsync(TimeSpan drainWindow, CancellationToken ct = default)
+    {
+        ThrowIfDisposed();
+        await EnsureIndexLoadedAsync().ConfigureAwait(false);
+
+        var deleted = 0;
+        var stillDraining = 0;
+        long freed = 0;
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Compaction temporaries are never referenced by anything.
+            foreach (var tmp in Directory.EnumerateFiles(_directory, $"{Path.GetFileName(_dataFilePrefix)}-*{CompactionTempSuffix}"))
+            {
+                if (!tmp.EndsWith(CompactionTempSuffix, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (DateTime.UtcNow - File.GetLastWriteTimeUtc(tmp) < drainWindow)
+                {
+                    stillDraining++;
+                    continue;
+                }
+
+                TryDeleteFile(tmp);
+            }
+
+            var index = await SnapshotIndexAsync(ct).ConfigureAwait(false);
+            var referencedPacks = index.Values.Select(static e => e.FileNo).ToHashSet();
+
+            var appendFileNo = _currentFileNumber;
+            var cutoff = DateTime.UtcNow - drainWindow;
+            var packNumbers = EnumeratePackFileNumbers(includeRetired: true).ToArray();
+
+            // "Nothing references this pack" is only evidence of garbage if the index that was
+            // consulted actually loaded. A corrupt or missing segment is skipped silently on
+            // open, which leaves an empty index that would otherwise condemn every pack in the
+            // bucket. Retirement markers stay trustworthy — one is only written after an index
+            // swap committed — so those are still honoured; unmarked packs are left for a
+            // rebuild to explain.
+            var indexLooksUsable = index.Count > 0 || packNumbers.Length == 0;
+
+            foreach (var fileNo in packNumbers)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                if (fileNo == appendFileNo || referencedPacks.Contains(fileNo))
+                    continue;
+
+                var packPath   = PackFilePath(fileNo);
+                var markerPath = RetiredMarkerPath(fileNo);
+                var hasMarker  = File.Exists(markerPath);
+
+                if (!hasMarker && !indexLooksUsable)
+                {
+                    stillDraining++;
+                    continue;
+                }
+
+                // With a marker the drain clock starts at retirement; without one this is an
+                // orphan, and its own mtime is the only evidence of when it stopped changing.
+                var referenceTime = hasMarker
+                    ? File.GetLastWriteTimeUtc(markerPath)
+                    : File.GetLastWriteTimeUtc(packPath);
+
+                if (referenceTime > cutoff)
+                {
+                    stillDraining++;
+                    continue;
+                }
+
+                long size;
+                try { size = new FileInfo(packPath).Length; }
+                catch { size = 0; }
+
+                TryDeleteFile(packPath);
+                if (hasMarker)
+                    TryDeleteFile(markerPath);
+
+                if (!File.Exists(packPath))
+                {
+                    deleted++;
+                    freed += size;
+                }
+            }
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+
+        DrainRetiredSegments();
+        return new GcPurgeResult(deleted, freed, stillDraining);
     }
 
     // -----------------------------------------------------------------------
@@ -791,7 +1360,7 @@ internal sealed class IndexedPackFileHandler : IDisposable
         {
             _currentStream.Dispose();
             _currentStream = null;
-            _currentFileNumber++;
+            _currentFileNumber = AllocatePackFileNumberUnderLock();
             await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
         }
 
@@ -803,17 +1372,16 @@ internal sealed class IndexedPackFileHandler : IDisposable
 
     private async Task OpenCurrentWritableFileAsync()
     {
-        var prefix   = Path.GetFileName(_dataFilePrefix);
-        var existing = Directory.EnumerateFiles(_directory, $"{prefix}-*.pack")
-            .Select(ParsePackFileNumber)
-            .Where(static n => n >= 0)
+        // A retired pack is scheduled for deletion, so it must never be adopted as the
+        // append target even when it happens to carry the highest number on disk.
+        var existing = EnumeratePackFileNumbers(includeRetired: false)
             .OrderBy(static n => n)
             .ToArray();
 
         if (existing.Length == 0)
         {
-            _currentFileNumber = 0;
-            await OpenSpecificWritableFileAsync(0).ConfigureAwait(false);
+            _currentFileNumber = AllocatePackFileNumberUnderLock();
+            await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
             return;
         }
 
@@ -821,9 +1389,59 @@ internal sealed class IndexedPackFileHandler : IDisposable
         var highestPath = $"{_dataFilePrefix}-{highest}.pack";
         var highestLen  = new FileInfo(highestPath).Length;
 
-        _currentFileNumber = highestLen < _maxPackFileSize ? highest : highest + 1;
+        // Seed the allocator from what is already on disk so a fresh handler cannot hand
+        // out a number that an earlier process already used.
+        _highestAllocatedFileNumber = Math.Max(_highestAllocatedFileNumber, highest);
+
+        _currentFileNumber = highestLen < _maxPackFileSize ? highest : AllocatePackFileNumberUnderLock();
         await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Reserves the next unused pack file number for this bucket.
+    /// Must be called under <see cref="_writeLock"/> — it is the single arbiter between the
+    /// append path's 4 GiB rollover and compaction's fresh output files.
+    /// </summary>
+    private int AllocatePackFileNumberUnderLock()
+    {
+        var onDisk = EnumeratePackFileNumbers(includeRetired: true)
+            .DefaultIfEmpty(-1)
+            .Max();
+
+        var next = Math.Max(Math.Max(onDisk, _highestAllocatedFileNumber), _currentFileNumber == int.MinValue ? -1 : _currentFileNumber) + 1;
+        _highestAllocatedFileNumber = next;
+        return next;
+    }
+
+    /// <summary>
+    /// Pack file numbers present in this bucket's directory, optionally including files that
+    /// carry a retirement marker.
+    /// </summary>
+    private IEnumerable<int> EnumeratePackFileNumbers(bool includeRetired)
+    {
+        var pattern = $"{Path.GetFileName(_dataFilePrefix)}-*.pack";
+
+        foreach (var path in Directory.EnumerateFiles(_directory, pattern))
+        {
+            // EnumerateFiles patterns can over-match on Windows short names; require the
+            // exact extension so a sidecar never gets mistaken for a pack.
+            if (!path.EndsWith(".pack", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var no = ParsePackFileNumber(path);
+            if (no < 0)
+                continue;
+
+            if (!includeRetired && File.Exists(RetiredMarkerPath(no)))
+                continue;
+
+            yield return no;
+        }
+    }
+
+    private string PackFilePath(int fileNo) => $"{_dataFilePrefix}-{fileNo}.pack";
+
+    private string RetiredMarkerPath(int fileNo) => $"{_dataFilePrefix}-{fileNo}{RetiredMarkerSuffix}";
 
     private Task OpenSpecificWritableFileAsync(int fileNumber)
     {
@@ -856,17 +1474,35 @@ internal sealed class IndexedPackFileHandler : IDisposable
         var old = _segments;
         _segments = SegmentList.Empty;
         foreach (var entry in old.Entries)
-            entry.Segment.Dispose();
+            RetireSegment(entry.Segment);
     }
 
-    private void DeleteAllIndexFiles()
+    /// <summary>
+    /// Hands a segment that is no longer part of the published list to the deferred disposer.
+    /// Never dispose a segment inline: a lock-free reader may be mid-lookup inside it.
+    /// </summary>
+    private void RetireSegment(SortedIndexSegment segment)
     {
-        var namePrefix = Path.GetFileName(_indexFilePrefix);
-        foreach (var f in Directory.EnumerateFiles(_directory, $"{namePrefix}.seg-*.idx"))
-            TryDeleteFile(f);
-        foreach (var f in Directory.EnumerateFiles(_directory, $"{namePrefix}.seg-*.bloom"))
-            TryDeleteFile(f);
-        TryDeleteFile(_logFilePath);
+        _retiredSegments.Enqueue((segment, DateTime.UtcNow.Add(SegmentDisposalGrace).Ticks));
+        DrainRetiredSegments();
+    }
+
+    /// <summary>
+    /// Disposes segments whose grace period has elapsed. Cheap enough to call on any
+    /// write-path transition; the queue is empty in the steady state.
+    /// </summary>
+    private void DrainRetiredSegments()
+    {
+        var now = DateTime.UtcNow.Ticks;
+
+        while (_retiredSegments.TryPeek(out var head) && head.DueTicks <= now)
+        {
+            if (!_retiredSegments.TryDequeue(out var due))
+                break;
+
+            try { due.Segment.Dispose(); }
+            catch { /* best-effort: the mapping goes away with the process anyway */ }
+        }
     }
 
     private static void TryDeleteFile(string path)

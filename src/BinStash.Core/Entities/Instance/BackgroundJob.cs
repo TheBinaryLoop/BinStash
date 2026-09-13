@@ -82,6 +82,110 @@ public static class BackgroundJobTypes
 {
     public const string ReleaseUpgrade = "ReleaseUpgrade";
     public const string ChunkStoreRebuild = "ChunkStoreRebuild";
+    public const string ChunkStoreGc = "ChunkStoreGc";
+}
+
+/// <summary>
+/// Typed input payload for a <see cref="BackgroundJobTypes.ChunkStoreGc"/> job.
+/// Serialized to JSON and stored in <see cref="BackgroundJob.JobData"/>.
+/// </summary>
+public sealed class ChunkStoreGcJobData
+{
+    public Guid ChunkStoreId { get; set; }
+
+    /// <summary>Report what would be collected without quarantining or reclaiming anything.</summary>
+    public bool DryRun { get; set; }
+
+    /// <summary>Mark and quarantine, but stop before physically reclaiming any bytes.</summary>
+    public bool SkipReclaim { get; set; }
+
+    /// <summary>
+    /// Overrides the configured quarantine retention, in hours. Null uses the instance default.
+    /// Shortening this trades recoverability for disk, so it is a per-run operator decision
+    /// rather than something the job infers.
+    /// </summary>
+    public double? RetentionHoursOverride { get; set; }
+}
+
+/// <summary>
+/// Typed progress payload for a <see cref="BackgroundJobTypes.ChunkStoreGc"/> job.
+/// Serialized to JSON and stored in <see cref="BackgroundJob.ProgressData"/>.
+/// </summary>
+public sealed class ChunkStoreGcProgressData
+{
+    /// <summary>The phase the run is currently in.</summary>
+    public string Phase { get; set; } = ChunkStoreGcPhases.Pending;
+
+    public int TotalBuckets { get; set; }
+    public int ProcessedBuckets { get; set; }
+
+    /// <summary>Releases whose reachable set has been walked.</summary>
+    public int MarkedReleases { get; set; }
+    public int TotalReleases { get; set; }
+
+    /// <summary>Distinct objects found reachable from the roots.</summary>
+    public long ReachableObjects { get; set; }
+
+    /// <summary>Objects moved into quarantine by this run.</summary>
+    public long QuarantinedObjects { get; set; }
+
+    /// <summary>Physical bytes those quarantined objects occupy.</summary>
+    public long QuarantinedBytes { get; set; }
+
+    /// <summary>Objects whose bytes this run physically dropped (from any run's quarantine).</summary>
+    public long ReclaimedObjects { get; set; }
+
+    /// <summary>
+    /// Bytes of dead pack entries this run dropped — the size of the garbage it identified and
+    /// stopped carrying forward.
+    ///
+    /// <para>
+    /// This is not the same as space returned to the filesystem, and the two are tracked
+    /// separately on purpose. Compaction rewrites a pack's survivors into a new file, so the
+    /// volume only shrinks once the superseded file is unlinked, which happens after a drain
+    /// window and is usually a later run's doing. Adding the two together would report space
+    /// twice and flatter a run that has freed nothing yet.
+    /// </para>
+    /// </summary>
+    public long ReclaimedBytes { get; set; }
+
+    /// <summary>Pack files rewritten to drop dead entries.</summary>
+    public int PacksCompacted { get; set; }
+
+    /// <summary>Pack files unlinked after their drain window elapsed.</summary>
+    public int PacksDeleted { get; set; }
+
+    /// <summary>Bytes actually returned to the filesystem by unlinking superseded pack files.</summary>
+    public long PackBytesDeleted { get; set; }
+
+    /// <summary>
+    /// Objects whose tombstones an in-flight ingest reclaimed before this run could — counted
+    /// because a persistently high number means the retention window is too short for the
+    /// workload.
+    /// </summary>
+    public long ResurrectedObjects { get; set; }
+}
+
+/// <summary>
+/// Well-known <see cref="ChunkStoreGcProgressData.Phase"/> values.
+/// </summary>
+public static class ChunkStoreGcPhases
+{
+    public const string Pending = "Pending";
+
+    /// <summary>Capturing per-bucket append watermarks.</summary>
+    public const string Snapshot = "Snapshot";
+
+    /// <summary>Walking releases to their chunks.</summary>
+    public const string Mark = "Mark";
+
+    /// <summary>Quarantining everything the mark phase did not reach.</summary>
+    public const string Sweep = "Sweep";
+
+    /// <summary>Physically reclaiming objects whose quarantine has expired.</summary>
+    public const string Reclaim = "Reclaim";
+
+    public const string Completed = "Completed";
 }
 
 /// <summary>

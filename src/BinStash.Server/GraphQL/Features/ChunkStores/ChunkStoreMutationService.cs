@@ -38,6 +38,7 @@ public sealed class ChunkStoreMutationService
     private readonly IAuthorizationService _authorizationService;
     private readonly IOptions<StorageSettings> _storageOptions;
     private readonly RebuildJobChannel _rebuildJobChannel;
+    private readonly GcJobChannel _gcJobChannel;
     private readonly Channel<Guid> _upgradeJobChannel;
     private readonly IAuditLogWriter _audit;
 
@@ -47,6 +48,7 @@ public sealed class ChunkStoreMutationService
         IAuthorizationService authorizationService,
         IOptions<StorageSettings> storageOptions,
         RebuildJobChannel rebuildJobChannel,
+        GcJobChannel gcJobChannel,
         Channel<Guid> upgradeJobChannel,
         IAuditLogWriter audit)
     {
@@ -55,6 +57,7 @@ public sealed class ChunkStoreMutationService
         _authorizationService = authorizationService;
         _storageOptions = storageOptions;
         _rebuildJobChannel = rebuildJobChannel;
+        _gcJobChannel = gcJobChannel;
         _upgradeJobChannel = upgradeJobChannel;
         _audit = audit;
     }
@@ -288,6 +291,91 @@ public sealed class ChunkStoreMutationService
             {
                 ["jobId"] = job.Id,
                 ["targetSerializerVersion"] = jobData.TargetSerializerVersion
+            }
+        }, ct);
+
+        return MapJobToGql(job, chunkStoreId);
+    }
+
+    /// <summary>
+    /// Queues an online garbage-collection run for a chunk store.
+    ///
+    /// <para>
+    /// The run is safe to start at any time: it never takes the store offline, and reads and
+    /// writes continue against it throughout. What it reclaims is content no release reaches any
+    /// more — orphans left by ingest sessions that never finalised, and anything a deleted
+    /// release was the last reference to.
+    /// </para>
+    /// </summary>
+    /// <param name="dryRun">Report what would be collected without changing anything.</param>
+    /// <param name="skipReclaim">
+    /// Quarantine unreachable content but stop before destroying anything, so the result can be
+    /// inspected before the bytes go. Everything quarantined stays recoverable until a later run
+    /// reclaims it.
+    /// </param>
+    /// <param name="retentionHours">
+    /// Overrides how long quarantined content stays recoverable. Shortening this is the only way
+    /// to make a run destructive sooner, so it is deliberately explicit rather than inferred.
+    /// </param>
+    public async Task<BackgroundJobGql> CollectChunkStoreGarbageAsync(
+        Guid chunkStoreId, bool dryRun, bool skipReclaim, double? retentionHours, CancellationToken ct)
+    {
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureInstancePermissionAsync(user, _authorizationService, InstancePermission.Admin);
+
+        var store = await _db.ChunkStores.FindAsync(new object[] { chunkStoreId }, ct);
+        if (store is null)
+            throw new GraphQLException($"Chunk store '{chunkStoreId}' not found.");
+
+        if (retentionHours is < 0)
+            throw new GraphQLException("Retention hours cannot be negative.");
+
+        // A rebuild tears the bucket indexes down and recreates them; a collection is reading
+        // those same indexes to decide what to destroy. Letting the two overlap would mean
+        // deciding against an index that is being replaced underneath.
+        var conflicting = _db.BackgroundJobs.Where(j =>
+            (j.JobType == BackgroundJobTypes.ChunkStoreGc || j.JobType == BackgroundJobTypes.ChunkStoreRebuild)
+            && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running)
+            && j.JobData != null).AsEnumerable().Any(j => j.JobData!.Contains(chunkStoreId.ToString()));
+
+        if (conflicting)
+            throw new GraphQLException("A garbage-collection or rebuild job is already running or pending for this chunk store.");
+
+        var jobData = new ChunkStoreGcJobData
+        {
+            ChunkStoreId = chunkStoreId,
+            DryRun = dryRun,
+            SkipReclaim = skipReclaim,
+            RetentionHoursOverride = retentionHours
+        };
+
+        var job = new BackgroundJob
+        {
+            Id = Guid.NewGuid(),
+            JobType = BackgroundJobTypes.ChunkStoreGc,
+            Status = BackgroundJobStatus.Pending,
+            JobData = JsonSerializer.Serialize(jobData),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        _db.BackgroundJobs.Add(job);
+        await _db.SaveChangesAsync(ct);
+
+        await _gcJobChannel.Channel.Writer.WriteAsync(job.Id, ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ChunkStoreGcStarted,
+            InstanceScoped = true,
+            TargetType = nameof(ChunkStore),
+            TargetId = chunkStoreId.ToString(),
+            TargetName = store.Name,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["jobId"] = job.Id,
+                ["dryRun"] = dryRun,
+                ["skipReclaim"] = skipReclaim,
+                ["retentionHours"] = retentionHours
             }
         }, ct);
 

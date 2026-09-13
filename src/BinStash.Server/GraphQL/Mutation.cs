@@ -57,6 +57,9 @@ public sealed class Mutation
     
     public Task<BackgroundJobGql> UpgradeChunkStore(Guid chunkStoreId, [Service] ChunkStoreMutationService service, CancellationToken cancellationToken)
         => service.UpgradeChunkStoreAsync(chunkStoreId, cancellationToken);
+
+    public Task<BackgroundJobGql> CollectChunkStoreGarbage(Guid chunkStoreId, [Service] ChunkStoreMutationService service, CancellationToken cancellationToken, bool dryRun = false, bool skipReclaim = false, double? retentionHours = null)
+        => service.CollectChunkStoreGarbageAsync(chunkStoreId, dryRun, skipReclaim, retentionHours, cancellationToken);
     public Task<BackgroundJobGql> CancelBackgroundJob(Guid jobId, [Service] BackgroundJobService service, CancellationToken cancellationToken)
         => service.CancelBackgroundJobAsync(jobId, cancellationToken);
 

@@ -16,6 +16,7 @@
 using System.Collections.Concurrent;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Storage;
+using BinStash.Core.Storage.Gc;
 using BinStash.Core.Storage.Stats;
 
 namespace BinStash.Infrastructure.Storage;
@@ -48,11 +49,14 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage, IDisposable, IAs
 
     /// <inheritdoc/>
     public IReadOnlyList<string> LastRebuildFailures => _objectStore.RebuildFailures;
+
+    /// <inheritdoc/>
+    public IChunkStoreGarbageCollector? GarbageCollector => _objectStore.GarbageCollector;
     
-    public async Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, ReadOnlyMemory<byte> data)
+    public async Task<(bool Success, bool WasNew, int BytesWritten)> StoreChunkAsync(string key, ReadOnlyMemory<byte> data)
     {
-        var bytesWritten = await _objectStore.WriteChunkAsync(data);
-        return (true, bytesWritten);
+        var (wasNew, bytesWritten) = await _objectStore.WriteChunkAsync(data);
+        return (true, wasNew, bytesWritten);
     }
 
     public Task<byte[]?> RetrieveChunkAsync(string key)
@@ -60,10 +64,10 @@ public class LocalFolderChunkStoreStorage : IChunkStoreStorage, IDisposable, IAs
         return _objectStore.ReadChunkAsync(key)!;
     }
 
-    public async Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob)
+    public async Task<(bool Success, Hash32 FileHash, bool WasNew, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob)
     {
-        var (fileHash, bytesWritten) = await _objectStore.WriteFileDefinitionAsync(recordBlob);
-        return (true, fileHash, bytesWritten);
+        var (fileHash, wasNew, bytesWritten) = await _objectStore.WriteFileDefinitionAsync(recordBlob);
+        return (true, fileHash, wasNew, bytesWritten);
     }
 
     public Task<byte[]?> RetrieveFileDefinitionAsync(string fileHashHex)

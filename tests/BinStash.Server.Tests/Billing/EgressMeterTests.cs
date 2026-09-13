@@ -132,14 +132,14 @@ public class EgressMeterTests : IDisposable
         // Fake content hash — all zeros
         private static readonly Hash32 FakeHash = default;
 
-        public Task<(bool Success, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData)
-            => Task.FromResult((true, chunkData.Length));
+        public Task<(bool Success, bool WasNew, int BytesWritten)> StoreChunkAsync(ChunkStore store, string chunkId, ReadOnlyMemory<byte> chunkData)
+            => Task.FromResult((true, true, chunkData.Length));
 
         public Task<byte[]?> RetrieveChunkAsync(ChunkStore store, string chunkId)
             => Task.FromResult<byte[]?>(null);
 
-        public Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> data)
-            => Task.FromResult((true, FakeHash, data.Length));
+        public Task<(bool Success, Hash32 FileHash, bool WasNew, int BytesWritten)> StoreFileDefinitionAsync(ChunkStore store, ReadOnlyMemory<byte> data)
+            => Task.FromResult((true, FakeHash, true, data.Length));
 
         public Task<byte[]?> RetrieveFileDefinitionAsync(ChunkStore store, string fileHash)
         {

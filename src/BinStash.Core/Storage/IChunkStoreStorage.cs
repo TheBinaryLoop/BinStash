@@ -14,13 +14,24 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Contracts.Hashing;
+using BinStash.Core.Storage.Gc;
 using BinStash.Core.Storage.Stats;
 
 namespace BinStash.Core.Storage;
 
 public interface IChunkStoreStorage
 {
-    Task<(bool Success, int BytesWritten)> StoreChunkAsync(string key, ReadOnlyMemory<byte> data);
+    /// <summary>
+    /// Stores a chunk, deduplicating on content.
+    /// </summary>
+    /// <returns>
+    /// Success, whether the bytes were newly written, and the physical size of the stored entry.
+    /// <c>BytesWritten</c> is reported for an already-present chunk too: the pack store and the
+    /// database catalogue can drift apart (a crash between the two writes, or a garbage-collection
+    /// quarantine that dropped the catalogue row on purpose), and a caller healing that drift needs
+    /// a size to record. Use <c>WasNew</c>, not <c>BytesWritten</c>, for "did this add data?".
+    /// </returns>
+    Task<(bool Success, bool WasNew, int BytesWritten)> StoreChunkAsync(string key, ReadOnlyMemory<byte> data);
     Task<byte[]?> RetrieveChunkAsync(string key);
 
     /// <summary>
@@ -28,10 +39,11 @@ public interface IChunkStoreStorage
     /// The index key is the <c>FileHash</c> embedded in the record (BLAKE3 of the original file bytes).
     /// </summary>
     /// <returns>
-    /// Success flag, file hash (<c>BLAKE3(file bytes)</c>), and the number of
-    /// compressed bytes physically written (0 = already existed / deduplicated).
+    /// Success flag, file hash (<c>BLAKE3(file bytes)</c>), whether the blob was newly written,
+    /// and the physical size of the stored entry (reported for an existing entry as well — see
+    /// <see cref="StoreChunkAsync"/>).
     /// </returns>
-    Task<(bool Success, Hash32 FileHash, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob);
+    Task<(bool Success, Hash32 FileHash, bool WasNew, int BytesWritten)> StoreFileDefinitionAsync(ReadOnlyMemory<byte> recordBlob);
 
     /// <summary>
     /// Retrieves the raw <c>FileDefinitionRecord</c> blob by its file hash
@@ -66,4 +78,12 @@ public interface IChunkStoreStorage
     IReadOnlyList<string> LastRebuildFailures { get; }
 
     Task<Dictionary<string, object>> GetStorageStatsAsync();
+
+    /// <summary>
+    /// The online garbage collector for this backend, or <see langword="null"/> when the backend
+    /// cannot support one. A backend that cannot uphold the guarantees documented on
+    /// <see cref="IChunkStoreGarbageCollector"/> must return <see langword="null"/> rather than a
+    /// partial implementation: no collection is always preferable to unsafe collection.
+    /// </summary>
+    IChunkStoreGarbageCollector? GarbageCollector => null;
 }

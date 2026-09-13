@@ -197,7 +197,7 @@ public static class IngestSessionEndpoints
         }
     }
     
-    private static async Task<IResult> UploadFileDefinitionsBatchAsync(Guid repoId, BinStashDbContext db, IChunkStoreService chunkStoreService, HttpRequest request)
+    private static async Task<IResult> UploadFileDefinitionsBatchAsync(Guid repoId, BinStashDbContext db, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine, HttpRequest request)
     {
         // Check for the ingest id header X-Ingest-Session-Id
         if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) || !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
@@ -250,6 +250,7 @@ public static class IngestSessionEndpoints
         
         var fileHashes = fileDefinitions.Keys.ToList();
         var existingFiles = db.FileDefinitions.Where(x => x.ChunkStoreId == storeMeta.Id && fileHashes.Contains(x.Checksum)).Select(x => x.Checksum).ToList();
+        var addedFileDefinitions = new List<Hash32>();
         
         foreach (var fileDefinition in fileDefinitions.Where(x => !existingFiles.Contains(x.Key)))
         {
@@ -268,9 +269,16 @@ public static class IngestSessionEndpoints
                 return Results.Problem($"Failed to store file definition ({fileDefinition.Key.ToHexString()}) in chunk store.");
             
             ingestSession.FilesSeenUnique++;
-            ingestSession.FilesSeenNew++;
-            ingestSession.MetadataSize += storeFileDefinitionResult.BytesWritten;
-            
+
+            if (storeFileDefinitionResult.WasNew)
+            {
+                ingestSession.FilesSeenNew++;
+                ingestSession.MetadataSize += storeFileDefinitionResult.BytesWritten;
+            }
+
+            // Owed whenever the catalogue said the definition was missing, even if the blob was
+            // already stored — after a crash between the two writes, or because garbage collection
+            // quarantined it (row dropped on purpose, bytes kept).
             var entry = new FileDefinition
             {
                 Checksum     = fileDefinition.Key,
@@ -279,10 +287,16 @@ public static class IngestSessionEndpoints
             };
             
             db.FileDefinitions.Add(entry);
+            addedFileDefinitions.Add(entry.Checksum);
         }
         
         ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
-        
+
+        // Restoring the catalogue rows un-quarantines the definitions, so a later reclaim cannot
+        // delete bytes this session now depends on.
+        if (addedFileDefinitions.Count > 0)
+            await quarantine.ResurrectAsync(storeMeta.Id, GcObjectCategory.FileDefinition, addedFileDefinitions);
+
         await db.SaveChangesAsync();
         
         return Results.Created();
@@ -326,7 +340,7 @@ public static class IngestSessionEndpoints
         }
     }
 
-    private static async Task<IResult> UploadChunkAsync(Guid repoId, Guid sessionId, string chunkChecksum, BinStashDbContext db, Stream chunkStream, IChunkStoreService chunkStoreService)
+    private static async Task<IResult> UploadChunkAsync(Guid repoId, Guid sessionId, string chunkChecksum, BinStashDbContext db, Stream chunkStream, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine)
     {
         var checksum = Hash32.FromHexString(chunkChecksum);
         
@@ -344,8 +358,12 @@ public static class IngestSessionEndpoints
         ms.Position = 0;
 
         if (await db.Chunks.AnyAsync(c => c.ChunkStoreId == store.Id && c.Checksum == checksum)) return Results.Ok();
-        var (success, bytesWritten) = await chunkStoreService.StoreChunkAsync(store, chunkChecksum, ms.ToArray());
+        var (success, _, bytesWritten) = await chunkStoreService.StoreChunkAsync(store, chunkChecksum, ms.ToArray());
         if (!success) return Results.Problem();
+
+        // The catalogue said the chunk was missing, so the row is owed even when the bytes were
+        // already present — which happens after a crash between the two writes, or when garbage
+        // collection quarantined the object (the row is dropped on purpose; the bytes are not).
         db.Chunks.Add(new Chunk
         {
             Checksum = checksum,
@@ -353,11 +371,15 @@ public static class IngestSessionEndpoints
             Length = Convert.ToInt32(ms.Length),
             CompressedLength = bytesWritten
         });
+
+        // Restoring the row un-quarantines the chunk. Without this the tombstone survives and a
+        // later reclaim would delete bytes this session now depends on.
+        await quarantine.ResurrectAsync(store.Id, GcObjectCategory.Chunk, [checksum]);
         await db.SaveChangesAsync();
         return Results.Ok();
     }
 
-    private static async Task<IResult> UploadChunksBatchAsync(Guid repoId, List<ChunkUploadDto> chunks, BinStashDbContext db, IChunkStoreService chunkStoreService, HttpRequest request)
+    private static async Task<IResult> UploadChunksBatchAsync(Guid repoId, List<ChunkUploadDto> chunks, BinStashDbContext db, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine, HttpRequest request)
     {
         if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) ||
             !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
@@ -419,6 +441,7 @@ public static class IngestSessionEndpoints
 
         var newlyWrittenCompressedBytes = new ConcurrentDictionary<Hash32, int>();
         var newlyWrittenLogicalBytes = new ConcurrentDictionary<Hash32, int>();
+        var storedCompressedBytes = new ConcurrentDictionary<Hash32, int>();
 
         var results = await Task.WhenAll(candidateChunks.Select(async chunk =>
         {
@@ -426,31 +449,37 @@ public static class IngestSessionEndpoints
             if (actualHash != chunk.Hash)
                 return false;
 
-            var (success, bytesWritten) = await chunkStoreService.StoreChunkAsync(store, chunk.Hex, chunk.Data);
-            if (success && bytesWritten > 0)
+            var (success, wasNew, bytesWritten) = await chunkStoreService.StoreChunkAsync(store, chunk.Hex, chunk.Data);
+            if (!success)
+                return false;
+
+            // Recorded for every candidate, because every candidate is owed a catalogue row; the
+            // wasNew flag separates "this ingest added data" from "this ingest healed a row".
+            storedCompressedBytes[chunk.Hash] = bytesWritten;
+            if (wasNew)
             {
                 newlyWrittenCompressedBytes[chunk.Hash] = bytesWritten;
                 newlyWrittenLogicalBytes[chunk.Hash] = chunk.Data.Length;
             }
 
-            return success;
+            return true;
         }));
 
         if (results.Any(r => !r))
             return Results.Problem("Some chunks failed checksum or storage.");
 
         var chunksToAdd = candidateChunks
-            .Where(chunk => newlyWrittenCompressedBytes.ContainsKey(chunk.Hash))
+            .Where(chunk => storedCompressedBytes.ContainsKey(chunk.Hash))
             .Select(chunk => new Chunk
             {
                 Checksum = chunk.Hash,
                 ChunkStoreId = repo.ChunkStoreId,
                 Length = chunk.Data.Length,
-                CompressedLength = newlyWrittenCompressedBytes[chunk.Hash]
+                CompressedLength = storedCompressedBytes[chunk.Hash]
             })
             .ToList();
 
-        ingestSession.ChunksSeenNew += chunksToAdd.Count;
+        ingestSession.ChunksSeenNew += newlyWrittenCompressedBytes.Count;
         ingestSession.NewUniqueLogicalBytes += newlyWrittenLogicalBytes.Values.Sum();
         ingestSession.NewCompressedBytes += newlyWrittenCompressedBytes.Values.Sum();
         ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;
@@ -459,6 +488,10 @@ public static class IngestSessionEndpoints
         if (chunksToAdd.Count > 0)
         {
             db.Chunks.AddRange(chunksToAdd);
+
+            await quarantine.ResurrectAsync(
+                store.Id, GcObjectCategory.Chunk,
+                chunksToAdd.Select(static c => c.Checksum).ToList());
 
             try
             {
@@ -487,7 +520,7 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
     
-    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, IAuditLogWriter audit, HttpRequest request)
+    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine, IAuditLogWriter audit, HttpRequest request)
     {
         var ingestSession = await db.IngestSessions.FindAsync(sessionId);
         var repo = await db.Repositories.FindAsync(repoId);
@@ -562,13 +595,9 @@ public static class IngestSessionEndpoints
              SerializerVersion = ReleasePackageSerializer.Version
         };
 
-        await db.Releases.AddAsync(release);
-
         await chunkStoreService.StoreReleasePackageAsync(store, releasePackageData);
 
         ingestSession.MetadataSize += releasePackageData.Length;
-        ingestSession.State = IngestSessionState.Completed;
-        ingestSession.CompletedAt = DateTimeOffset.UtcNow;
         ingestSession.LastUpdatedAt = DateTimeOffset.UtcNow;
         ingestSession.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
 
@@ -576,6 +605,30 @@ public static class IngestSessionEndpoints
 
         var allReferencedFileHashes = CollectReferencedFileHashes(outputArtifacts);
         var distinctFileHashes = allReferencedFileHashes.Distinct().ToList();
+
+        // A release may only be committed once every object it names is live in the catalogue.
+        // Two things can make that untrue at exactly this point, and they need opposite answers:
+        //
+        //   * Garbage collection quarantined an object after this session was told it already
+        //     had it. The bytes are still there — quarantine only hides the catalogue row — so
+        //     lifting the tombstone repairs the reference completely.
+        //   * The object is genuinely gone. Committing anyway would produce a release that can
+        //     never be downloaded, and the failure would surface much later, to someone else.
+        //
+        // Resurrection is committed on its own before the check, so the check reads the same
+        // catalogue any later download will. If the rest of finalize then fails, the worst
+        // outcome is some objects left un-quarantined, which the next collection undoes.
+        await quarantine.ResurrectAsync(store.Id, GcObjectCategory.FileDefinition, distinctFileHashes);
+        await db.SaveChangesAsync();
+
+        var missingFileDefinitions = await FindMissingFileDefinitionsAsync(db, store.Id, distinctFileHashes);
+        if (missingFileDefinitions.Count > 0)
+        {
+            return Results.Conflict(
+                $"{missingFileDefinitions.Count} file definition(s) referenced by this release are no longer " +
+                $"present in the chunk store (for example {missingFileDefinitions[0].ToHexString()}). " +
+                "Start a new ingest session and re-upload; the missing content will be accepted as new.");
+        }
 
         ulong totalLogicalBytes = 0;
         foreach (var artifact in outputArtifacts)
@@ -597,6 +650,29 @@ public static class IngestSessionEndpoints
             foreach (var chunkHash in FileDefinitionRecord.Deserialize(blob).ChunkHashes)
                 releaseUniqueChunks.Add(chunkHash);
         }
+
+        // Same gate one level down: the file definitions resolved, but each one is only useful
+        // if every chunk it names is still live.
+        var referencedChunks = releaseUniqueChunks.ToList();
+        await quarantine.ResurrectAsync(store.Id, GcObjectCategory.Chunk, referencedChunks);
+        await db.SaveChangesAsync();
+
+        var missingChunks = await FindMissingChunksAsync(db, store.Id, referencedChunks);
+        if (missingChunks.Count > 0)
+        {
+            return Results.Conflict(
+                $"{missingChunks.Count} chunk(s) referenced by this release are no longer present in the " +
+                $"chunk store (for example {missingChunks[0].ToHexString()}). Start a new ingest session and " +
+                "re-upload; the missing content will be accepted as new.");
+        }
+
+        // Only now is the release known to be complete and servable. Marking the session done any
+        // earlier would strand a client that hits the integrity check below: the session it would
+        // need to retry on is already closed.
+        ingestSession.State = IngestSessionState.Completed;
+        ingestSession.CompletedAt = DateTimeOffset.UtcNow;
+
+        await db.Releases.AddAsync(release);
 
         var fileArtifactsInRelease = outputArtifacts.Count(x => x.Kind == OutputArtifactKind.File);
         var componentCountInRelease = outputArtifacts
@@ -677,6 +753,48 @@ public static class IngestSessionEndpoints
         return Results.Created($"/api/releases/{releaseId}", null);
     }
     
+    /// <summary>
+    /// How many hashes go into one <c>IN (...)</c> predicate. A release routinely references
+    /// hundreds of thousands of chunks, and PostgreSQL caps a statement at 65535 parameters.
+    /// </summary>
+    private const int IntegrityCheckBatchSize = 2000;
+
+    private static async Task<List<Hash32>> FindMissingFileDefinitionsAsync(
+        BinStashDbContext db, Guid chunkStoreId, IReadOnlyCollection<Hash32> hashes)
+    {
+        var missing = new List<Hash32>();
+
+        foreach (var batch in hashes.Chunk(IntegrityCheckBatchSize))
+        {
+            var present = await db.FileDefinitions
+                .Where(f => f.ChunkStoreId == chunkStoreId && batch.Contains(f.Checksum))
+                .Select(f => f.Checksum)
+                .ToHashSetAsync();
+
+            missing.AddRange(batch.Where(h => !present.Contains(h)));
+        }
+
+        return missing;
+    }
+
+    private static async Task<List<Hash32>> FindMissingChunksAsync(
+        BinStashDbContext db, Guid chunkStoreId, IReadOnlyCollection<Hash32> hashes)
+    {
+        var missing = new List<Hash32>();
+
+        foreach (var batch in hashes.Chunk(IntegrityCheckBatchSize))
+        {
+            var present = await db.Chunks
+                .Where(c => c.ChunkStoreId == chunkStoreId && batch.Contains(c.Checksum))
+                .Select(c => c.Checksum)
+                .ToHashSetAsync();
+
+            missing.AddRange(batch.Where(h => !present.Contains(h)));
+        }
+
+        return missing;
+    }
+
     private static List<Hash32> CollectReferencedFileHashes(IEnumerable<OutputArtifact> outputArtifacts)
     {
         var hashes = new List<Hash32>();
