@@ -3,27 +3,27 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "dev": "vite -m development",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@apollo/client": "^3.14.1",
+    "@apollo/client": "^4.3.0",
     "@tabler/icons-vue": "^3.46.0",
     "@tailwindcss/forms": "^0.5.11",
-    "@vue/apollo-composable": "^4.2.2",
     "@vueuse/core": "^14.4.0",
     "chart.js": "^4.5.1",
     "chartjs-adapter-moment": "^1.0.1",
     "flatpickr": "^4.6.13",
     "fuse.js": "^7.5.0",
-    "graphql": "^16.14.2",
+    "graphql": "^17.0.2",
     "graphql-sse": "^2.6.1",
     "graphql-tag": "^2.12.7",
     "graphql-ws": "^6.2.1",
     "moment": "^2.30.1",
-    "pinia": "^3.0.4",
-    "typescript": "^5.9.3",
+    "pinia": "^4.0.3",
+    "rxjs": "^7.8.2",
     "vue": "^3.5.42",
     "vue-flatpickr-component": "^12.0.0",
     "vue-router": "^5.3.1"
@@ -34,6 +34,7 @@
     "@vue/compiler-sfc": "^3.5.42",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vite-plugin-mkcert": "^2.1.0"
   }

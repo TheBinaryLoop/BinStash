@@ -181,7 +181,7 @@ public class ChecksumCompressorSpecs
         var hash = MakeHash(0xCC);
         var compressed = ChecksumCompressor.TransposeCompress(new List<byte[]> { hash });
         using var ms = new MemoryStream(compressed);
-        var result = await ChecksumCompressor.TransposeDecompressHashesAsync(ms);
+        var result = await ChecksumCompressor.TransposeDecompressHashesAsync(ms, TestContext.Current.CancellationToken);
 
         result.Should().HaveCount(1);
         result[0].Should().Be(new Hash32(hash));
@@ -192,7 +192,7 @@ public class ChecksumCompressorSpecs
     {
         var compressed = ChecksumCompressor.TransposeCompress(new List<byte[]>());
         using var ms = new MemoryStream(compressed);
-        var result = await ChecksumCompressor.TransposeDecompressHashesAsync(ms);
+        var result = await ChecksumCompressor.TransposeDecompressHashesAsync(ms, TestContext.Current.CancellationToken);
 
         result.Should().BeEmpty();
     }
@@ -203,7 +203,7 @@ public class ChecksumCompressorSpecs
         var input = MakeHashList(0x01, 0x80, 0xFF);
         var compressed = ChecksumCompressor.TransposeCompress(input);
         using var ms = new MemoryStream(compressed);
-        var result = await ChecksumCompressor.TransposeDecompressHashesAsync(ms);
+        var result = await ChecksumCompressor.TransposeDecompressHashesAsync(ms, TestContext.Current.CancellationToken);
 
         result.Should().HaveCount(3);
         for (var i = 0; i < input.Count; i++)

@@ -275,7 +275,7 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
 
         await handler.AuthenticateAsync();
 
-        var updated = await _db.ApiKeys.SingleAsync(k => k.Id == key.Id);
+        var updated = await _db.ApiKeys.SingleAsync(k => k.Id == key.Id, TestContext.Current.CancellationToken);
         updated.LastUsedAt.Should().NotBeNull();
         updated.LastUsedAt!.Value.Should().BeOnOrAfter(before);
     }

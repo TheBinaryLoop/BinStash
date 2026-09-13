@@ -45,7 +45,7 @@ public class FastCdcChunkerSpecs
     {
         var chunker = New(2*1024, 8*1024, 64*1024);
         using var ms = new MemoryStream([]);
-        var map = chunker.GenerateChunkMap(ms);
+        var map = chunker.GenerateChunkMap(ms, TestContext.Current.CancellationToken);
         map.Should().BeEmpty();
     }
 
@@ -55,7 +55,7 @@ public class FastCdcChunkerSpecs
         var chunker = New(8*1024, 16*1024, 64*1024);
         var data = new byte[4000]; // < min
         using var ms = new MemoryStream(data);
-        var map = chunker.GenerateChunkMap(ms);
+        var map = chunker.GenerateChunkMap(ms, TestContext.Current.CancellationToken);
 
         map.Should().HaveCount(1);
         map[0].Offset.Should().Be(0);
@@ -69,7 +69,7 @@ public class FastCdcChunkerSpecs
         var data = Enumerable.Range(0, 200_000).Select(b => (byte)(b*31)).ToArray();
         using var ms = new MemoryStream(data);
 
-        var map = chunker.GenerateChunkMap(ms);
+        var map = chunker.GenerateChunkMap(ms, TestContext.Current.CancellationToken);
         map.Should().NotBeEmpty();
 
         // pick a middle chunk
@@ -77,7 +77,7 @@ public class FastCdcChunkerSpecs
 
         // Verify load from stream
         ms.Position = 0;
-        var cd = await chunker.LoadChunkDataAsync(ms, middle);
+        var cd = await chunker.LoadChunkDataAsync(ms, middle, TestContext.Current.CancellationToken);
         cd.Data.Length.Should().Be(middle.Length);
         cd.Data.Should().Equal(data.AsSpan((int)middle.Offset, middle.Length).ToArray());
 
@@ -97,8 +97,8 @@ public class FastCdcChunkerSpecs
         try
         {
             using var ms = data.AsStream();
-            var mapStream = chunker.GenerateChunkMap(ms);
-            var mapFile = chunker.GenerateChunkMap(temp);
+            var mapStream = chunker.GenerateChunkMap(ms, TestContext.Current.CancellationToken);
+            var mapFile = chunker.GenerateChunkMap(temp, TestContext.Current.CancellationToken);
 
             mapFile.Select(m => (m.Offset, m.Length, m.Checksum)).Should()
                    .Equal(mapStream.Select(m => (m.Offset, m.Length, m.Checksum)));
@@ -117,7 +117,7 @@ public class FastCdcChunkerSpecs
 
         try
         {
-            var map = chunker.GenerateChunkMap(temp);
+            var map = chunker.GenerateChunkMap(temp, TestContext.Current.CancellationToken);
             ChunkerTestHelpers.AssertPartitionIsValid(map, data.Length);
             // sanity on sizes
             map.All(c => c.Length >= 32*1024 || data.Length < 32*1024).Should().BeTrue();
@@ -201,7 +201,7 @@ public class FastCdcChunkerSpecs
         var data = ChunkerTestHelpers.RandomBytes(2 * 1024 * 1024, seed: 123);
 
         using var ms = new MemoryStream(data);
-        var expected = chunker.GenerateChunkMap(ms);
+        var expected = chunker.GenerateChunkMap(ms, TestContext.Current.CancellationToken);
 
         using var streaming = chunker.CreateStreamingChunker();
         foreach (var segment in ChunkerTestHelpers.SplitIntoRandomSegments(data, seed: 456, maxSegmentSize: 32 * 1024))
@@ -267,8 +267,8 @@ public class FastCdcChunkerSpecs
         using var seekable = new MemoryStream(data);
         using var nonSeekable = new NonSeekableReadStream(data);
 
-        var a = chunker.GenerateChunkMap(seekable);
-        var b = chunker.GenerateChunkMap(nonSeekable);
+        var a = chunker.GenerateChunkMap(seekable, TestContext.Current.CancellationToken);
+        var b = chunker.GenerateChunkMap(nonSeekable, TestContext.Current.CancellationToken);
 
         var expected = a.Select(x => (x.Offset, x.Length, x.Checksum)).ToArray();
         var actual = b.Select(x => (x.Offset, x.Length, x.Checksum)).ToArray();
@@ -290,11 +290,11 @@ public class FastCdcChunkerSpecs
         var data = ChunkerTestHelpers.RandomBytes(300_000, seed: 55);
 
         using var seekable = new MemoryStream(data);
-        var map = chunker.GenerateChunkMap(seekable);
+        var map = chunker.GenerateChunkMap(seekable, TestContext.Current.CancellationToken);
         var chunk = map[map.Count / 2];
 
         await using var nonSeekable = new NonSeekableReadStream(data);
-        var loaded = await chunker.LoadChunkDataAsync(nonSeekable, chunk);
+        var loaded = await chunker.LoadChunkDataAsync(nonSeekable, chunk, TestContext.Current.CancellationToken);
 
         loaded.Data.Should().Equal(data.AsSpan((int)chunk.Offset, chunk.Length).ToArray());
         loaded.Checksum.Should().Be(chunk.Checksum);
@@ -307,7 +307,7 @@ public class FastCdcChunkerSpecs
         var data = ChunkerTestHelpers.RandomBytes(200_000, seed: 11);
 
         using var ms = new MemoryStream(data);
-        var map = chunker.GenerateChunkMap(ms);
+        var map = chunker.GenerateChunkMap(ms, TestContext.Current.CancellationToken);
 
         var chunk = map[0];
         var corrupted = new ChunkMapEntry
@@ -331,7 +331,7 @@ public class FastCdcChunkerSpecs
         var data = ChunkerTestHelpers.RandomBytes(100_000, seed: 22);
 
         using var ms = new MemoryStream(data);
-        var map = chunker.GenerateChunkMap(ms);
+        var map = chunker.GenerateChunkMap(ms, TestContext.Current.CancellationToken);
         var chunk = map[^1];
 
         var truncated = data.Take((int)(chunk.Offset + chunk.Length - 1)).ToArray();

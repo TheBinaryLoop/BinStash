@@ -88,7 +88,7 @@ export async function createStorageDefaults(
   })
 }
 
-export async function createStorageClasses(storageClasses: { name: string; displayName: string; description?: string }[]) {
+export async function createStorageClasses(storageClasses: { name: string; displayName: string; description?: string | null }[]) {
   return apiJson<unknown>(`${BASE}/storage-class`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

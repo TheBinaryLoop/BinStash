@@ -1,4 +1,4 @@
-import type { ApolloQueryResult, FetchResult } from '@apollo/client/core'
+import { CombinedGraphQLErrors, CombinedProtocolErrors, ServerError } from '@apollo/client/errors'
 import { apolloClient } from '@/shared/api/apolloClient'
 import { useTenantStore } from '@/stores/tenant'
 
@@ -21,12 +21,23 @@ function buildContext(options?: GraphqlRunOptions): { uri?: string } {
 }
 
 export function normalizeGraphqlError(error: any, fallbackMessage = 'GraphQL request failed.'): Error {
-  const graphQlMessage = error?.graphQLErrors?.[0]?.message
-    ?? error?.networkError?.result?.errors?.[0]?.message
-    ?? error?.networkError?.message
-    ?? error?.message
+  // Apollo Client 4 removed `ApolloError`. Errors now arrive as distinct classes
+  // (CombinedGraphQLErrors / CombinedProtocolErrors / ServerError), each with a
+  // static `.is()` guard, so the old `graphQLErrors` / `networkError` lookups
+  // would never match and every message would degrade to the generic fallback.
+  if (CombinedGraphQLErrors.is(error)) {
+    return new Error(error.errors[0]?.message || fallbackMessage)
+  }
 
-  return new Error(graphQlMessage || fallbackMessage)
+  if (CombinedProtocolErrors.is(error)) {
+    return new Error(error.errors[0]?.message || fallbackMessage)
+  }
+
+  if (ServerError.is(error)) {
+    return new Error(error.bodyText || error.message || fallbackMessage)
+  }
+
+  return new Error(error?.message || fallbackMessage)
 }
 
 export async function runQuery<TData = any, TVariables extends Record<string, any> = Record<string, any>>(
@@ -35,14 +46,14 @@ export async function runQuery<TData = any, TVariables extends Record<string, an
   options?: GraphqlRunOptions,
 ): Promise<TData> {
   try {
-    const result: ApolloQueryResult<TData> = await apolloClient.query<TData, TVariables>({
+    const result = await apolloClient.query<TData, TVariables>({
       query,
       variables: variables as TVariables,
       fetchPolicy: 'no-cache',
       context: buildContext(options),
     })
 
-    return result.data
+    return result.data as TData
   } catch (error) {
     throw normalizeGraphqlError(error)
   }
@@ -54,7 +65,7 @@ export async function runMutation<TData = any, TVariables extends Record<string,
   options?: GraphqlRunOptions,
 ): Promise<TData> {
   try {
-    const result: FetchResult<TData> = await apolloClient.mutate<TData, TVariables>({
+    const result = await apolloClient.mutate<TData, TVariables>({
       mutation,
       variables: variables as TVariables,
       context: buildContext(options),
