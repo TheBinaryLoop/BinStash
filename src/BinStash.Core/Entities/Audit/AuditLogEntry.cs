@@ -79,6 +79,18 @@ public enum AuditOutcome
 /// <summary>Well-known <see cref="AuditLogEntry.Action"/> values.</summary>
 public static class AuditActions
 {
+    /// <summary>
+    /// A release was published. This is the provenance record for the artifact store —
+    /// who put what into it — and it is written from the ingest path, not from GraphQL.
+    /// </summary>
+    public const string ReleasePublished = "release.published";
+
+    /// <summary>
+    /// A release package (or a component/file slice of one) was downloaded. This is the
+    /// egress record, and the same event the billing plugin meters.
+    /// </summary>
+    public const string ReleaseDownloaded = "release.downloaded";
+
     public const string RepositoryCreated = "repository.created";
     public const string RepositoryUpdated = "repository.updated";
     public const string RepositoryAccessGranted = "repository.access.granted";

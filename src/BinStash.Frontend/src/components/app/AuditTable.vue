@@ -77,9 +77,9 @@ const rows = computed(() =>
         <TableHeader>
           <TableRow>
             <TableHead class="w-[13rem]">When</TableHead>
-            <TableHead>Action</TableHead>
-            <TableHead>Actor</TableHead>
-            <TableHead>Target</TableHead>
+            <TableHead class="w-full">Action</TableHead>
+            <TableHead class="w-[14rem]">Actor</TableHead>
+            <TableHead class="w-[14rem]">Target</TableHead>
             <TableHead v-if="showTenant" class="w-[10rem]">Tenant</TableHead>
             <TableHead class="w-[7rem]">Outcome</TableHead>
           </TableRow>
@@ -96,9 +96,11 @@ const rows = computed(() =>
               </Tooltip>
             </TableCell>
 
-            <TableCell class="py-2">
+            <TableCell class="w-full max-w-0 py-2">
               <div class="flex items-baseline gap-2">
-                <span class="text-sm font-medium">{{ humanizeAction(entry.action) }}</span>
+                <span class="text-sm font-medium whitespace-nowrap">
+                  {{ humanizeAction(entry.action) }}
+                </span>
                 <span class="text-muted-foreground truncate font-mono text-xs">{{ entry.action }}</span>
               </div>
               <p

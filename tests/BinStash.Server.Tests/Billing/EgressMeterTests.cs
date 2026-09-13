@@ -3,6 +3,7 @@
 using System.Reflection;
 using BinStash.Contracts.Hashing;
 using BinStash.Contracts.Release;
+using BinStash.Core.Auditing;
 using BinStash.Core.Billing;
 using BinStash.Core.Entities;
 using BinStash.Core.Storage.Stats;
@@ -16,6 +17,15 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BinStash.Server.Tests.Billing;
+
+/// <summary>
+/// The download handler now also writes an audit entry; these tests are about the egress
+/// meter, so the trail is swallowed rather than asserted on here.
+/// </summary>
+file sealed class NoOpAuditLogWriter : IAuditLogWriter
+{
+    public Task WriteAsync(AuditEntryDraft entry, CancellationToken ct = default) => Task.CompletedTask;
+}
 
 public class EgressMeterTests : IDisposable
 {
@@ -85,6 +95,7 @@ public class EgressMeterTests : IDisposable
             _db,
             stubChunkStore,
             meteringService,
+            new NoOpAuditLogWriter(),
             loggerFactory
         ])!;
 

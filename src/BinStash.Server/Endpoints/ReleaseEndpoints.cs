@@ -35,6 +35,8 @@ using Microsoft.Extensions.Logging;
 using ZstdNet;
 using KeyNotFoundException = System.Collections.Generic.KeyNotFoundException;
 
+using BinStash.Core.Auditing;
+
 namespace BinStash.Server.Endpoints;
 
 public static class ReleaseEndpoints
@@ -64,7 +66,7 @@ public static class ReleaseEndpoints
         return group;
     }
     
-    private static async Task<IResult> GetReleaseDownloadAsync(Guid tenantId, Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService, IUsageMeteringService meteringService, ILoggerFactory loggerFactory)
+    private static async Task<IResult> GetReleaseDownloadAsync(Guid tenantId, Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService, IUsageMeteringService meteringService, IAuditLogWriter audit, ILoggerFactory loggerFactory)
     {
         if (!string.IsNullOrEmpty(file) && string.IsNullOrEmpty(component))
             return Results.BadRequest("Component must be specified when requesting a specific file.");
@@ -380,6 +382,27 @@ public static class ReleaseEndpoints
         var logger = loggerFactory.CreateLogger("BinStash.Server.Endpoints.ReleaseEndpoints");
         try { meteringService.RecordEgress(tenantId, countingBody.BytesWritten); }
         catch (Exception ex) { logger.LogWarning(ex, "Billing: failed to record egress meter event"); }
+
+        // Egress is the other half of the artifact store's audit trail: who pulled what.
+        // Written here, next to the meter, so it reports the bytes actually served rather
+        // than the bytes requested — a cancelled or partial download is recorded as such.
+        await audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.ReleaseDownloaded,
+            TenantId = tenantId,
+            TargetType = nameof(Release),
+            TargetId = release.Id.ToString(),
+            TargetName = $"{repo.Name} {release.Version}",
+            Metadata = new Dictionary<string, object?>
+            {
+                ["repositoryId"] = repo.Id,
+                ["version"] = release.Version,
+                ["bytesServed"] = countingBody.BytesWritten,
+                ["component"] = component,
+                ["file"] = file,
+                ["diffFromReleaseId"] = diffReleaseId
+            }
+        });
 
         return Results.Empty;
     }
