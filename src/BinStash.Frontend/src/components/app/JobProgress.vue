@@ -25,12 +25,48 @@ const progress = computed(() => result.value?.backgroundJobProgress)
 
 const status = computed(() => progress.value?.status ?? props.job.status)
 
+const isGc = computed(() => props.job.jobType === 'ChunkStoreGc')
+
+/**
+ * Collection reports a phase rather than one counter, because its two long phases count
+ * different things: mark walks releases, sweep and reclaim walk buckets. Showing a single
+ * "x / y" across both would jump backwards at the phase change.
+ */
+const gc = computed(() => {
+  const liveData = progress.value
+  const stored = props.job.gcProgress
+
+  return {
+    phase: liveData?.gcPhase ?? stored?.phase ?? 'Pending',
+    markedReleases: liveData?.markedReleases ?? stored?.markedReleases ?? 0,
+    totalReleases: liveData?.totalReleases ?? stored?.totalReleases ?? 0,
+    processedBuckets: liveData?.processedBuckets ?? stored?.processedBuckets ?? 0,
+    totalBuckets: liveData?.totalBuckets ?? stored?.totalBuckets ?? 0,
+    quarantinedObjects: liveData?.quarantinedObjects ?? stored?.quarantinedObjects ?? 0,
+    quarantinedBytes: liveData?.quarantinedBytes ?? stored?.quarantinedBytes ?? 0,
+    reclaimedObjects: liveData?.reclaimedObjects ?? stored?.reclaimedObjects ?? 0,
+    reclaimedBytes: liveData?.reclaimedBytes ?? stored?.reclaimedBytes ?? 0,
+    packBytesDeleted: liveData?.packBytesDeleted ?? stored?.packBytesDeleted ?? 0,
+    packsCompacted: liveData?.packsCompacted ?? stored?.packsCompacted ?? 0,
+    resurrectedObjects: liveData?.resurrectedObjects ?? stored?.resurrectedObjects ?? 0,
+    dryRun: liveData?.gcDryRun ?? stored?.dryRun ?? false,
+  }
+})
+
 /**
  * Rebuilds count buckets, upgrades count releases. Prefer the live payload and fall
  * back to whatever the job record carried.
  */
 const counters = computed(() => {
   const liveData = progress.value
+
+  if (isGc.value) {
+    // Mark is release-denominated, everything after it is bucket-denominated.
+    const inMark = gc.value.phase === 'Mark'
+    return inMark
+      ? { unit: 'releases', processed: gc.value.markedReleases, total: gc.value.totalReleases, failed: 0 }
+      : { unit: 'buckets', processed: gc.value.processedBuckets, total: gc.value.totalBuckets, failed: 0 }
+  }
 
   const buckets = {
     processed: liveData?.processedBuckets ?? props.job.rebuildProgress?.processedBuckets ?? 0,
@@ -73,6 +109,10 @@ const tone = computed(() => {
         >
           {{ status }}
         </Badge>
+        <!-- For collection the phase is the headline: "Sweep" and "Reclaim" mean very
+             different things for whether anything has actually been destroyed yet. -->
+        <span v-if="isGc" class="text-muted-foreground text-xs">{{ gc.phase }}</span>
+        <Badge v-if="isGc && gc.dryRun" variant="outline" class="text-xs">dry run</Badge>
         <span v-if="live" class="text-muted-foreground text-xs">live</span>
       </div>
       <span class="text-muted-foreground font-mono text-xs tabular-nums">
@@ -95,7 +135,34 @@ const tone = computed(() => {
       />
     </div>
 
-    <div class="text-muted-foreground flex gap-4 text-xs">
+    <!-- Collection's outcome is two numbers, not one, and conflating them would overstate
+         what a run achieved: quarantined content is hidden but still on disk, and only the
+         pack bytes deleted have actually returned to the volume. -->
+    <dl v-if="isGc" class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Quarantined</dt>
+        <dd class="font-mono tabular-nums">{{ formatBytes(gc.quarantinedBytes) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Dropped</dt>
+        <dd class="font-mono tabular-nums">{{ formatBytes(gc.reclaimedBytes) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Freed on disk</dt>
+        <dd class="font-mono tabular-nums">{{ formatBytes(gc.packBytesDeleted) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Objects</dt>
+        <dd class="font-mono tabular-nums">{{ formatNumber(gc.quarantinedObjects) }}</dd>
+      </div>
+    </dl>
+
+    <p v-if="isGc && gc.resurrectedObjects > 0" class="text-warning text-xs">
+      {{ formatNumber(gc.resurrectedObjects) }} object(s) were taken back by an in-flight upload —
+      if this keeps happening, the quarantine retention is too short for how long uploads run here.
+    </p>
+
+    <div v-if="!isGc" class="text-muted-foreground flex gap-4 text-xs">
       <span v-if="counters.failed > 0" class="text-destructive">
         {{ formatNumber(counters.failed) }} failed
       </span>

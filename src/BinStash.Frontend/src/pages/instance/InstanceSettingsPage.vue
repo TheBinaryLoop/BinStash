@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Globe, Mail, Send, Users } from '@lucide/vue'
+import { Globe, Mail, Send, Trash2, Users } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 
@@ -15,18 +15,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useMutation, useQuery } from '@/composables/useGraphql'
 import {
   DomainConfigDocument,
   EmailConfigDocument,
+  GcConfigDocument,
   SendTestEmailDocument,
   SetDomainConfigDocument,
   SetEmailConfigDocument,
+  SetGcConfigDocument,
   SetTenancyConfigDocument,
   TenancyConfigDocument,
 } from '@/graphql/generated'
 import { errorMessage } from '@/lib/errors'
+import { formatRelative } from '@/lib/format'
 
 /**
  * The server masks stored secrets as "****" and treats a submitted "****" as
@@ -164,6 +168,96 @@ async function submitDomain() {
   }
 }
 
+/* ---- garbage collection ------------------------------------------------ */
+
+const gc = useQuery(GcConfigDocument, {})
+const { mutate: saveGc, loading: savingGc } = useMutation(SetGcConfigDocument)
+
+const gcEnabled = ref(false)
+const gcIntervalHours = ref(24)
+const gcRetentionHours = ref(24)
+const gcDryRun = ref(false)
+const gcSkipReclaim = ref(false)
+const gcWindowed = ref(false)
+const gcWindowStart = ref(22)
+const gcWindowEnd = ref(4)
+
+watch(
+  () => gc.result.value?.gcConfig,
+  (config) => {
+    if (!config) return
+    gcEnabled.value = config.enabled
+    gcIntervalHours.value = Math.round(config.intervalHours)
+    gcRetentionHours.value = Math.round(config.retentionHours)
+    gcDryRun.value = config.dryRun
+    gcSkipReclaim.value = config.skipReclaim
+    // The server models "no window" as either bound being absent; the form models it as a
+    // toggle, so that the hour inputs can keep sensible values while the window is off.
+    gcWindowed.value = config.windowStartHourUtc != null && config.windowEndHourUtc != null
+    gcWindowStart.value = config.windowStartHourUtc ?? 22
+    gcWindowEnd.value = config.windowEndHourUtc ?? 4
+  },
+  { immediate: true },
+)
+
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour)
+
+function hourLabel(hour: number): string {
+  return `${hour.toString().padStart(2, '0')}:00`
+}
+
+/** Restates the schedule as a sentence, so the consequence is legible without arithmetic. */
+const gcSummary = computed(() => {
+  if (!gcEnabled.value) return 'Collection runs only when an admin starts one by hand.'
+
+  const cadence =
+    gcIntervalHours.value === 24
+      ? 'Every chunk store is collected once a day'
+      : `Every chunk store is collected every ${gcIntervalHours.value} hours`
+
+  const when = gcWindowed.value
+    ? `, starting between ${hourLabel(gcWindowStart.value)} and ${hourLabel(gcWindowEnd.value)} UTC`
+    : ''
+
+  if (gcDryRun.value) return `${cadence}${when}, reporting only — nothing is changed.`
+  if (gcSkipReclaim.value)
+    return `${cadence}${when}, quarantining unreachable content but never destroying it.`
+
+  return `${cadence}${when}. Content quarantined more than ${gcRetentionHours.value} hours ago is destroyed.`
+})
+
+/**
+ * The server reports the next instant a run may start, which is simply "now" whenever the window
+ * is already open. Rendering that as a relative time produces "16 seconds ago" — a past tense for
+ * something that has not happened, which reads as a missed run rather than a ready one.
+ */
+const gcNextEligible = computed(() => {
+  const at = gc.result.value?.gcConfig?.nextEligibleAt
+  if (!at) return null
+  return new Date(at).getTime() <= Date.now() ? 'now' : formatRelative(at)
+})
+
+async function submitGc() {
+  try {
+    await saveGc({
+      input: {
+        enabled: gcEnabled.value,
+        intervalHours: gcIntervalHours.value,
+        retentionHours: gcRetentionHours.value,
+        dryRun: gcDryRun.value,
+        skipReclaim: gcSkipReclaim.value,
+        clearWindow: !gcWindowed.value,
+        windowStartHourUtc: gcWindowed.value ? gcWindowStart.value : undefined,
+        windowEndHourUtc: gcWindowed.value ? gcWindowEnd.value : undefined,
+      },
+    })
+    await gc.refetch()
+    toast.success('Collection schedule saved.')
+  } catch (caught) {
+    toast.error(errorMessage(caught, 'Could not save the collection schedule.'))
+  }
+}
+
 const secretHint = computed(
   () => `Shown as ${SECRET_MASK} when stored. Leave unchanged to keep the current value.`,
 )
@@ -189,6 +283,10 @@ const secretHint = computed(
         <TabsTrigger value="domain" class="gap-1.5">
           <Globe class="size-3.5" />
           Domain
+        </TabsTrigger>
+        <TabsTrigger value="gc" class="gap-1.5">
+          <Trash2 class="size-3.5" />
+          Collection
         </TabsTrigger>
       </TabsList>
 
@@ -385,6 +483,151 @@ const secretHint = computed(
 
             <Button type="submit" :disabled="savingDomain">
               {{ savingDomain ? 'Saving…' : 'Save domain settings' }}
+            </Button>
+          </form>
+        </section>
+      </TabsContent>
+
+      <TabsContent value="gc" class="space-y-4">
+        <section class="bg-card hairline space-y-5 rounded-lg p-5">
+          <div>
+            <h2 class="text-sm font-medium">Scheduled collection</h2>
+            <p class="text-muted-foreground text-xs">
+              Reclaims space held by content no release refers to any more — orphans left by
+              uploads that never finished. Stores stay online throughout.
+            </p>
+          </div>
+
+          <form class="space-y-5" @submit.prevent="submitGc">
+            <div class="flex items-start justify-between gap-4 sm:max-w-lg">
+              <div class="space-y-0.5">
+                <Label for="gc-enabled">Run collection automatically</Label>
+                <p class="text-muted-foreground text-xs">
+                  Off by default. Collection destroys unreachable content once its quarantine
+                  expires, so it is opt-in rather than inherited from an upgrade.
+                </p>
+              </div>
+              <Switch id="gc-enabled" v-model="gcEnabled" :disabled="savingGc" />
+            </div>
+
+            <div class="grid gap-4 sm:max-w-lg sm:grid-cols-2" :class="gcEnabled ? '' : 'opacity-50'">
+              <div class="space-y-2">
+                <Label for="gc-interval">Collect every</Label>
+                <div class="flex items-center gap-2">
+                  <Input
+                    id="gc-interval"
+                    v-model.number="gcIntervalHours"
+                    type="number"
+                    min="1"
+                    max="8760"
+                    class="font-mono"
+                    :disabled="savingGc || !gcEnabled"
+                  />
+                  <span class="text-muted-foreground text-xs">hours</span>
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <Label for="gc-retention">Keep recoverable for</Label>
+                <div class="flex items-center gap-2">
+                  <Input
+                    id="gc-retention"
+                    v-model.number="gcRetentionHours"
+                    type="number"
+                    min="1"
+                    max="8760"
+                    class="font-mono"
+                    :disabled="savingGc"
+                  />
+                  <span class="text-muted-foreground text-xs">hours</span>
+                </div>
+                <p class="text-muted-foreground text-xs">
+                  Applies to manual runs too. Must outlast your longest upload.
+                </p>
+              </div>
+            </div>
+
+            <div class="space-y-3 sm:max-w-lg" :class="gcEnabled ? '' : 'opacity-50'">
+              <div class="flex items-start justify-between gap-4">
+                <div class="space-y-0.5">
+                  <Label for="gc-windowed">Only start during set hours</Label>
+                  <p class="text-muted-foreground text-xs">
+                    Collection is sustained disk I/O on the same volumes that serve uploads and
+                    downloads. A run already in progress is never interrupted at the window's end.
+                  </p>
+                </div>
+                <Switch id="gc-windowed" v-model="gcWindowed" :disabled="savingGc || !gcEnabled" />
+              </div>
+
+              <div v-if="gcWindowed" class="grid grid-cols-2 gap-4">
+                <div class="space-y-2">
+                  <Label for="gc-window-start">From (UTC)</Label>
+                  <Select v-model="gcWindowStart" :disabled="savingGc || !gcEnabled">
+                    <SelectTrigger id="gc-window-start">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="hour in HOURS" :key="hour" :value="hour">
+                        {{ hourLabel(hour) }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div class="space-y-2">
+                  <Label for="gc-window-end">Until (UTC)</Label>
+                  <Select v-model="gcWindowEnd" :disabled="savingGc || !gcEnabled">
+                    <SelectTrigger id="gc-window-end">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="hour in HOURS" :key="hour" :value="hour">
+                        {{ hourLabel(hour) }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            <div class="space-y-3 sm:max-w-lg" :class="gcEnabled ? '' : 'opacity-50'">
+              <div class="flex items-start justify-between gap-4">
+                <div class="space-y-0.5">
+                  <Label for="gc-dry-run">Report only</Label>
+                  <p class="text-muted-foreground text-xs">
+                    Scheduled runs measure what they would collect and change nothing. The honest
+                    way to watch a real workload before letting collection bite.
+                  </p>
+                </div>
+                <Switch id="gc-dry-run" v-model="gcDryRun" :disabled="savingGc || !gcEnabled" />
+              </div>
+
+              <div class="flex items-start justify-between gap-4" :class="gcDryRun ? 'opacity-50' : ''">
+                <div class="space-y-0.5">
+                  <Label for="gc-skip-reclaim">Quarantine only</Label>
+                  <p class="text-muted-foreground text-xs">
+                    Hide unreachable content from deduplication but never destroy it. Reclaiming
+                    then stays a manual step.
+                  </p>
+                </div>
+                <Switch
+                  id="gc-skip-reclaim"
+                  v-model="gcSkipReclaim"
+                  :disabled="savingGc || !gcEnabled || gcDryRun"
+                />
+              </div>
+            </div>
+
+            <Alert>
+              <AlertDescription>
+                {{ gcSummary }}
+                <template v-if="gcEnabled && gcNextEligible">
+                  Next eligible {{ gcNextEligible }}.
+                </template>
+              </AlertDescription>
+            </Alert>
+
+            <Button type="submit" :disabled="savingGc">
+              {{ savingGc ? 'Saving…' : 'Save collection schedule' }}
             </Button>
           </form>
         </section>

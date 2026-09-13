@@ -2,8 +2,39 @@ fragment ChunkStoreSummary on ChunkStoreGql {
   id
   name
   type
+  probeMode
+  minFreeBytes
   chunker { type minChunkSize avgChunkSize maxChunkSize }
   backendSettings { backendType localPath }
+}
+
+fragment ChunkStoreStatsDetail on ChunkStoreStatsGql {
+  totalChunks
+  collectedAt
+  chunkCount
+  fileDefinitionCount
+  releaseCount
+  chunkPackBytes
+  fileDefinitionPackBytes
+  releasePackageBytes
+  indexBytes
+  physicalBytesTotal
+  totalLogicalBytes
+  uniqueLogicalChunkBytes
+  uniqueCompressedChunkBytes
+  compressionRatio
+  deduplicationRatio
+  effectiveStorageRatio
+  compressionSavedBytes
+  deduplicationSavedBytes
+  chunkPackFileCount
+  fileDefinitionPackFileCount
+  releasePackageFileCount
+  indexFileCount
+  volumeTotalBytes
+  volumeFreeBytes
+  avgChunkSize
+  avgCompressedChunkSize
 }
 
 query ChunkStores($first: Int, $after: String, $where: ChunkStoreGqlFilterInput) {
@@ -19,7 +50,17 @@ query ChunkStore($id: UUID!) {
 }
 
 query ChunkStoreStats($chunkStoreId: UUID!) {
-  chunkStoreStats(chunkStoreId: $chunkStoreId) { totalChunks }
+  chunkStoreStats(chunkStoreId: $chunkStoreId) { ...ChunkStoreStatsDetail }
+}
+
+query ChunkStoreStatsHistory($chunkStoreId: UUID!, $days: Int!) {
+  chunkStoreStatsHistory(chunkStoreId: $chunkStoreId, days: $days) {
+    collectedAt
+    physicalBytesTotal
+    totalLogicalBytes
+    volumeFreeBytes
+    chunkCount
+  }
 }
 
 query EnabledChunkStoreTypes {
@@ -44,6 +85,23 @@ fragment BackgroundJobSummary on BackgroundJobGql {
     skippedReleases
     bytesSaved
     bytesGrown
+  }
+  gcProgress {
+    phase
+    totalBuckets
+    processedBuckets
+    totalReleases
+    markedReleases
+    reachableObjects
+    quarantinedObjects
+    quarantinedBytes
+    reclaimedObjects
+    reclaimedBytes
+    packsCompacted
+    packsDeleted
+    packBytesDeleted
+    resurrectedObjects
+    dryRun
   }
 }
 
@@ -77,6 +135,20 @@ mutation UpgradeChunkStore($chunkStoreId: UUID!) {
   upgradeChunkStore(chunkStoreId: $chunkStoreId) { ...BackgroundJobSummary }
 }
 
+mutation CollectChunkStoreGarbage(
+  $chunkStoreId: UUID!
+  $dryRun: Boolean!
+  $skipReclaim: Boolean!
+  $retentionHours: Float
+) {
+  collectChunkStoreGarbage(
+    chunkStoreId: $chunkStoreId
+    dryRun: $dryRun
+    skipReclaim: $skipReclaim
+    retentionHours: $retentionHours
+  ) { ...BackgroundJobSummary }
+}
+
 mutation CancelBackgroundJob($jobId: UUID!) {
   cancelBackgroundJob(jobId: $jobId) { ...BackgroundJobSummary }
 }
@@ -95,6 +167,18 @@ subscription BackgroundJobProgress($jobId: UUID!) {
     totalBuckets
     processedBuckets
     failedBuckets
+    gcPhase
+    markedReleases
+    reachableObjects
+    quarantinedObjects
+    quarantinedBytes
+    reclaimedObjects
+    reclaimedBytes
+    packsCompacted
+    packsDeleted
+    packBytesDeleted
+    resurrectedObjects
+    gcDryRun
     chunkStoreId
     startedAt
     completedAt

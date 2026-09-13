@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, Building2, Database, FolderGit2, Users } from '@lucide/vue'
+import { Activity, Building2, Database, FolderGit2, HardDrive, Package, Users } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
@@ -10,15 +10,28 @@ import { Button } from '@/components/ui/button'
 import { useQuery } from '@/composables/useGraphql'
 import { BackgroundJobsDocument, ChunkStoresDocument, InstanceStatsDocument } from '@/graphql/generated'
 import { apiJson } from '@/lib/http'
-import { formatNumber, formatRelative } from '@/lib/format'
+import { formatBytes, formatNumber, formatRelative } from '@/lib/format'
+import { jobTypeLabel } from '@/lib/jobs'
 
 const stats = useQuery(InstanceStatsDocument, {})
 const chunkStores = useQuery(ChunkStoresDocument, { first: 100 })
 const jobs = useQuery(BackgroundJobsDocument, { first: 5 })
 
 const instanceStats = computed(() => stats.result.value?.instanceStats)
-const storeCount = computed(() => chunkStores.result.value?.chunkStores?.totalCount ?? 0)
+const storeCount = computed(
+  () => instanceStats.value?.chunkStoreCount ?? chunkStores.result.value?.chunkStores?.totalCount ?? 0,
+)
 const recentJobs = computed(() => jobs.result.value?.backgroundJobs?.nodes ?? [])
+
+/**
+ * How much of the instance's logical data each physical byte carries. Instance-wide, so unlike
+ * the per-workspace views this can be shown without leaking one tenant's content to another.
+ */
+const storageEfficiency = computed(() => {
+  const figures = instanceStats.value
+  if (!figures?.totalPhysicalBytes) return null
+  return figures.totalLogicalBytes / figures.totalPhysicalBytes
+})
 
 /** Health is a plain REST probe, not part of the graph. */
 const health = ref<'checking' | 'healthy' | 'degraded' | 'unreachable'>('checking')
@@ -71,31 +84,72 @@ const statusTone: Record<string, string> = {
       :skeleton-rows="2"
       @retry="stats.refetch()"
     >
-      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Tenants"
-          :value="formatNumber(instanceStats?.tenantCount ?? 0)"
-          :icon="Building2"
-          numeric
-        />
-        <StatCard
-          label="Users"
-          :value="formatNumber(instanceStats?.userCount ?? 0)"
-          :icon="Users"
-          numeric
-        />
-        <StatCard
-          label="Repositories"
-          :value="formatNumber(instanceStats?.repositoryCount ?? 0)"
-          :icon="FolderGit2"
-          numeric
-        />
-        <StatCard
-          label="Chunk stores"
-          :value="formatNumber(storeCount)"
-          :icon="Database"
-          numeric
-        />
+      <div class="space-y-3">
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            label="Workspaces"
+            :value="formatNumber(instanceStats?.tenantCount ?? 0)"
+            :icon="Building2"
+            numeric
+          />
+          <StatCard
+            label="Users"
+            :value="formatNumber(instanceStats?.userCount ?? 0)"
+            :icon="Users"
+            numeric
+          />
+          <StatCard
+            label="Repositories"
+            :value="formatNumber(instanceStats?.repositoryCount ?? 0)"
+            :hint="
+              instanceStats?.releaseCount
+                ? `${formatNumber(instanceStats.releaseCount)} releases`
+                : undefined
+            "
+            :icon="FolderGit2"
+            numeric
+          />
+          <StatCard
+            label="Chunk stores"
+            :value="formatNumber(storeCount)"
+            :icon="Database"
+            numeric
+          />
+        </div>
+
+        <!-- What the deployment actually costs in disk, and how much headroom is left. Both
+             were already collected hourly; neither had anywhere to appear. -->
+        <div class="grid gap-3 sm:grid-cols-3">
+          <StatCard
+            label="Stored on disk"
+            :value="formatBytes(instanceStats?.totalPhysicalBytes ?? 0)"
+            :hint="
+              instanceStats?.totalLogicalBytes
+                ? `${formatBytes(instanceStats.totalLogicalBytes)} of releases`
+                : undefined
+            "
+            :icon="HardDrive"
+            numeric
+          />
+          <StatCard
+            label="Space saved"
+            :value="storageEfficiency ? `${storageEfficiency.toFixed(1)}×` : '—'"
+            hint="Logical bytes per byte on disk"
+            :icon="Package"
+            numeric
+          />
+          <StatCard
+            label="Tightest volume"
+            :value="formatBytes(instanceStats?.minVolumeFreeBytes ?? null)"
+            :hint="
+              instanceStats?.minVolumeFreeChunkStoreName
+                ? `free on ${instanceStats.minVolumeFreeChunkStoreName}`
+                : 'No volume reported'
+            "
+            :icon="Database"
+            numeric
+          />
+        </div>
       </div>
     </AsyncSection>
 
@@ -119,7 +173,7 @@ const statusTone: Record<string, string> = {
           >
             <Activity class="text-muted-foreground size-4 shrink-0" />
             <div class="min-w-0 flex-1">
-              <p class="truncate text-sm">{{ job.jobType }}</p>
+              <p class="truncate text-sm">{{ jobTypeLabel(job.jobType) }}</p>
               <p class="text-muted-foreground text-xs">
                 {{ formatRelative(job.createdAt) }}
               </p>
