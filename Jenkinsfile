@@ -14,6 +14,8 @@ pipeline {
     SOLUTION = 'BinStash.slnx'
     BUILD_CONFIG = 'Release'
     MSBUILDDISABLENODEREUSE = 1
+    // Vitest colourises its output; ANSI escapes make the Jenkins console log unreadable.
+    NO_COLOR = 'true'
   }
 
   parameters {
@@ -23,6 +25,9 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
+        // Start from an empty workspace: stale bin/obj, node_modules and wwwroot output from a
+        // previous build can mask a broken build or resurrect deleted files in the bundle.
+        cleanWs()
         checkout scm
       }
     }
@@ -39,6 +44,34 @@ pipeline {
       post {
         success { echo '✅ Frontend build completed.' }
         failure { echo '❌ Frontend build failed. Check logs.' }
+      }
+    }
+
+    stage('Frontend Tests') {
+      when { expression { params.RUN_TESTS } }
+      steps {
+        dir('src/BinStash.Frontend') {
+          // Writes junit.xml and coverage/ (cobertura + html); see vitest.config.ts.
+          bat 'pnpm test:ci'
+        }
+      }
+      post {
+        always {
+          // Published through the xUnit plugin rather than the `junit` step so both this stage and
+          // the .NET Test stage below feed the same publisher instead of two competing ones.
+          xunit checksName: '', tools: [JUnit(pattern: 'src/BinStash.Frontend/junit.xml', skipNoTestFiles: true, stopProcessingIfError: true)]
+          publishHTML([
+            allowMissing: true,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: 'src/BinStash.Frontend/coverage',
+            reportFiles: 'index.html',
+            reportName: 'Frontend Coverage'
+          ])
+          archiveArtifacts artifacts: 'src/BinStash.Frontend/coverage/cobertura-coverage.xml', allowEmptyArchive: true
+        }
+        success { echo '✅ Frontend tests passed.' }
+        failure { echo '❌ Frontend tests failed. Check logs.' }
       }
     }
 

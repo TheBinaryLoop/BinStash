@@ -21,7 +21,7 @@ const proxy = {
  * normally borrows TypeScript's `sys` for that, but TypeScript 7 no longer exposes it, so
  * the compiler reports "non-Node environment". Hand it a real fs instead of downgrading.
  */
-const sfcFs = {
+export const sfcFs = {
   fileExists: (file: string) => fs.existsSync(file),
   readFile: (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : undefined),
   realpath: (file: string) => fs.realpathSync(file),
