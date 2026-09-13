@@ -20,7 +20,6 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Web;
 using BinStash.Cli.Auth;
-using BinStash.Cli.Clients.GraphQl;
 using BinStash.Cli.Versioning;
 using BinStash.Contracts.ChunkStore;
 using BinStash.Contracts.Hashing;
@@ -83,125 +82,23 @@ public class BinStashApiClient
     #region Tenant Info
 
     public async Task<List<TenantInfoDto>?> GetTenantsAsync()
-    {
-        const string query = """
-            query($first: Int!, $after: String) {
-                tenants(first: $first, after: $after) {
-                    nodes { id name slug }
-                    pageInfo { hasNextPage endCursor }
-                }
-            }
-            """;
-        var all = new List<GqlTenant>();
-        string? cursor = null;
-        do
-        {
-            var req = new GqlPagedRequest { Query = query, Variables = new GqlPageVariables { First = 50, After = cursor } };
-            var resp = await GraphQlAsync(req, SourceGenerationContext.Default.GqlPagedRequestBody, SourceGenerationContext.Default.GqlResponseGqlTenantsData);
-            var conn = resp?.Data?.Tenants;
-            if (conn?.Nodes is { } nodes) all.AddRange(nodes);
-            cursor = conn?.PageInfo?.HasNextPage == true ? conn.PageInfo.EndCursor : null;
-        } while (cursor is not null);
-
-        // Role/joined-date are not needed by the CLI (it maps --tenant <slug> to an id).
-        return all.Select(t => new TenantInfoDto(t.Id, t.Name, t.Slug, default, string.Empty)).ToList();
-    }
+        => await GetAsync("tenants", SourceGenerationContext.Default.ListTenantInfoDto);
 
     #endregion
     
     #region ChunkStore
     
     public async Task<List<ChunkStoreSummaryDto>?> GetChunkStoresAsync()
-    {
-        const string query = """
-            query($first: Int!, $after: String) {
-                chunkStores(first: $first, after: $after) {
-                    nodes { id name type }
-                    pageInfo { hasNextPage endCursor }
-                }
-            }
-            """;
-        var all = new List<GqlChunkStore>();
-        string? cursor = null;
-        do
-        {
-            var req = new GqlPagedRequest { Query = query, Variables = new GqlPageVariables { First = 50, After = cursor } };
-            var resp = await GraphQlAsync(req, SourceGenerationContext.Default.GqlPagedRequestBody, SourceGenerationContext.Default.GqlResponseGqlChunkStoresData);
-            var conn = resp?.Data?.ChunkStores;
-            if (conn?.Nodes is { } nodes) all.AddRange(nodes);
-            cursor = conn?.PageInfo?.HasNextPage == true ? conn.PageInfo.EndCursor : null;
-        } while (cursor is not null);
-        return all.Select(cs => new ChunkStoreSummaryDto { Id = cs.Id, Name = cs.Name }).ToList();
-    }
-    
+        => await GetAsync("chunk-stores", SourceGenerationContext.Default.ListChunkStoreSummaryDto);
+
     public async Task<ChunkStoreDetailDto?> GetChunkStoreAsync(Guid id)
-    {
-        var req = new GqlRequestById
-        {
-            Query = "query($id: UUID!) { chunkStore(id: $id) { id name type backendSettings { backendType localPath } } }",
-            Variables = new GqlIdVariables { Id = id }
-        };
-        var resp = await GraphQlAsync(req, SourceGenerationContext.Default.GqlRequestByIdBody, SourceGenerationContext.Default.GqlResponseGqlChunkStoreData);
-        var cs = resp?.Data?.ChunkStore;
-        if (cs is null) return null;
-        return new ChunkStoreDetailDto
-        {
-            Id = cs.Id,
-            Name = cs.Name,
-            Type = cs.Type,
-            Chunker = new ChunkStoreChunkerDto(),
-            BackendSettings = new ChunkStoreBackendSettingsDto
-            {
-                Type = cs.BackendSettings?.BackendType ?? cs.Type,
-                LocalPath = cs.BackendSettings?.LocalPath
-            },
-            Stats = []
-        };
-    }
-    
+        => await GetAsync($"chunk-stores/{id}", SourceGenerationContext.Default.ChunkStoreDetailDto);
+
     public async Task<ChunkStoreDetailDto?> CreateChunkStoreAsync(CreateChunkStoreDto dto)
-    {
-        var req = new GqlCreateChunkStoreRequest
-        {
-            Query = """
-                mutation($name: String!, $type: String!, $localPath: String, $chunker: ChunkStoreChunkerInput) {
-                    createChunkStore(input: { name: $name, type: $type, localPath: $localPath, chunker: $chunker }) {
-                        id name type backendSettings { backendType localPath }
-                    }
-                }
-                """,
-            Variables = new GqlCreateChunkStoreVariables
-            {
-                Name = dto.Name,
-                Type = dto.Type,
-                LocalPath = dto.LocalPath,
-                Chunker = dto.Chunker is null ? null : new GqlCreateChunkStoreChunkerVariables
-                {
-                    Type = dto.Chunker.Type,
-                    MinChunkSize = dto.Chunker.MinChunkSize,
-                    AvgChunkSize = dto.Chunker.AvgChunkSize,
-                    MaxChunkSize = dto.Chunker.MaxChunkSize
-                }
-            }
-        };
-        var resp = await GraphQlAsync(req, SourceGenerationContext.Default.GqlCreateChunkStoreRequestBody, SourceGenerationContext.Default.GqlResponseGqlCreateChunkStoreData);
-        var cs = resp?.Data?.CreateChunkStore;
-        if (cs is null) return null;
-        return new ChunkStoreDetailDto
-        {
-            Id = cs.Id,
-            Name = cs.Name,
-            Type = cs.Type,
-            Chunker = new ChunkStoreChunkerDto(),
-            BackendSettings = new ChunkStoreBackendSettingsDto
-            {
-                Type = cs.BackendSettings?.BackendType ?? cs.Type,
-                LocalPath = cs.BackendSettings?.LocalPath
-            },
-            Stats = []
-        };
-    }
-    
+        => await PostAsJsonAsync("chunk-stores", dto,
+            SourceGenerationContext.Default.CreateChunkStoreDto,
+            SourceGenerationContext.Default.ChunkStoreDetailDto);
+
     public async Task DeleteChunkStoreAsync(Guid id)
     {
         await Task.Delay(0);
@@ -213,76 +110,16 @@ public class BinStashApiClient
     #region Repository
     
     public async Task<List<RepositorySummaryDto>?> GetRepositoriesAsync(Guid tenantId)
-    {
-        const string query = """
-            query($first: Int!, $after: String) {
-                repositories(first: $first, after: $after) {
-                    nodes { id name description storageClass chunker { type minChunkSize avgChunkSize maxChunkSize } }
-                    pageInfo { hasNextPage endCursor }
-                }
-            }
-            """;
-        var all = new List<GqlRepository>();
-        string? cursor = null;
-        do
-        {
-            var req = new GqlPagedRequest { Query = query, Variables = new GqlPageVariables { First = 50, After = cursor } };
-            var resp = await GraphQlAsync(req, SourceGenerationContext.Default.GqlPagedRequestBody, SourceGenerationContext.Default.GqlResponseGqlRepositoriesData, tenantId);
-            var conn = resp?.Data?.Repositories;
-            if (conn?.Nodes is { } nodes) all.AddRange(nodes);
-            cursor = conn?.PageInfo?.HasNextPage == true ? conn.PageInfo.EndCursor : null;
-        } while (cursor is not null);
-        return all.Select(MapRepository).ToList();
-    }
-    
+        => await GetAsync($"tenants/{tenantId}/repositories", SourceGenerationContext.Default.ListRepositorySummaryDto);
+
     public async Task<RepositorySummaryDto?> GetRepositoryAsync(Guid tenantId, Guid repositoryId)
-    {
-        var req = new GqlRequestById
-        {
-            Query = "query($id: UUID!) { repository(id: $id) { id name description storageClass chunker { type minChunkSize avgChunkSize maxChunkSize } } }",
-            Variables = new GqlIdVariables { Id = repositoryId }
-        };
-        var resp = await GraphQlAsync(req, SourceGenerationContext.Default.GqlRequestByIdBody, SourceGenerationContext.Default.GqlResponseGqlRepositoryData, tenantId);
-        return resp?.Data?.Repository is { } r ? MapRepository(r) : null;
-    }
-    
+        => await GetAsync($"tenants/{tenantId}/repositories/{repositoryId}", SourceGenerationContext.Default.RepositorySummaryDto);
+
     public async Task<RepositorySummaryDto?> CreateRepositoryAsync(Guid tenantId, CreateRepositoryDto createDto)
-    {
-        var req = new GqlCreateRepositoryRequest
-        {
-            Query = """
-                mutation($name: String!, $description: String, $storageClassName: String) {
-                    createRepository(input: { name: $name, description: $description, storageClassName: $storageClassName }) {
-                        id name description storageClass chunker { type minChunkSize avgChunkSize maxChunkSize }
-                    }
-                }
-                """,
-            Variables = new GqlCreateRepositoryVariables
-            {
-                Name = createDto.Name,
-                Description = createDto.Description,
-                StorageClassName = createDto.StorageClassName
-            }
-        };
-        var resp = await GraphQlAsync(req, SourceGenerationContext.Default.GqlCreateRepositoryRequestBody, SourceGenerationContext.Default.GqlResponseGqlCreateRepositoryData, tenantId);
-        return resp?.Data?.CreateRepository is { } r ? MapRepository(r) : null;
-    }
-    
-    private static RepositorySummaryDto MapRepository(GqlRepository r) => new()
-    {
-        Id = r.Id,
-        Name = r.Name,
-        Description = r.Description,
-        StorageClass = r.StorageClass,
-        Chunker = r.Chunker is null ? null : new ChunkStoreChunkerDto
-        {
-            Type = r.Chunker.Type ?? string.Empty,
-            MinChunkSize = r.Chunker.MinChunkSize,
-            AvgChunkSize = r.Chunker.AvgChunkSize,
-            MaxChunkSize = r.Chunker.MaxChunkSize
-        }
-    };
-    
+        => await PostAsJsonAsync($"tenants/{tenantId}/repositories", createDto,
+            SourceGenerationContext.Default.CreateRepositoryDto,
+            SourceGenerationContext.Default.RepositorySummaryDto);
+
     #endregion
     
     #region Release
@@ -291,40 +128,9 @@ public class BinStashApiClient
         => await Task.FromResult<List<ReleaseSummaryDto>?>(null);
     
     public async Task<List<ReleaseSummaryDto>?> GetReleasesForRepoAsync(Guid tenantId, Guid repositoryId)
-    {
-        const string query = """
-            query($id: UUID!, $first: Int!, $after: String) {
-                repository(id: $id) {
-                    id
-                    name
-                    description
-                    createdAt
-                    releases(first: $first, after: $after) {
-                        nodes { id version createdAt notes repoId }
-                        pageInfo { hasNextPage endCursor }
-                    }
-                }
-            }
-            """;
-        var all = new List<GqlRelease>();
-        string? cursor = null;
-        do
-        {
-            var req = new GqlRequestByIdPaged { Query = query, Variables = new GqlIdPageVariables { Id = repositoryId, First = 50, After = cursor } };
-            var resp = await GraphQlAsync(req, SourceGenerationContext.Default.GqlRequestByIdPagedBody, SourceGenerationContext.Default.GqlResponseGqlRepositoryWithReleasesData, tenantId);
-            var conn = resp?.Data?.Repository?.Releases;
-            if (conn?.Nodes is { } nodes) all.AddRange(nodes);
-            cursor = conn?.PageInfo?.HasNextPage == true ? conn.PageInfo.EndCursor : null;
-        } while (cursor is not null);
-        return all.Select(rel => new ReleaseSummaryDto
-        {
-            Id = rel.Id,
-            Version = rel.Version,
-            CreatedAt = rel.CreatedAt,
-            Notes = rel.Notes
-        }).ToList();
-    }
-    
+        => await GetAsync($"tenants/{tenantId}/repositories/{repositoryId}/releases",
+            SourceGenerationContext.Default.ListReleaseSummaryDto);
+
     public async Task<ReleaseDefinitionMetrics> CreateReleaseAsync(Guid tenantId, Guid ingestSessionId, string repositoryId, ReleasePackage release, ReleasePackageSerializerOptions? options = null)
     {
         // Serialize .rdef into a pipe: the write end is filled by the serializer and
@@ -516,23 +322,6 @@ public class BinStashApiClient
     #endregion
 
     #region Helpers
-
-    private async Task<GqlResponse<TData>?> GraphQlAsync<TRequest, TData>(TRequest request, JsonTypeInfo<TRequest> requestTypeInfo, JsonTypeInfo<GqlResponse<TData>> responseTypeInfo, Guid? tenantId = null)
-    {
-        var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/graphql");
-        httpRequest.Content = JsonContent.Create(request, requestTypeInfo);
-        if (tenantId.HasValue)
-            httpRequest.Headers.Add("X-Tenant-Id", tenantId.Value.ToString());
-
-        var response = await _httpClient.SendAsync(httpRequest);
-        await EnsureCompatibleAsync(response);
-
-        var result = await response.Content.ReadFromJsonAsync(responseTypeInfo);
-        if (result?.Errors is { Count: > 0 } errors)
-            throw new InvalidOperationException($"GraphQL error: {errors[0].Message}");
-
-        return result;
-    }
 
     /// <summary>
     /// Checks for a <c>426 Upgrade Required</c> response from the version gate

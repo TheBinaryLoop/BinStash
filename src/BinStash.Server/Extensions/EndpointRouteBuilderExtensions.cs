@@ -27,6 +27,7 @@ public static class EndpointRouteBuilderExtensions
         app.MapInstanceEndpoints();
         app.MapReleaseEndpoints();
         app.MapSetupEndpoints();
+        app.MapCliApiEndpoints();
         // The following REST surfaces were migrated to GraphQL and removed:
         //  - Tenant list + members/invitations/roles/leave/delete (query tenants / tenantMembers / tenantInvitationPreview, mutation invite/updateRoles/remove/leave/accept/deleteTenant).
         //    The tenants query handles service-account (machine) tokens, so the CLI uses it too.
