@@ -103,6 +103,7 @@ const adminFirstName = ref('')
 const adminLastName = ref('')
 
 const chunkStoreTypes = ref<Array<{ name: string; value: number }>>([])
+const existingStoresDismissed = ref(false)
 
 /** Local is the only backend currently implemented server-side. */
 const availableStoreTypes = computed(() =>
@@ -128,6 +129,23 @@ const setChunkStore = () =>
       type: storeType.value,
       name: storeName.value.trim(),
       localPath: storePath.value.trim(),
+    }),
+  )
+
+/**
+ * Chunk stores already present when the wizard runs — the case when an existing
+ * instance is upgraded. Creating a second store over the same directory would be
+ * wrong, so the step offers to adopt what is there instead.
+ */
+const existingStores = computed(() => status.value?.data?.chunkStores ?? [])
+
+const keepExistingChunkStores = () =>
+  run(() =>
+    setupApi.ensureChunkStore({
+      type: storeType.value,
+      name: storeName.value.trim(),
+      localPath: storePath.value.trim(),
+      skip: true,
     }),
   )
 const setStorageClasses = () =>
@@ -325,7 +343,43 @@ async function finish() {
             </p>
           </div>
 
-          <form class="space-y-4" @submit.prevent="setChunkStore">
+          <!-- Upgrade path: never create a second store over a directory already in use. -->
+          <div v-if="existingStores.length" class="space-y-3">
+            <Alert>
+              <AlertDescription>
+                This instance already has
+                {{ existingStores.length }} chunk store{{ existingStores.length === 1 ? '' : 's' }}
+                holding existing data. Keep using
+                {{ existingStores.length === 1 ? 'it' : 'them' }} rather than creating another.
+              </AlertDescription>
+            </Alert>
+
+            <ul class="space-y-2">
+              <li
+                v-for="store in existingStores"
+                :key="store.id"
+                class="border-hairline flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
+              >
+                <span class="font-medium">{{ store.name }}</span>
+                <span class="text-muted-foreground font-mono text-xs">{{ store.type }}</span>
+              </li>
+            </ul>
+
+            <div class="flex flex-wrap gap-2">
+              <Button :disabled="busy" @click="keepExistingChunkStores">
+                {{ busy ? 'Saving…' : 'Keep existing and continue' }}
+              </Button>
+              <Button variant="outline" :disabled="busy" @click="existingStoresDismissed = true">
+                Add another anyway
+              </Button>
+            </div>
+          </div>
+
+          <form
+            v-if="!existingStores.length || existingStoresDismissed"
+            class="space-y-4"
+            @submit.prevent="setChunkStore"
+          >
             <div class="grid gap-4 sm:grid-cols-2">
               <div class="space-y-2">
                 <Label for="store-name">Name</Label>
