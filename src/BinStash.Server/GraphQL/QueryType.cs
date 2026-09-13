@@ -80,6 +80,11 @@ public sealed class QueryType : ObjectType<Query>
             .UseProjection();
         
         descriptor
+            .Field(x => x.GetRepositoryMoveTargets(Guid.Empty, null!, CancellationToken.None))
+            .Type<ListType<NonNullType<ObjectType<RepositoryMoveTargetGql>>>>()
+            .Authorize();
+        
+        descriptor
             .Field(x => x.GetRelease(Guid.Empty, null!, CancellationToken.None))
             .Type<ReleaseType>()
             .Authorize()

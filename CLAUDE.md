@@ -77,6 +77,8 @@ projects), `tests/` (the three test projects), and `tooling/` (`BinStash.StoreMi
   pnpm install --frozen-lockfile
   pnpm dev      # local dev (vite, mkcert https)
   pnpm build    # production bundle
+  pnpm test     # vitest (component specs live next to the component, *.spec.ts)
+  pnpm test:ci  # same + v8 coverage; writes junit.xml and coverage/ for Jenkins
   ```
 - **EF Core migrations** live in `src/BinStash.Infrastructure/Data/Migrations`; the server is the
   startup/design-time host (it carries `Microsoft.EntityFrameworkCore.Design`). Add migrations with
@@ -88,8 +90,9 @@ projects), `tests/` (the three test projects), and `tooling/` (`BinStash.StoreMi
   `pwsh tooling/dev-instance/up.ps1` then `setup.ps1`; tear down with `down.ps1`. The scripts are
   committed; only `tooling/dev-instance/storage/` (runtime chunk store) is gitignored. See its
   `README.md`.
-- **CI**: `Jenkinsfile` builds the frontend (pnpm), then `dotnet restore`/`build`/`test` (xUnit
-  logger) on `dotnet-lts`. Platform here is win32; the server container is Linux.
+- **CI**: `Jenkinsfile` wipes the workspace, builds the frontend (pnpm), runs the frontend vitest
+  suite, then `dotnet restore`/`build`/`test` (xUnit logger) on `dotnet-lts`. Both test stages
+  publish through the xUnit plugin. Platform here is win32; the server container is Linux.
 
 ## Project-specific guardrails
 

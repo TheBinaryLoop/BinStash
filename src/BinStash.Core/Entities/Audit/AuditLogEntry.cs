@@ -93,6 +93,13 @@ public static class AuditActions
 
     public const string RepositoryCreated = "repository.created";
     public const string RepositoryUpdated = "repository.updated";
+
+    /// <summary>
+    /// A repository changed tenant. Written to both the source and the target tenant, because the
+    /// log is tenant-scoped and a repository leaving matters as much as one arriving.
+    /// </summary>
+    public const string RepositoryMoved = "repository.moved";
+
     public const string RepositoryAccessGranted = "repository.access.granted";
     public const string RepositoryAccessRevoked = "repository.access.revoked";
 

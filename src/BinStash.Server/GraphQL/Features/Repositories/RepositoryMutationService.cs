@@ -199,6 +199,153 @@ public sealed class RepositoryMutationService
         };
     }
 
+    /// <summary>
+    /// Moves a repository into another tenant.
+    /// </summary>
+    /// <remarks>
+    /// The move is metadata-only. Chunks, packs and file definitions are addressed by
+    /// <see cref="Repository.ChunkStoreId"/>, which is not tenant-scoped, so nothing on disk has to
+    /// change — but only as long as the target tenant is actually configured for that same chunk
+    /// store. A target without a matching storage class is rejected rather than silently re-pointed,
+    /// because re-pointing would orphan every existing release.
+    /// </remarks>
+    public async Task<RepositoryGql> MoveRepositoryAsync(MoveRepositoryInput input, CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+
+        // Tenant admin, not repository admin: moving a repository out changes what the tenant is
+        // billed for and who can reach its data, which is above a per-repository grant's pay grade.
+        await GraphQlAuth.EnsureTenantPermissionAsync(user, _authorizationService, tenantContext.TenantId, TenantPermission.Admin);
+
+        if (input.TargetTenantId == tenantContext.TenantId)
+            throw new GraphQLException("The repository is already in this workspace.");
+
+        var repo = await _db.Repositories
+            .Include(r => r.ChunkStore)
+            .FirstOrDefaultAsync(r => r.TenantId == tenantContext.TenantId && r.Id == input.RepoId, ct);
+
+        if (repo is null)
+            throw new GraphQLException("Repository not found.");
+
+        // ...and admin on the receiving side too, so a repository can never be pushed into a
+        // workspace the caller does not administer. Instance admins satisfy both checks.
+        await GraphQlAuth.EnsureTenantPermissionAsync(user, _authorizationService, input.TargetTenantId, TenantPermission.Admin);
+
+        var targetTenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == input.TargetTenantId, ct);
+
+        if (targetTenant is null)
+            throw new GraphQLException("Target workspace not found.");
+
+        if (targetTenant.Status != TenantStatus.Active)
+            throw new GraphQLException($"Workspace '{targetTenant.Name}' is not active.");
+
+        if (await _db.Repositories.AnyAsync(r => r.TenantId == targetTenant.Id && r.Name == repo.Name, ct))
+            throw new GraphQLException($"A repository named '{repo.Name}' already exists in workspace '{targetTenant.Name}'.");
+
+        var compatibleClasses = await _db.StorageClassMappings
+            .AsNoTracking()
+            .Where(m => m.TenantId == targetTenant.Id && m.IsEnabled && m.ChunkStoreId == repo.ChunkStoreId)
+            .ToListAsync(ct);
+
+        if (compatibleClasses.Count == 0)
+            throw new GraphQLException(
+                $"Workspace '{targetTenant.Name}' has no enabled storage class backed by chunk store " +
+                $"'{repo.ChunkStore.Name}', so this repository cannot be moved there without copying its data.");
+
+        StorageClassMapping targetClass;
+
+        if (!string.IsNullOrWhiteSpace(input.StorageClassName))
+        {
+            targetClass = compatibleClasses.FirstOrDefault(x => x.StorageClassName == input.StorageClassName)
+                ?? throw new GraphQLException(
+                    $"Storage class '{input.StorageClassName}' is not available in workspace " +
+                    $"'{targetTenant.Name}' for this repository's chunk store.");
+        }
+        else
+        {
+            // Keep the repository's current label where the target offers it, then its default,
+            // then any compatible class — ordered so the pick is deterministic either way.
+            targetClass = compatibleClasses.FirstOrDefault(x => x.StorageClassName == repo.StorageClass)
+                ?? compatibleClasses.FirstOrDefault(x => x.IsDefault)
+                ?? compatibleClasses.OrderBy(x => x.StorageClassName, StringComparer.Ordinal).First();
+        }
+
+        // Per-repository grants name users, groups and service accounts of the source tenant.
+        // Carrying them across would hand someone access inside a workspace that never granted them
+        // a role, so the repository arrives with an empty ACL for the new admins to rebuild.
+        var staleGrants = await _db.RepositoryRoleAssignments
+            .Where(a => a.RepositoryId == repo.Id)
+            .ToListAsync(ct);
+
+        if (staleGrants.Count > 0)
+            _db.RepositoryRoleAssignments.RemoveRange(staleGrants);
+
+        var sourceTenantId = repo.TenantId;
+        var sourceStorageClass = repo.StorageClass;
+
+        var sourceTenantName = await _db.Tenants
+            .AsNoTracking()
+            .Where(t => t.Id == sourceTenantId)
+            .Select(t => t.Name)
+            .FirstOrDefaultAsync(ct);
+
+        repo.TenantId = targetTenant.Id;
+        repo.StorageClass = targetClass.StorageClassName;
+
+        await _db.SaveChangesAsync(ct);
+
+        var metadata = new Dictionary<string, object?>
+        {
+            ["fromTenantId"] = sourceTenantId,
+            ["fromTenantName"] = sourceTenantName,
+            ["toTenantId"] = targetTenant.Id,
+            ["toTenantName"] = targetTenant.Name,
+            ["fromStorageClass"] = sourceStorageClass,
+            ["toStorageClass"] = targetClass.StorageClassName,
+            ["revokedGrants"] = staleGrants.Count
+        };
+
+        // Both sides get the record: the source tenant's log would otherwise show a repository
+        // simply vanishing, and the target's would show one appearing from nowhere.
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryMoved,
+            TargetType = nameof(Repository),
+            TargetId = repo.Id.ToString(),
+            TargetName = repo.Name,
+            TenantId = sourceTenantId,
+            Metadata = metadata
+        }, ct);
+
+        await _audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.RepositoryMoved,
+            TargetType = nameof(Repository),
+            TargetId = repo.Id.ToString(),
+            TargetName = repo.Name,
+            TenantId = targetTenant.Id,
+            Metadata = metadata
+        }, ct);
+
+        return new RepositoryGql
+        {
+            Id = repo.Id,
+            Name = repo.Name,
+            Description = repo.Description,
+            StorageClass = repo.StorageClass,
+            CreatedAt = repo.CreatedAt,
+            Chunker = new ChunkStoreChunkerGql
+            {
+                Type = repo.ChunkStore.ChunkerOptions.Type.ToString(),
+                MinChunkSize = repo.ChunkStore.ChunkerOptions.MinChunkSize,
+                AvgChunkSize = repo.ChunkStore.ChunkerOptions.AvgChunkSize,
+                MaxChunkSize = repo.ChunkStore.ChunkerOptions.MaxChunkSize
+            }
+        };
+    }
+
     public async Task<RepositoryAccessGql> GrantRepositoryAccessAsync(Guid repoId, short subjectType, Guid subjectId, string role, CancellationToken ct)
     {
         var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);

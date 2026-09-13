@@ -47,6 +47,11 @@ public sealed class MutationType : ObjectType<Mutation>
             .Type<RepositoryType>()
             .Authorize();
         
+        descriptor
+            .Field(x => x.MoveRepository(null!, null!, CancellationToken.None))
+            .Type<RepositoryType>()
+            .Authorize();
+        
         /*descriptor
             .Field(x => x.DeleteRepository(null!, null!, CancellationToken.None))
             .Type<BooleanType>()

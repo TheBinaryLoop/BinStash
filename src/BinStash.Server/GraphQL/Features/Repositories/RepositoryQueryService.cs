@@ -16,7 +16,9 @@
 using BinStash.Core.Auth;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Auth.Tenant;
+using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Auth;
 using BinStash.Server.GraphQL.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -211,5 +213,80 @@ public class RepositoryQueryService
 
         accessInfos.AddRange(tenantAdmins);
         return accessInfos;
+    }
+
+    /// <summary>
+    /// The workspaces this repository could be moved into — see
+    /// <c>RepositoryMutationService.MoveRepositoryAsync</c> for the rules this mirrors.
+    /// </summary>
+    /// <remarks>
+    /// Candidates are narrowed by chunk store in the database first, then filtered through the real
+    /// authorization service rather than a re-implementation of the tenant-admin rules. That costs a
+    /// couple of queries per candidate, but the alternative — a second copy of the role logic — is
+    /// how a picker ends up offering a target the mutation then refuses.
+    /// </remarks>
+    public async Task<List<RepositoryMoveTargetGql>> GetRepositoryMoveTargetsAsync(Guid repoId, CancellationToken ct)
+    {
+        var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
+        var user = _httpContextAccessor.HttpContext?.User ?? throw new GraphQLException("No user context.");
+        await GraphQlAuth.EnsureTenantPermissionAsync(user, _authorizationService, tenantContext.TenantId, TenantPermission.Admin);
+
+        var repo = await _db.Repositories
+            .AsNoTracking()
+            .Where(r => r.TenantId == tenantContext.TenantId && r.Id == repoId)
+            .Select(r => new { r.Name, r.ChunkStoreId, r.StorageClass })
+            .FirstOrDefaultAsync(ct);
+
+        if (repo is null)
+            throw new GraphQLException("Repository not found.");
+
+        var candidates = await _db.StorageClassMappings
+            .AsNoTracking()
+            .Where(m => m.TenantId != tenantContext.TenantId && m.IsEnabled && m.ChunkStoreId == repo.ChunkStoreId)
+            .Join(
+                _db.Tenants.AsNoTracking().Where(t => t.Status == TenantStatus.Active),
+                m => m.TenantId,
+                t => t.Id,
+                (m, t) => new { t.Id, t.Name, t.Slug, m.StorageClassName, m.IsDefault })
+            .ToListAsync(ct);
+
+        if (candidates.Count == 0)
+            return [];
+
+        var tenantIds = candidates.Select(x => x.Id).Distinct().ToList();
+
+        var conflictingTenantIds = await _db.Repositories
+            .AsNoTracking()
+            .Where(r => tenantIds.Contains(r.TenantId) && r.Name == repo.Name)
+            .Select(r => r.TenantId)
+            .ToListAsync(ct);
+
+        var conflicts = conflictingTenantIds.ToHashSet();
+        var targets = new List<RepositoryMoveTargetGql>();
+
+        foreach (var group in candidates.GroupBy(x => x.Id))
+        {
+            var permission = await AuthChecker.CheckTenantPermissionAsync(user, _authorizationService, group.Key, TenantPermission.Admin);
+            if (!permission.Succeeded)
+                continue;
+
+            var first = group.First();
+
+            // Same preference order the mutation applies, so the name shown is the name assigned.
+            var storageClass = group.FirstOrDefault(x => x.StorageClassName == repo.StorageClass)
+                ?? group.FirstOrDefault(x => x.IsDefault)
+                ?? group.OrderBy(x => x.StorageClassName, StringComparer.Ordinal).First();
+
+            targets.Add(new RepositoryMoveTargetGql
+            {
+                TenantId = first.Id,
+                TenantName = first.Name,
+                TenantSlug = first.Slug,
+                StorageClassName = storageClass.StorageClassName,
+                NameConflict = conflicts.Contains(first.Id)
+            });
+        }
+
+        return targets.OrderBy(x => x.TenantName, StringComparer.OrdinalIgnoreCase).ToList();
     }
 }

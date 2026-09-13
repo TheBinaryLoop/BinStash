@@ -266,6 +266,23 @@ public sealed class RepositoryAccessGql
     public required DateTimeOffset GrantedAt { get; init; }
 }
 
+/// <summary>
+/// A workspace a given repository could be moved into: one the caller administers that is
+/// configured for the repository's existing chunk store.
+/// </summary>
+public sealed class RepositoryMoveTargetGql
+{
+    public required Guid TenantId { get; init; }
+    public required string TenantName { get; init; }
+    public required string TenantSlug { get; init; }
+
+    /// <summary>The storage class the repository would be labelled with in that workspace.</summary>
+    public required string StorageClassName { get; init; }
+
+    /// <summary>True when that workspace already holds a repository of the same name.</summary>
+    public required bool NameConflict { get; init; }
+}
+
 public sealed class ApiKeyInfoGql
 {
     public required Guid Id { get; init; }

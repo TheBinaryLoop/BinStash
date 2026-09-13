@@ -77,6 +77,20 @@ mutation UpdateRepository($input: UpdateRepositoryInput!) {
   updateRepository(input: $input) { ...RepositorySummary }
 }
 
+query RepositoryMoveTargets($repoId: UUID!) {
+  repositoryMoveTargets(repoId: $repoId) {
+    tenantId
+    tenantName
+    tenantSlug
+    storageClassName
+    nameConflict
+  }
+}
+
+mutation MoveRepository($input: MoveRepositoryInput!) {
+  moveRepository(input: $input) { ...RepositorySummary }
+}
+
 mutation GrantRepositoryAccess($repoId: UUID!, $subjectType: Short!, $subjectId: UUID!, $role: String!) {
   grantRepositoryAccess(repoId: $repoId, subjectType: $subjectType, subjectId: $subjectId, role: $role) {
     subjectType subjectId role grantedAt

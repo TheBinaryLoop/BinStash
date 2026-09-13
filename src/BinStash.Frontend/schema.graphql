@@ -51,6 +51,9 @@ type Query {
     @cost(weight: "10")
   repository(id: UUID!): RepositoryGql @authorize @cost(weight: "10")
   repositoryByName(name: String!): RepositoryGql @authorize @cost(weight: "10")
+  repositoryMoveTargets(repoId: UUID!): [RepositoryMoveTargetGql!]
+    @authorize
+    @cost(weight: "10")
   release(id: UUID!): ReleaseGql @authorize @cost(weight: "10")
   chunkStores(
     "Returns the first _n_ elements from the list."
@@ -216,6 +219,9 @@ type Mutation {
     @authorize
     @cost(weight: "10")
   updateRepository(input: UpdateRepositoryInput!): RepositoryGql
+    @authorize
+    @cost(weight: "10")
+  moveRepository(input: MoveRepositoryInput!): RepositoryGql
     @authorize
     @cost(weight: "10")
   createServiceAccount(input: CreateServiceAccountInput!): ServiceAccountGql
@@ -651,6 +657,14 @@ type RepositoryGql {
   createdAt: DateTime!
 }
 
+type RepositoryMoveTargetGql {
+  tenantId: UUID!
+  tenantName: String!
+  tenantSlug: String!
+  storageClassName: String!
+  nameConflict: Boolean!
+}
+
 type SendTestEmailResultGql {
   success: Boolean!
   providerError: String
@@ -1031,6 +1045,12 @@ input ListFilterInputTypeOfReleaseCustomPropertyGqlFilterInput {
   none: ReleaseCustomPropertyGqlFilterInput @cost(weight: "10")
   some: ReleaseCustomPropertyGqlFilterInput @cost(weight: "10")
   any: Boolean @cost(weight: "10")
+}
+
+input MoveRepositoryInput {
+  repoId: UUID!
+  targetTenantId: UUID!
+  storageClassName: String
 }
 
 input RebuildJobProgressGqlSortInput {

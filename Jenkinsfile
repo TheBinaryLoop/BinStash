@@ -14,6 +14,8 @@ pipeline {
     SOLUTION = 'BinStash.slnx'
     BUILD_CONFIG = 'Release'
     MSBUILDDISABLENODEREUSE = 1
+    // Vitest colourises its output; ANSI escapes make the Jenkins console log unreadable.
+    NO_COLOR = 'true'
   }
 
   parameters {
@@ -23,6 +25,9 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
+        // Start from an empty workspace: stale bin/obj, node_modules and wwwroot output from a
+        // previous build can mask a broken build or resurrect deleted files in the bundle.
+        cleanWs()
         checkout scm
       }
     }
@@ -39,6 +44,36 @@ pipeline {
       post {
         success { echo '✅ Frontend build completed.' }
         failure { echo '❌ Frontend build failed. Check logs.' }
+      }
+    }
+
+    stage('Frontend Tests') {
+      when { expression { params.RUN_TESTS } }
+      steps {
+        dir('src/BinStash.Frontend') {
+          // Writes junit.xml and coverage/ (cobertura + html); see vitest.config.ts.
+          bat 'pnpm test:ci'
+        }
+      }
+      post {
+        always {
+          // The `junit` step, not the xUnit plugin used by the .NET stage: xUnit validates the
+          // report against the Surefire XSD, whose SUREFIRE_TIME allows at most three decimals,
+          // and vitest writes full float seconds (time="0.8954164"). JUnitResultArchiver does not
+          // validate, and the two publishers contribute to the same build test result.
+          junit allowEmptyResults: true, testResults: 'src/BinStash.Frontend/junit.xml'
+          publishHTML([
+            allowMissing: true,
+            alwaysLinkToLastBuild: true,
+            keepAll: true,
+            reportDir: 'src/BinStash.Frontend/coverage',
+            reportFiles: 'index.html',
+            reportName: 'Frontend Coverage'
+          ])
+          archiveArtifacts artifacts: 'src/BinStash.Frontend/coverage/cobertura-coverage.xml', allowEmptyArchive: true
+        }
+        success { echo '✅ Frontend tests passed.' }
+        failure { echo '❌ Frontend tests failed. Check logs.' }
       }
     }
 
