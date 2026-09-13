@@ -57,7 +57,12 @@ export const setupApi = {
     '/api/setup/chunk-stores/enabled-types',
   ),
 
-  ensureChunkStore: (input: { type: string; name: string; localPath: string; skip?: boolean }) =>
+  /**
+   * `type` must be the NUMERIC enum value. The endpoint binds a `ChunkStoreType` enum and
+   * the server's JSON options have no string-enum converter, so sending "Local" fails to
+   * deserialize. That is why /chunk-stores/enabled-types reports `value` alongside `name`.
+   */
+  ensureChunkStore: (input: { type: number; name: string; localPath: string; skip?: boolean }) =>
     apiPost('/api/setup/chunk-stores', {
       type: input.type,
       name: input.name,

@@ -111,6 +111,30 @@ public sealed class TenantMutationService
         };
 
         await _db.Tenants.AddAsync(tenant, ct);
+
+        // Seed the tenant's storage-class mappings from the instance-wide defaults.
+        // Without this a freshly created tenant has no storage classes at all, so
+        // createRepository fails with "No default storage class is configured for this
+        // tenant" and the workspace is unusable. The setup wizard does the same thing for
+        // the tenant it creates (SetupEndpoints.EnsureStorageDefaultsAsync); every tenant
+        // created afterwards needs it too.
+        var defaultMappings = await _db.StorageClassDefaultMappings
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        foreach (var mapping in defaultMappings)
+        {
+            await _db.StorageClassMappings.AddAsync(new StorageClassMapping
+            {
+                TenantId = tenant.Id,
+                StorageClassName = mapping.StorageClassName,
+                ChunkStoreId = mapping.ChunkStoreId,
+                IsDefault = mapping.IsDefault,
+                IsEnabled = mapping.IsEnabled,
+                CreatedAt = DateTimeOffset.UtcNow
+            }, ct);
+        }
+
         await _db.SaveChangesAsync(ct);
 
         await _audit.WriteAsync(new AuditEntryDraft

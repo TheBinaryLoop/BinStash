@@ -40,9 +40,9 @@ const STEPS: Array<{ key: SetupStep; label: string }> = [
   { key: 'Tenancy', label: 'Tenancy' },
   { key: 'DefaultTenant', label: 'Workspace' },
   { key: 'ChunkStore', label: 'Chunk store' },
-  { key: 'StorageClass', label: 'Storage classes' },
+  { key: 'StorageClass', label: 'Storage' },
   { key: 'StorageClassDefaultMappings', label: 'Defaults' },
-  { key: 'InstanceAdmin', label: 'Administrator' },
+  { key: 'InstanceAdmin', label: 'Admin' },
   { key: 'Review', label: 'Finish' },
 ]
 
@@ -96,13 +96,18 @@ const tenantName = ref('')
 const tenantSlug = ref('')
 const storeName = ref('primary')
 const storePath = ref('/var/lib/binstash/chunks')
-const storeType = ref('Local')
+const storeType = ref<number>(0)
 const adminEmail = ref('')
 const adminPassword = ref('')
 const adminFirstName = ref('')
 const adminLastName = ref('')
 
 const chunkStoreTypes = ref<Array<{ name: string; value: number }>>([])
+
+/** Local is the only backend currently implemented server-side. */
+const availableStoreTypes = computed(() =>
+  chunkStoreTypes.value.length ? chunkStoreTypes.value : [{ name: 'Local', value: 0 }],
+)
 
 async function loadChunkStoreTypes() {
   try {
@@ -172,34 +177,35 @@ async function finish() {
     </div>
 
     <template v-else>
-      <ol class="flex flex-wrap items-center gap-x-2 gap-y-2">
-        <li
-          v-for="(entry, index) in visibleSteps"
-          :key="entry.key"
-          class="flex items-center gap-2"
-        >
-          <span
-            class="flex size-6 items-center justify-center rounded-full border text-xs font-medium"
-            :class="
-              index < currentIndex
-                ? 'border-primary bg-primary text-primary-foreground'
-                : index === currentIndex
-                  ? 'border-primary text-primary'
-                  : 'border-hairline text-muted-foreground'
-            "
-          >
-            <Check v-if="index < currentIndex" class="size-3.5" />
-            <template v-else>{{ index + 1 }}</template>
+      <!-- One row always: connectors flex to fill on wide viewports and collapse to a
+           minimum on narrow ones, where the strip scrolls sideways instead of wrapping. -->
+      <ol class="scrollbar-thin flex w-full items-center justify-center gap-3 overflow-x-auto pb-1">
+        <li v-for="(entry, index) in visibleSteps" :key="entry.key" class="flex shrink-0 items-center gap-3">
+          <span class="flex shrink-0 items-center gap-2">
+            <span
+              class="flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-medium"
+              :class="
+                index < currentIndex
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : index === currentIndex
+                    ? 'border-primary text-primary'
+                    : 'border-hairline text-muted-foreground'
+              "
+            >
+              <Check v-if="index < currentIndex" class="size-3.5" />
+              <template v-else>{{ index + 1 }}</template>
+            </span>
+            <span
+              class="text-xs whitespace-nowrap"
+              :class="index === currentIndex ? 'font-medium' : 'text-muted-foreground'"
+            >
+              {{ entry.label }}
+            </span>
           </span>
-          <span
-            class="text-xs"
-            :class="index === currentIndex ? 'font-medium' : 'text-muted-foreground'"
-          >
-            {{ entry.label }}
-          </span>
+
           <span
             v-if="index < visibleSteps.length - 1"
-            class="bg-hairline hidden h-px w-6 sm:block"
+            class="bg-hairline h-px w-8 shrink-0"
             aria-hidden="true"
           />
         </li>
@@ -327,13 +333,17 @@ async function finish() {
               </div>
               <div class="space-y-2">
                 <Label for="store-type">Backend</Label>
-                <Select v-model="storeType" :disabled="busy">
+                <Select
+                  :model-value="String(storeType)"
+                  :disabled="busy"
+                  @update:model-value="(value) => (storeType = Number(value))"
+                >
                   <SelectTrigger id="store-type" class="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem
-                      v-for="type in chunkStoreTypes.length ? chunkStoreTypes : [{ name: 'Local', value: 0 }]"
+                      v-for="type in availableStoreTypes"
                       :key="type.name"
-                      :value="type.name"
+                      :value="String(type.value)"
                     >
                       {{ type.name }}
                     </SelectItem>

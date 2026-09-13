@@ -33,7 +33,7 @@ async function submit() {
     await tenants.load()
 
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : null
-    await router.push(redirect ?? { name: 'tenant-home' })
+    await router.push(redirect ?? { name: 'select-tenant' })
   } catch (caught) {
     if (caught instanceof ApiError && /two.?factor/i.test(caught.message)) {
       needsTwoFactor.value = true

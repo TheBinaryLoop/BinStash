@@ -7,10 +7,10 @@
  * BinStash — "Cold Storage"
  *
  * A storage product is read, not admired: the UI is mostly hashes, byte counts,
- * versions and ratios. The palette is therefore near-neutral graphite with a
- * blue-green cast, and colour is spent only where it carries meaning — one cyan
- * accent for the primary action, focus and active navigation; emerald strictly
- * for "space reclaimed"; amber for degradation; red for loss.
+ * versions and ratios. The palette is therefore near-neutral graphite carrying a
+ * faint violet cast, and colour is spent only where it carries meaning — the
+ * BinStash violet for the primary action, focus and active navigation; emerald
+ * strictly for "space reclaimed"; amber for degradation; red for loss.
  *
  * Dark is the primary theme (see index.html for the pre-paint resolution) and
  * light is a fully supported peer, not an afterthought.
@@ -72,29 +72,29 @@
      engineered instrumentation, and softer corners undercut that. */
   --radius: 0.5rem;
 
-  --background: oklch(0.985 0.002 240);
-  --foreground: oklch(0.21 0.015 250);
+  --background: oklch(0.985 0.002 300);
+  --foreground: oklch(0.21 0.015 295);
 
   --card: oklch(1 0 0);
   --card-foreground: var(--foreground);
   --popover: oklch(1 0 0);
   --popover-foreground: var(--foreground);
 
-  --surface: oklch(0.975 0.003 240);
+  --surface: oklch(0.975 0.004 300);
   --surface-raised: oklch(1 0 0);
-  --hairline: oklch(0.91 0.005 245);
+  --hairline: oklch(0.91 0.006 295);
 
-  --primary: oklch(0.55 0.115 218);
-  --primary-foreground: oklch(0.99 0.005 220);
+  --primary: oklch(0.551 0.268 298);
+  --primary-foreground: oklch(0.99 0.004 300);
 
-  --secondary: oklch(0.955 0.004 245);
-  --secondary-foreground: oklch(0.3 0.015 250);
+  --secondary: oklch(0.955 0.006 298);
+  --secondary-foreground: oklch(0.3 0.018 295);
 
-  --muted: oklch(0.96 0.004 245);
-  --muted-foreground: oklch(0.51 0.014 250);
+  --muted: oklch(0.96 0.005 298);
+  --muted-foreground: oklch(0.51 0.016 295);
 
-  --accent: oklch(0.94 0.012 220);
-  --accent-foreground: oklch(0.28 0.03 225);
+  --accent: oklch(0.945 0.022 298);
+  --accent-foreground: oklch(0.32 0.075 298);
 
   --destructive: oklch(0.58 0.19 26);
   --destructive-foreground: oklch(0.99 0.004 20);
@@ -106,37 +106,37 @@
   --info: oklch(0.58 0.1 240);
   --info-foreground: oklch(0.99 0.004 240);
 
-  --border: oklch(0.91 0.005 245);
-  --input: oklch(0.89 0.006 245);
-  --ring: oklch(0.55 0.115 218);
+  --border: oklch(0.91 0.006 295);
+  --input: oklch(0.89 0.008 295);
+  --ring: oklch(0.551 0.268 298);
 }
 
 .dark {
-  --background: oklch(0.165 0.012 248);
-  --foreground: oklch(0.93 0.006 240);
+  --background: oklch(0.165 0.011 295);
+  --foreground: oklch(0.93 0.006 295);
 
-  --card: oklch(0.198 0.013 248);
+  --card: oklch(0.198 0.012 295);
   --card-foreground: var(--foreground);
-  --popover: oklch(0.212 0.014 248);
+  --popover: oklch(0.212 0.013 295);
   --popover-foreground: var(--foreground);
 
-  --surface: oklch(0.185 0.013 248);
-  --surface-raised: oklch(0.232 0.014 248);
-  --hairline: oklch(0.29 0.014 248);
+  --surface: oklch(0.185 0.012 295);
+  --surface-raised: oklch(0.232 0.013 295);
+  --hairline: oklch(0.29 0.014 295);
 
-  /* Lifted and slightly desaturated relative to light mode: the same chroma on a
-     dark ground reads as neon and fights the neutral base. */
-  --primary: oklch(0.74 0.115 205);
-  --primary-foreground: oklch(0.17 0.02 220);
+  /* Lifted very slightly against the dark ground so the brand violet keeps the
+     same presence it has in light mode. */
+  --primary: oklch(0.58 0.262 298);
+  --primary-foreground: oklch(0.99 0.004 300);
 
-  --secondary: oklch(0.255 0.014 248);
-  --secondary-foreground: oklch(0.9 0.008 240);
+  --secondary: oklch(0.255 0.014 295);
+  --secondary-foreground: oklch(0.9 0.008 295);
 
-  --muted: oklch(0.245 0.013 248);
-  --muted-foreground: oklch(0.66 0.012 245);
+  --muted: oklch(0.245 0.013 295);
+  --muted-foreground: oklch(0.66 0.013 295);
 
-  --accent: oklch(0.272 0.018 230);
-  --accent-foreground: oklch(0.93 0.01 230);
+  --accent: oklch(0.28 0.035 298);
+  --accent-foreground: oklch(0.93 0.02 298);
 
   --destructive: oklch(0.66 0.17 24);
   --destructive-foreground: oklch(0.16 0.02 20);
@@ -148,9 +148,9 @@
   --info: oklch(0.7 0.1 240);
   --info-foreground: oklch(0.17 0.02 240);
 
-  --border: oklch(0.29 0.014 248);
-  --input: oklch(0.32 0.015 248);
-  --ring: oklch(0.74 0.115 205);
+  --border: oklch(0.29 0.014 295);
+  --input: oklch(0.32 0.015 295);
+  --ring: oklch(0.58 0.262 298);
 }
 
 @layer base {

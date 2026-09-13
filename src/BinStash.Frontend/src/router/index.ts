@@ -23,7 +23,10 @@ declare module 'vue-router' {
 }
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: { name: 'tenant-home' } },
+  // Param-free entry point. `tenant-home` lives under /t/:tenantId, so redirecting
+  // straight to it would fail to resolve before any guard runs. The workspace picker
+  // forwards on automatically when there is only one workspace.
+  { path: '/', redirect: { name: 'select-tenant' } },
 
   {
     path: '/setup',

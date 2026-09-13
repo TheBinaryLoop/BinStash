@@ -33,7 +33,7 @@ const groups = computed(() => {
     {
       label: 'Workspace',
       items: [
-        { label: 'Overview', icon: Gauge, to: { name: 'tenant-home', params } },
+        { label: 'Overview', icon: Gauge, to: { name: 'tenant-home', params }, exact: true },
         { label: 'Repositories', icon: FolderGit2, to: { name: 'repositories', params } },
         { label: 'Usage', icon: Boxes, to: { name: 'usage', params } },
       ],

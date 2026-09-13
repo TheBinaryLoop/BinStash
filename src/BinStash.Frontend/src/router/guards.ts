@@ -38,14 +38,14 @@ export function registerGuards(router: Router) {
       return { name: 'setup' }
     }
     if (to.name === 'setup' && (await isSetupComplete())) {
-      return { name: 'tenant-home' }
+      return { name: 'select-tenant' }
     }
 
     const auth = useAuthStore()
     await auth.ready()
 
     if (to.meta.guestOnly && auth.isAuthenticated) {
-      return { name: 'tenant-home' }
+      return { name: 'select-tenant' }
     }
 
     if (to.meta.public) return true

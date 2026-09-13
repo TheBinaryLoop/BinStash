@@ -87,7 +87,7 @@ const reclaimed = computed(() =>
     </AsyncSection>
 
     <div class="grid gap-4 lg:grid-cols-3">
-      <section class="bg-card hairline space-y-4 rounded-lg p-4 lg:col-span-1">
+      <section class="bg-card hairline space-y-4 self-start rounded-lg p-4 lg:col-span-1">
         <div class="flex items-baseline justify-between">
           <h2 class="text-sm font-medium">Storage</h2>
           <RouterLink

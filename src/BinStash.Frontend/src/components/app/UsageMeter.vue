@@ -39,19 +39,30 @@ const overage = computed(() => props.isLimited && props.limit != null && props.u
       </span>
     </div>
 
+    <!-- Only draw a bar when there is something to fill. With no quota there is no
+         denominator, and a full-width bar reads as "you are at capacity". -->
     <div
+      v-if="isLimited"
       class="bg-muted h-1.5 w-full overflow-hidden rounded-full"
       role="progressbar"
       :aria-valuenow="Math.round(fraction * 100)"
       aria-valuemin="0"
       aria-valuemax="100"
-      :aria-label="isLimited ? 'Storage quota used' : 'Storage used'"
+      aria-label="Storage quota used"
     >
       <div
         class="h-full rounded-full transition-[width] duration-500"
         :class="tone"
-        :style="{ width: isLimited ? `${fraction * 100}%` : '100%' }"
+        :style="{ width: `${fraction * 100}%` }"
       />
+    </div>
+
+    <div
+      v-else
+      class="bg-muted/60 h-1.5 w-full overflow-hidden rounded-full"
+      aria-hidden="true"
+    >
+      <div class="bg-primary/35 h-full w-full rounded-full [mask-image:repeating-linear-gradient(90deg,#000_0_6px,transparent_6px_12px)]" />
     </div>
 
     <p v-if="overage" class="text-destructive text-xs">

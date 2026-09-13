@@ -14,7 +14,7 @@ import ThemeToggle from '@/components/app/ThemeToggle.vue'
     </header>
 
     <main class="flex flex-1 justify-center px-6 py-10">
-      <div class="w-full max-w-3xl">
+      <div class="w-full max-w-4xl">
         <RouterView />
       </div>
     </main>

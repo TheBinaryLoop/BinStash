@@ -45,6 +45,17 @@ public sealed class SetupGateMiddleware(RequestDelegate next)
             return;
         }
 
+        // The setup wizard is part of the SPA, so the SPA has to be reachable before setup
+        // has run — otherwise the gate 503s the very page that completes it, and the only
+        // way to initialize an instance is to drive the REST API by hand. Only the data
+        // surfaces below stay gated; serving static files reveals nothing.
+        if (!path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase) &&
+            !path.StartsWithSegments("/graphql", StringComparison.OrdinalIgnoreCase))
+        {
+            await next(ctx);
+            return;
+        }
+
         var state = await db.SetupStates.AsNoTracking().SingleOrDefaultAsync(x => x.Id == 1);
         if (state is null || !state.IsInitialized)
         {

@@ -18,7 +18,7 @@ const groups = computed(() => [
   {
     label: 'Instance',
     items: [
-      { label: 'Overview', icon: Gauge, to: { name: 'instance-home' } },
+      { label: 'Overview', icon: Gauge, to: { name: 'instance-home' }, exact: true },
       { label: 'Tenants', icon: Building2, to: { name: 'instance-tenants' } },
       { label: 'Users', icon: Users, to: { name: 'instance-users' } },
     ],

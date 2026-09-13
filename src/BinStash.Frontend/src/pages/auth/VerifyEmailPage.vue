@@ -54,7 +54,7 @@ async function resend() {
         <h1 class="text-xl font-semibold tracking-tight">Email confirmed</h1>
         <p class="text-muted-foreground text-sm">Your account is ready to use.</p>
       </div>
-      <Button class="w-full" @click="router.push({ name: 'tenant-home' })">Continue</Button>
+      <Button class="w-full" @click="router.push({ name: 'select-tenant' })">Continue</Button>
     </template>
 
     <template v-else-if="state === 'failed'">
