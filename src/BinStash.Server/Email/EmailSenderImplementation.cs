@@ -23,7 +23,7 @@ using Microsoft.Extensions.Options;
 
 namespace BinStash.Server.Email;
 
-public sealed class EmailSenderImplementation : IEmailSender<BinStashUser>, ITenantEmailSender
+public sealed class EmailSenderImplementation : IEmailSender<BinStashUser>, ITenantEmailSender, IInstanceEmailTester
 {
     private readonly ILogger<EmailSenderImplementation> _logger;
     private readonly IOptionsMonitor<EmailSettings> _emailSettings;
@@ -124,8 +124,20 @@ public sealed class EmailSenderImplementation : IEmailSender<BinStashUser>, ITen
         
         return provider.SendEmailAsync("BinStash", emailSettings.Shared!.FromEmail!, email, $"You're invited to join {tenant.Name} on BinStash", emailText, emailSettings.Shared!.SupportEmail!);
     }
-    
-    
+    public Task SendTestEmailAsync(string recipientEmail, CancellationToken cancellationToken = default)
+    {
+        var provider = GetEmailProvider();
+
+        var emailSettings = _emailSettings.CurrentValue;
+
+        const string emailText =
+            "<p>This is a test email from BinStash.</p>" +
+            "<p>If you received this message, your instance email configuration is working correctly.</p>";
+
+        return provider.SendEmailAsync("BinStash", emailSettings.Shared!.FromEmail!, recipientEmail, "BinStash email configuration test", emailText, emailSettings.Shared!.SupportEmail!);
+    }
+
+
     // Helpers
     private IEmailProvider GetEmailProvider()
     {

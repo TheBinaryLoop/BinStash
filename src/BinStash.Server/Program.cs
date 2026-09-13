@@ -37,10 +37,12 @@ using BinStash.Server.Email.Providers;
 using BinStash.Server.Extensions;
 using BinStash.Server.GraphQL;
 using BinStash.Server.GraphQL.Features.ChunkStores;
+using BinStash.Server.GraphQL.Features.Instance;
 using BinStash.Server.GraphQL.Features.Jobs;
 using BinStash.Server.GraphQL.Features.Releases;
 using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
+using BinStash.Server.GraphQL.Features.StorageClasses;
 using BinStash.Server.GraphQL.Features.Tenants;
 using BinStash.Server.GraphQL.Features.Users;
 using BinStash.Server.Billing;
@@ -111,6 +113,7 @@ public static class Program
         builder.Services.AddHttpClient<BrevoEmailProvider>();
         builder.Services.AddTransient<IEmailSender<BinStashUser>, EmailSenderImplementation>();
         builder.Services.AddTransient<ITenantEmailSender, EmailSenderImplementation>();
+        builder.Services.AddTransient<IInstanceEmailTester, EmailSenderImplementation>();
         builder.Services.AddScoped<ITokenService, TokenService>();
         builder.Services.AddScoped<TenantJoinService>();
         builder.Services.AddScoped<ChunkStoreQueryService>();
@@ -124,6 +127,10 @@ public static class Program
         builder.Services.AddScoped<TenantQueryService>();
         builder.Services.AddScoped<UserQueryService>();
         builder.Services.AddScoped<BackgroundJobService>();
+        builder.Services.AddScoped<InstanceMutationService>();
+        builder.Services.AddScoped<InstanceQueryService>();
+        builder.Services.AddScoped<StorageClassQueryService>();
+        builder.Services.AddScoped<StorageClassMutationService>();
         builder.Services.AddNoOpBilling();
         var billingLoader = new BillingPluginLoader();
         billingLoader.LoadAndRegisterServices(builder);
@@ -267,13 +274,25 @@ public static class Program
         builder.Services.AddHostedService<ChunkStoreRebuildBackgroundService>();
 
         builder.Services.AddGraphQLServer()
+            // Cost limits are enforced: the schema exposes filtering/sorting/paging to every
+            // authenticated tenant, so an unbounded query is a noisy-neighbour/DoS vector on a
+            // shared (SaaS) instance. Tune the ceilings rather than turning enforcement off.
             .ModifyCostOptions(options =>
             {
-                options.EnforceCostLimits = false;
+                options.EnforceCostLimits = true;
+                options.MaxFieldCost = 10_000;
+                options.MaxTypeCost = 50_000;
+            })
+            .ModifyPagingOptions(options =>
+            {
+                options.DefaultPageSize = 25;
+                options.MaxPageSize = 100;
+                options.IncludeTotalCount = true;
             })
             .AddAuthorization()
             .AddQueryType<QueryType>()
             .AddMutationType<MutationType>()
+            .AddSubscriptionType<SubscriptionType>()
             .AddInMemorySubscriptions()
             .BindRuntimeType<ulong, UnsignedLongType>()
             .BindRuntimeType<ulong?, UnsignedLongType>()
