@@ -1,0 +1,97 @@
+fragment RepositorySummary on RepositoryGql {
+  id
+  name
+  description
+  storageClass
+  createdAt
+  chunker { type minChunkSize avgChunkSize maxChunkSize }
+}
+
+query Repositories($first: Int, $after: String, $where: RepositoryGqlFilterInput, $order: [RepositoryGqlSortInput!]) {
+  repositories(first: $first, after: $after, where: $where, order: $order) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      ...RepositorySummary
+      releases(first: 1, order: [{ createdAt: DESC }]) {
+        totalCount
+        nodes { id version createdAt }
+      }
+    }
+  }
+}
+
+query Repository($id: UUID!) {
+  repository(id: $id) { ...RepositorySummary }
+}
+
+query RepositoryReleases($id: UUID!, $first: Int, $after: String, $order: [ReleaseGqlSortInput!]) {
+  repository(id: $id) {
+    id
+    releases(first: $first, after: $after, order: $order) {
+      totalCount
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id
+        version
+        createdAt
+        notes
+        metrics {
+          totalLogicalBytes
+          newCompressedBytes
+          chunksInRelease
+          newChunks
+          filesInRelease
+          incrementalEffectiveRatio
+        }
+      }
+    }
+  }
+}
+
+query RepositoryConfig($id: UUID!) {
+  repository(id: $id) {
+    id
+    config {
+      dedupeConfig {
+        chunker
+        minChunkSize
+        avgChunkSize
+        maxChunkSize
+        shiftCount
+        boundaryCheckBytes
+      }
+    }
+  }
+}
+
+query RepositoryAccess($id: UUID!) {
+  repository(id: $id) {
+    id
+    access { subjectType subjectId role grantedAt }
+  }
+}
+
+mutation CreateRepository($input: CreateRepositoryInput!) {
+  createRepository(input: $input) { ...RepositorySummary }
+}
+
+mutation UpdateRepository($input: UpdateRepositoryInput!) {
+  updateRepository(input: $input) { ...RepositorySummary }
+}
+
+mutation GrantRepositoryAccess($repoId: UUID!, $subjectType: Short!, $subjectId: UUID!, $role: String!) {
+  grantRepositoryAccess(repoId: $repoId, subjectType: $subjectType, subjectId: $subjectId, role: $role) {
+    subjectType subjectId role grantedAt
+  }
+}
+
+mutation RevokeRepositoryAccess($repoId: UUID!, $subjectType: Short!, $subjectId: UUID!) {
+  revokeRepositoryAccess(repoId: $repoId, subjectType: $subjectType, subjectId: $subjectId)
+}
+
+query SearchRepositories($term: String!, $first: Int = 6) {
+  repositories(first: $first, where: { name: { contains: $term } }, order: [{ name: ASC }]) {
+    nodes { id name description storageClass }
+  }
+}

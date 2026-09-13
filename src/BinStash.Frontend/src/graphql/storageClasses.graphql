@@ -1,0 +1,11 @@
+query StorageClasses {
+  storageClasses { name displayName description isDeprecated }
+}
+
+query StorageClassDefaultMappings {
+  storageClassDefaultMappings { storageClassName chunkStoreId isDefault isEnabled }
+}
+
+mutation SetStorageClassDefaultMappings($input: SetStorageClassDefaultMappingsInput!) {
+  setStorageClassDefaultMappings(input: $input)
+}
