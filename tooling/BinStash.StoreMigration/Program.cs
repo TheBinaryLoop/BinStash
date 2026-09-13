@@ -1,15 +1,15 @@
 // Copyright (C) 2025-2026  Lukas Eßmann
-// 
+//
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
 //     by the Free Software Foundation, either version 3 of the License, or
 //     (at your option) any later version.
-// 
+//
 //     This program is distributed in the hope that it will be useful,
 //     but WITHOUT ANY WARRANTY; without even the implied warranty of
 //     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //     GNU Affero General Public License for more details.
-// 
+//
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
@@ -20,32 +20,48 @@ using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Infrastructure.Storage.Indexing;
 using BinStash.Infrastructure.Storage.Packing;
 using BinStash.StoreMigration;
-using Blake3; 
 using Npgsql;
 
 // ============================================================
 //  BinStash.StoreMigration — one-shot FileDef store migration
 //
-//  Repairs the on-disk FileDef pack-file store and PostgreSQL
-//  database after the BINST-99 LSM-tree + BLAKE3-self-keying
-//  FileDefinitionRecord format changes.
+//  Converts a pre-LSM FileDef store to the current on-disk format.
+//
+//  The legacy store (written before the BINST-99 rewrite) keeps, per bucket:
+//    - a flat varint index  index{prefix}.idx  keyed by the FILE HASH, and
+//    - pack entries whose payload is a bare TransposeCompress(chunkHashes)
+//      blob with no self-describing header.
+//
+//  The current store expects, per bucket:
+//    - an LSM segment fileDefs{prefix}.seg-NNN.idx (+ .bloom), and
+//    - pack entries holding a FileDefinitionRecord ("BSFD" magic) that embeds
+//      the FileHash, so the index can be rebuilt from the packs alone.
+//
+//  Because the legacy index is already keyed by the file hash, every entry
+//  stays in the bucket it is in: this is a pure in-bucket payload rewrite.
+//  The file length is the only field the legacy payload does not carry; it is
+//  read from FileDefinitions.Length in PostgreSQL.
+//
+//  The database is only ever READ. Nothing here writes to PostgreSQL.
 //
 //  Usage:
-//    BinStash.StoreMigration <storeRoot> <connectionString>
+//    BinStash.StoreMigration <storeRoot> <connectionString> [--apply]
 //
-//  Example:
-//    BinStash.StoreMigration "C:\Tmp\BinStash\SecondLocalStoreSetup" \
-//        "Host=localhost;Port=6432;Database=binstash;Username=postgres;Password=postgres"
+//  Without --apply the tool performs a read-only survey and reports what it
+//  would do. Take a copy of <storeRoot>/FileDefs before running with --apply.
 // ============================================================
 
-if (args.Length < 2)
+var apply = args.Contains("--apply", StringComparer.OrdinalIgnoreCase);
+var positional = args.Where(static a => !a.StartsWith("--", StringComparison.Ordinal)).ToArray();
+
+if (positional.Length < 2)
 {
-    Console.Error.WriteLine("Usage: BinStash.StoreMigration <storeRoot> <connectionString>");
+    Console.Error.WriteLine("Usage: BinStash.StoreMigration <storeRoot> <connectionString> [--apply]");
     return 1;
 }
 
-var storeRoot    = args[0];
-var connString   = args[1];
+var storeRoot    = positional[0];
+var connString   = positional[1];
 var fileDefsRoot = Path.Combine(storeRoot, "FileDefs");
 
 if (!Directory.Exists(fileDefsRoot))
@@ -54,244 +70,357 @@ if (!Directory.Exists(fileDefsRoot))
     return 1;
 }
 
+const long maxPackSize = 4L * 1024 * 1024 * 1024; // must match ObjectStore.MaxPackSize
+
 Console.WriteLine("=== BinStash FileDef Store Migration ===");
 Console.WriteLine($"Store root : {storeRoot}");
 Console.WriteLine($"FileDefs   : {fileDefsRoot}");
+Console.WriteLine($"Mode       : {(apply ? "APPLY (the store will be rewritten)" : "DRY RUN (read-only survey)")}");
 Console.WriteLine();
 
 // -----------------------------------------------------------------------
-// Step 1: Back up the PostgreSQL database via pg_dump
+// Step 1: Survey every bucket and classify it
 // -----------------------------------------------------------------------
-Console.WriteLine("[1/5] Backing up PostgreSQL database via pg_dump...");
-var backupResult = RunPgDump(connString, storeRoot);
-if (backupResult != 0)
-{
-    Console.Error.WriteLine("ERROR: pg_dump failed. Aborting migration to protect data.");
-    return 1;
-}
-Console.WriteLine("      Backup complete.");
-Console.WriteLine();
-
-// -----------------------------------------------------------------------
-// Step 2: Discover all 4096 prefixes and collect migration data
-// -----------------------------------------------------------------------
-Console.WriteLine("[2/5] Scanning all 4096 FileDef prefix buckets...");
-
-// For each prefix we'll collect:
-//   - rebuilt (hash -> storageKey) mappings for the new IDX2 segments
-//   - DB update records: (fileHash, storageKey)
-var dbUpdates = new List<(Hash32 FileHash, Hash32 StorageKey, Guid ChunkStoreId)>();
-var prefixSegments = new Dictionary<string, List<(Hash32 Hash, IndexEntry Entry)>>();
+Console.WriteLine("[1/4] Surveying all 4096 FileDef prefix buckets...");
 
 var sw = Stopwatch.StartNew();
-var totalEntries = 0;
-var skippedPrefixes = 0;
+var legacyBuckets = new List<LegacyBucket>();
+var alreadyMigrated = 0;
+var empty = 0;
 
-// Discover ChunkStoreId from DB — we need it to match FileDefinition rows
-Guid chunkStoreId = await DetectChunkStoreIdAsync(connString, fileDefsRoot);
-Console.WriteLine($"      ChunkStoreId: {chunkStoreId}");
-
-using var throttler = new SemaphoreSlim(Math.Max(1, Environment.ProcessorCount - 1));
-var scanTasks = new List<Task<PrefixMigrationResult?>>();
-
-for (var i = 0; i < 4096; i++)
-{
-    var prefix = i.ToString("x3");
-    var bucketDir = Path.Combine(fileDefsRoot, prefix[..2]);
-    scanTasks.Add(MigratePrefixAsync(bucketDir, prefix, chunkStoreId, connString, throttler));
-}
-
-var scanResults = await Task.WhenAll(scanTasks);
-
-foreach (var result in scanResults)
-{
-    if (result is null)
-    {
-        skippedPrefixes++;
-        continue;
-    }
-    prefixSegments[result.Prefix] = result.SortedSegmentEntries;
-    dbUpdates.AddRange(result.DbUpdates);
-    totalEntries += result.SortedSegmentEntries.Count;
-}
-
-sw.Stop();
-Console.WriteLine($"      Scanned {4096 - skippedPrefixes} active prefixes, {skippedPrefixes} empty.");
-Console.WriteLine($"      Total entries to migrate: {totalEntries}");
-Console.WriteLine($"      Scan duration: {sw.Elapsed.TotalSeconds:F1}s");
-Console.WriteLine();
-
-// -----------------------------------------------------------------------
-// Step 3: Write new IDX2 segment files
-// -----------------------------------------------------------------------
-Console.WriteLine("[3/5] Writing new IDX2 segment files...");
-sw.Restart();
-
-var segWriteTasks = new List<Task>();
-foreach (var (prefix, entries) in prefixSegments)
-{
-    if (entries.Count == 0) continue;
-    var bucketDir = Path.Combine(fileDefsRoot, prefix[..2]);
-    var segPath   = Path.Combine(bucketDir, $"fileDefs{prefix}.seg-000.idx");
-    segWriteTasks.Add(WriteNewSegmentAsync(segPath, entries));
-}
-
-await Task.WhenAll(segWriteTasks);
-sw.Stop();
-Console.WriteLine($"      Wrote {segWriteTasks.Count} segment files in {sw.Elapsed.TotalSeconds:F1}s.");
-Console.WriteLine();
-
-// -----------------------------------------------------------------------
-// Step 4: Delete stale bloom filters and old flat index files
-// -----------------------------------------------------------------------
-Console.WriteLine("[4/5] Cleaning up stale bloom filters and old flat index files...");
-var deletedFiles = 0;
 for (var i = 0; i < 4096; i++)
 {
     var prefix    = i.ToString("x3");
     var bucketDir = Path.Combine(fileDefsRoot, prefix[..2]);
 
-    // Delete the wrong-keyed bloom filter (we just replaced the segment)
-    var bloomPath = Path.Combine(bucketDir, $"fileDefs{prefix}.seg-000.bloom");
-    if (File.Exists(bloomPath)) { File.Delete(bloomPath); deletedFiles++; }
+    if (!Directory.Exists(bucketDir))
+    {
+        empty++;
+        continue;
+    }
 
-    // Delete the old flat varint index (source of truth consumed)
-    var idxPath = Path.Combine(bucketDir, $"index{prefix}.idx");
-    if (File.Exists(idxPath)) { File.Delete(idxPath); deletedFiles++; }
+    var packFiles = Directory
+        .EnumerateFiles(bucketDir, $"fileDefs{prefix}-*.pack")
+        .ToArray();
 
-    // Delete legacy un-prefixed segments if they exist
-    var legacySegPath   = Path.Combine(bucketDir, "seg-000.idx");
-    var legacyBloomPath = Path.Combine(bucketDir, "seg-000.bloom");
-    if (File.Exists(legacySegPath))   { File.Delete(legacySegPath);   deletedFiles++; }
-    if (File.Exists(legacyBloomPath)) { File.Delete(legacyBloomPath); deletedFiles++; }
+    if (packFiles.Length == 0)
+    {
+        empty++;
+        continue;
+    }
+
+    var legacyIdxPath = Path.Combine(bucketDir, $"index{prefix}.idx");
+    if (!File.Exists(legacyIdxPath))
+    {
+        // No legacy index: either already converted, or a bucket written by a
+        // current-format server. Either way there is nothing to migrate.
+        alreadyMigrated++;
+        continue;
+    }
+
+    var oldIndex = OldFlatIndexReader.ReadAll(legacyIdxPath);
+    if (oldIndex.Count == 0)
+    {
+        empty++;
+        continue;
+    }
+
+    legacyBuckets.Add(new LegacyBucket(prefix, bucketDir, legacyIdxPath, oldIndex));
 }
-Console.WriteLine($"      Deleted {deletedFiles} stale files.");
-Console.WriteLine();
 
-// -----------------------------------------------------------------------
-// Step 5: Update FileDefinition.StorageKey in the database
-// -----------------------------------------------------------------------
-Console.WriteLine($"[5/5] Updating {dbUpdates.Count} FileDefinition.StorageKey rows in PostgreSQL...");
-sw.Restart();
-var updatedRows = await UpdateStorageKeysAsync(connString, dbUpdates);
 sw.Stop();
-Console.WriteLine($"      Updated {updatedRows} rows in {sw.Elapsed.TotalSeconds:F1}s.");
+
+var totalEntries = legacyBuckets.Sum(static b => b.Index.Count);
+Console.WriteLine($"      Legacy buckets needing migration : {legacyBuckets.Count}");
+Console.WriteLine($"      Buckets already in current format: {alreadyMigrated}");
+Console.WriteLine($"      Empty buckets                    : {empty}");
+Console.WriteLine($"      File definitions to convert      : {totalEntries}");
+Console.WriteLine($"      Survey duration                  : {sw.Elapsed.TotalSeconds:F1}s");
 Console.WriteLine();
 
+if (legacyBuckets.Count == 0)
+{
+    Console.WriteLine("Nothing to do — the FileDef store is already in the current format.");
+    return 0;
+}
+
+// -----------------------------------------------------------------------
+// Step 2: Resolve file lengths from PostgreSQL (read-only)
+// -----------------------------------------------------------------------
+Console.WriteLine("[2/4] Reading file lengths from PostgreSQL (read-only)...");
+sw.Restart();
+
+var chunkStoreId = await DetectChunkStoreIdAsync(connString, fileDefsRoot);
+Console.WriteLine($"      ChunkStoreId: {chunkStoreId}");
+
+var allHashes = legacyBuckets.SelectMany(static b => b.Index.Keys).ToList();
+var lengthMap = await QueryFileLengthsAsync(connString, allHashes, chunkStoreId);
+
+sw.Stop();
+var missingLengths = totalEntries - lengthMap.Count;
+Console.WriteLine($"      Lengths resolved : {lengthMap.Count}/{totalEntries}");
+Console.WriteLine($"      Missing lengths  : {missingLengths}" +
+                  (missingLengths > 0 ? "  (these records get FileLength 0; no entry is dropped)" : ""));
+Console.WriteLine($"      Query duration   : {sw.Elapsed.TotalSeconds:F1}s");
+Console.WriteLine();
+
+if (!apply)
+{
+    Console.WriteLine("DRY RUN — no files were modified.");
+    Console.WriteLine($"Re-run with --apply to convert {totalEntries} file definitions " +
+                      $"across {legacyBuckets.Count} buckets.");
+    return 0;
+}
+
+// -----------------------------------------------------------------------
+// Step 3: Rewrite each bucket's pack files in the current record format
+// -----------------------------------------------------------------------
+Console.WriteLine("[3/4] Rewriting pack files as FileDefinitionRecord blobs...");
+sw.Restart();
+
+using var throttler = new SemaphoreSlim(Math.Max(1, Environment.ProcessorCount - 1));
+var convertTasks = legacyBuckets.Select(b => ConvertBucketAsync(b, lengthMap, throttler)).ToList();
+var convertResults = await Task.WhenAll(convertTasks);
+
+sw.Stop();
+
+var converted = convertResults.Count(static r => r.Success);
+var failed    = convertResults.Where(static r => !r.Success).ToList();
+var written   = convertResults.Sum(static r => r.EntriesWritten);
+
+Console.WriteLine($"      Buckets converted: {converted}/{legacyBuckets.Count}");
+Console.WriteLine($"      Entries written  : {written}");
+Console.WriteLine($"      Duration         : {sw.Elapsed.TotalSeconds:F1}s");
+
+foreach (var f in failed)
+    Console.Error.WriteLine($"      FAILED {f.Prefix}: {f.Error}");
+
+if (failed.Count > 0)
+{
+    Console.Error.WriteLine();
+    Console.Error.WriteLine($"ERROR: {failed.Count} bucket(s) failed to convert. Their original pack " +
+                            "files and legacy indexes were left untouched. Resolve the errors above " +
+                            "and re-run; buckets that already converted will be skipped.");
+    return 1;
+}
+
+Console.WriteLine();
+
+// -----------------------------------------------------------------------
+// Step 4: Rebuild the LSM index for every converted bucket
+// -----------------------------------------------------------------------
+Console.WriteLine("[4/4] Rebuilding LSM index segments...");
+sw.Restart();
+
+var rebuildTasks = legacyBuckets.Select(b => RebuildBucketAsync(b, throttler)).ToList();
+var rebuildResults = await Task.WhenAll(rebuildTasks);
+
+sw.Stop();
+
+var rebuilt = rebuildResults.Count(static r => r.Success);
+var rebuildFailures = rebuildResults.Where(static r => !r.Success).ToList();
+
+Console.WriteLine($"      Buckets rebuilt: {rebuilt}/{legacyBuckets.Count}");
+Console.WriteLine($"      Duration       : {sw.Elapsed.TotalSeconds:F1}s");
+
+foreach (var f in rebuildFailures)
+    Console.Error.WriteLine($"      FAILED {f.Prefix}: {f.Error}");
+
+if (rebuildFailures.Count > 0)
+{
+    Console.Error.WriteLine();
+    Console.Error.WriteLine($"ERROR: {rebuildFailures.Count} bucket(s) failed to rebuild.");
+    return 1;
+}
+
+Console.WriteLine();
 Console.WriteLine("=== Migration complete. ===");
 return 0;
 
-// ============================================================
-// Local functions
-// ============================================================
+// -----------------------------------------------------------------------
+// Bucket conversion
+// -----------------------------------------------------------------------
 
 /// <summary>
-/// Migrates a single 3-hex-digit prefix bucket:
-/// reads the old flat index, reads the old pack payloads,
-/// re-serialises as FileDefinitionRecord blobs, writes new pack entries,
-/// and builds the new IDX2 sorted segment entries in memory.
+/// Rewrites a single bucket's pack files, replacing each legacy
+/// TransposeCompress payload with a self-describing
+/// <see cref="FileDefinitionRecord"/> keyed by the same file hash.
+///
+/// <para>
+/// The new pack is written alongside the old one and fully verified before it
+/// replaces it, so a failure at any point leaves the bucket untouched.
+/// </para>
 /// </summary>
-static async Task<PrefixMigrationResult?> MigratePrefixAsync(
-    string bucketDir,
-    string prefix,
-    Guid chunkStoreId,
-    string connString,
-    SemaphoreSlim throttler)
+async Task<BucketResult> ConvertBucketAsync(
+    LegacyBucket bucket,
+    IReadOnlyDictionary<Hash32, long> lengths,
+    SemaphoreSlim gate)
 {
-    await throttler.WaitAsync();
+    await gate.WaitAsync();
     try
     {
-        var oldIdxPath  = Path.Combine(bucketDir, $"index{prefix}.idx");
-        var oldPackPath = Path.Combine(bucketDir, $"fileDefs{prefix}-0.pack");
+        var newPackPath = Path.Combine(bucket.Directory, $"fileDefs{bucket.Prefix}-0.pack.new");
+        var targetPath  = Path.Combine(bucket.Directory, $"fileDefs{bucket.Prefix}-0.pack");
 
-        if (!File.Exists(oldIdxPath) || !File.Exists(oldPackPath))
-            return null;
+        // The legacy index records which pack file each entry lives in. Open a
+        // handle per file number so entries can be read wherever they sit; all
+        // of them are consolidated into a single new pack.
+        var handles = new Dictionary<int, Microsoft.Win32.SafeHandles.SafeFileHandle>();
+        var expected = new HashSet<Hash32>();
 
-        // --- Read old flat index ---
-        var oldIndex = OldFlatIndexReader.ReadAll(oldIdxPath);
-        if (oldIndex.Count == 0)
-            return null;
-
-        // --- Query DB for file lengths (old payloads don't embed them) ---
-        var fileHashes = oldIndex.Keys.ToList();
-        var lengthMap  = await QueryFileLengthsAsync(connString, fileHashes, chunkStoreId);
-
-        // --- Build new pack file for this prefix (alongside old, then swap) ---
-        var newPackPath = Path.Combine(bucketDir, $"fileDefs{prefix}-0.pack.new");
-        var segEntries  = new List<(Hash32 Hash, IndexEntry Entry)>(oldIndex.Count);
-        var dbUpdates   = new List<(Hash32 FileHash, Hash32 StorageKey, Guid ChunkStoreId)>(oldIndex.Count);
-
-        // Open old pack file for random access inside a scoped block so the
-        // handle is closed before we try to replace the file (Windows requires
-        // no open handles on the destination of MoveFileExW / File.Move overwrite).
+        try
         {
-            using var packHandle = File.OpenHandle(
-                oldPackPath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                FileOptions.Asynchronous | FileOptions.RandomAccess);
-
-            await using var newPackStream = new FileStream(
-                newPackPath,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 65536,
-                options: FileOptions.Asynchronous);
-
-            foreach (var (fileHash, (fileNo, offset, length)) in oldIndex)
+            foreach (var fileNo in bucket.Index.Values.Select(static v => v.FileNo).Distinct())
             {
-                // Read old pack entry (raw decompressed payload = TransposeCompress(chunkHashes))
-                var oldPayload = await PackFileEntry.ReadAtAsync(packHandle, offset)
-                                 ?? throw new InvalidDataException(
-                                     $"Pack entry at offset {offset} in {oldPackPath} returned null.");
+                var path = Path.Combine(bucket.Directory, $"fileDefs{bucket.Prefix}-{fileNo}.pack");
+                if (!File.Exists(path))
+                    return BucketResult.Fail(bucket.Prefix, $"legacy index references missing pack file '{path}'.");
 
-                // Decompress old-format TransposeCompress payload → chunk hashes
-                var chunkHashes = ChecksumCompressor.TransposeDecompressHashes(oldPayload);
-
-                // Get file length from DB
-                if (!lengthMap.TryGetValue(fileHash, out var fileLength))
-                {
-                    Console.Error.WriteLine(
-                        $"WARN: No length found in DB for fileHash {fileHash} (prefix {prefix}). Skipping entry.");
-                    continue;
-                }
-
-                // Build new FileDefinitionRecord
-                var record = new FileDefinitionRecord
-                {
-                    FileHash    = fileHash,
-                    FileLength  = fileLength,
-                    ChunkHashes = chunkHashes
-                };
-
-                var blob       = record.Serialize();
-                var storageKey = new Hash32(Hasher.Hash(blob).AsSpan());
-
-                // Write new pack entry
-                var (newOffset, entryTotalLen) = await PackFileEntry.WriteAsync(newPackStream, blob);
-
-                segEntries.Add((storageKey, new IndexEntry(0, newOffset, entryTotalLen)));
-                dbUpdates.Add((fileHash, storageKey, chunkStoreId));
+                handles[fileNo] = File.OpenHandle(
+                    path, FileMode.Open, FileAccess.Read, FileShare.Read,
+                    FileOptions.Asynchronous | FileOptions.RandomAccess);
             }
 
-            await newPackStream.FlushAsync();
-        } // packHandle and newPackStream are both closed here before the rename
+            await using (var newPack = new FileStream(
+                             newPackPath, FileMode.Create, FileAccess.Write, FileShare.None,
+                             bufferSize: 65536, options: FileOptions.Asynchronous))
+            {
+                foreach (var (fileHash, (fileNo, offset, _)) in bucket.Index)
+                {
+                    var payload = await PackFileEntry.ReadAtAsync(handles[fileNo], offset);
+                    if (payload is null)
+                        return BucketResult.Fail(bucket.Prefix, $"pack entry at offset {offset} read as null.");
 
-        // Atomically replace old pack file with new one (no open handles on Windows)
-        FileAtomicHelper.ReplaceAtomic(newPackPath, oldPackPath);
+                    // Already converted? Then this bucket was interrupted mid-run;
+                    // carry the record across verbatim rather than re-wrapping it.
+                    byte[] blob;
+                    if (IsFileDefinitionRecord(payload))
+                    {
+                        blob = payload;
+                    }
+                    else
+                    {
+                        var chunkHashes = ChecksumCompressor.TransposeDecompressHashes(payload);
 
-        // Sort segment entries ascending by hash
-        segEntries.Sort(static (a, b) => a.Hash.CompareTo(b.Hash));
+                        // FileLength is informational — it is written but never read
+                        // back by the server — so a missing DB row must not cost us
+                        // the entry itself.
+                        lengths.TryGetValue(fileHash, out var fileLength);
 
-        return new PrefixMigrationResult(prefix, segEntries, dbUpdates);
+                        blob = new FileDefinitionRecord
+                        {
+                            FileHash    = fileHash,
+                            FileLength  = fileLength,
+                            ChunkHashes = chunkHashes
+                        }.Serialize();
+                    }
+
+                    await PackFileEntry.WriteAsync(newPack, blob);
+                    expected.Add(fileHash);
+                }
+
+                await newPack.FlushAsync();
+            }
+        }
+        finally
+        {
+            foreach (var h in handles.Values)
+                h.Dispose();
+        }
+
+        // --- Verify the new pack before it replaces anything ---
+        var seen = new HashSet<Hash32>();
+        await using (var verify = new FileStream(
+                         newPackPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                         bufferSize: 65536, options: FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(verify))
+            {
+                Hash32 hash;
+                try
+                {
+                    hash = FileDefinitionRecord.Deserialize(entry.Data).FileHash;
+                }
+                catch (Exception ex)
+                {
+                    return BucketResult.Fail(bucket.Prefix, $"verification failed to parse a rewritten record: {ex.Message}");
+                }
+
+                seen.Add(hash);
+            }
+        }
+
+        if (!seen.SetEquals(expected))
+        {
+            File.Delete(newPackPath);
+            return BucketResult.Fail(
+                bucket.Prefix,
+                $"verification mismatch: expected {expected.Count} file hashes, found {seen.Count}.");
+        }
+
+        // --- Commit: swap the pack in, then drop the now-stale legacy index ---
+        FileAtomicHelper.ReplaceAtomic(newPackPath, targetPath);
+
+        // Entries from higher-numbered packs were consolidated into -0.
+        foreach (var fileNo in bucket.Index.Values.Select(static v => v.FileNo).Distinct().Where(static n => n != 0))
+            File.Delete(Path.Combine(bucket.Directory, $"fileDefs{bucket.Prefix}-{fileNo}.pack"));
+
+        File.Delete(bucket.LegacyIndexPath);
+
+        return BucketResult.Ok(bucket.Prefix, expected.Count);
+    }
+    catch (Exception ex)
+    {
+        return BucketResult.Fail(bucket.Prefix, ex.Message);
     }
     finally
     {
-        throttler.Release();
+        gate.Release();
     }
 }
+
+/// <summary>
+/// Rebuilds the LSM segment + bloom filter for a bucket from its rewritten
+/// pack, using the same code path the server uses so the result is identical
+/// to a natively written store.
+/// </summary>
+async Task<BucketResult> RebuildBucketAsync(LegacyBucket bucket, SemaphoreSlim gate)
+{
+    await gate.WaitAsync();
+    try
+    {
+        using var handler = new IndexedPackFileHandler(
+            bucket.Directory,
+            "fileDefs",
+            bucket.Prefix,
+            maxPackSize,
+            static data => FileDefinitionRecord.Deserialize(data).FileHash);
+
+        return await handler.RebuildIndexFile()
+            ? BucketResult.Ok(bucket.Prefix, 0)
+            : BucketResult.Fail(bucket.Prefix, "RebuildIndexFile returned false.");
+    }
+    catch (Exception ex)
+    {
+        return BucketResult.Fail(bucket.Prefix, ex.Message);
+    }
+    finally
+    {
+        gate.Release();
+    }
+}
+
+/// <summary>
+/// True when a pack payload already carries the "BSFD" FileDefinitionRecord
+/// header, i.e. the entry has been converted by an earlier run.
+/// </summary>
+static bool IsFileDefinitionRecord(ReadOnlySpan<byte> payload)
+    => payload.Length >= 5 &&
+       payload[0] == 0x42 && payload[1] == 0x53 && payload[2] == 0x46 && payload[3] == 0x44;
+
+// -----------------------------------------------------------------------
+// PostgreSQL (read-only)
+// -----------------------------------------------------------------------
 
 /// <summary>
 /// Queries PostgreSQL for the <c>FileDefinition.Length</c> of each supplied file hash
@@ -309,91 +438,33 @@ static async Task<Dictionary<Hash32, long>> QueryFileLengthsAsync(
     await using var conn = new NpgsqlConnection(connString);
     await conn.OpenAsync();
 
-    // Build an IN-list query using unnest for efficient bulk lookup
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = """
-        SELECT "Checksum", "Length"
-        FROM "FileDefinitions"
-        WHERE "ChunkStoreId" = @chunkStoreId
-          AND "Checksum" = ANY(@checksums)
-        """;
-    cmd.Parameters.AddWithValue("chunkStoreId", chunkStoreId);
+    // Chunked so the bytea[] parameter stays a reasonable size on large stores.
+    const int batchSize = 10000;
 
-    // Npgsql maps byte[][] to bytea[] via ANY
-    var checksumArrays = fileHashes.Select(h => h.GetBytes()).ToArray();
-    cmd.Parameters.AddWithValue("checksums", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bytea, checksumArrays);
-
-    await using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync())
+    for (var i = 0; i < fileHashes.Count; i += batchSize)
     {
-        var checksumBytes = (byte[])reader["Checksum"];
-        var fileLength    = reader.GetInt64(reader.GetOrdinal("Length"));
-        result[new Hash32(checksumBytes)] = fileLength;
+        var batch = fileHashes.Skip(i).Take(batchSize).Select(static h => h.GetBytes()).ToArray();
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT "Checksum", "Length"
+            FROM "FileDefinitions"
+            WHERE "ChunkStoreId" = @chunkStoreId
+              AND "Checksum" = ANY(@checksums)
+            """;
+        cmd.Parameters.AddWithValue("chunkStoreId", chunkStoreId);
+        cmd.Parameters.AddWithValue("checksums", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bytea, batch);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var checksumBytes = (byte[])reader["Checksum"];
+            var fileLength    = reader.GetInt64(reader.GetOrdinal("Length"));
+            result[new Hash32(checksumBytes)] = fileLength;
+        }
     }
 
     return result;
-}
-
-/// <summary>
-/// Writes a new IDX2 sorted segment file from the in-memory entries.
-/// </summary>
-static Task WriteNewSegmentAsync(
-    string segPath,
-    List<(Hash32 Hash, IndexEntry Entry)> sortedEntries)
-{
-    return SortedIndexSegment.WriteAsync(segPath, sortedEntries);
-}
-
-/// <summary>
-/// Bulk-updates <c>FileDefinition.StorageKey</c> in PostgreSQL for all migrated entries.
-/// </summary>
-static async Task<int> UpdateStorageKeysAsync(
-    string connString,
-    List<(Hash32 FileHash, Hash32 StorageKey, Guid ChunkStoreId)> updates)
-{
-    if (updates.Count == 0)
-        return 0;
-
-    await using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
-
-    var updatedTotal = 0;
-    const int batchSize = 500;
-
-    for (var i = 0; i < updates.Count; i += batchSize)
-    {
-        var batch = updates.Skip(i).Take(batchSize).ToList();
-
-        await using var tx = await conn.BeginTransactionAsync();
-        try
-        {
-            foreach (var (fileHash, storageKey, storeId) in batch)
-            {
-                await using var cmd = conn.CreateCommand();
-                cmd.Transaction = tx;
-                cmd.CommandText = """
-                    UPDATE "FileDefinitions"
-                    SET "StorageKey" = @storageKey
-                    WHERE "Checksum" = @checksum
-                      AND "ChunkStoreId" = @chunkStoreId
-                    """;
-                cmd.Parameters.AddWithValue("storageKey",   NpgsqlTypes.NpgsqlDbType.Bytea, storageKey.GetBytes());
-                cmd.Parameters.AddWithValue("checksum",     NpgsqlTypes.NpgsqlDbType.Bytea, fileHash.GetBytes());
-                cmd.Parameters.AddWithValue("chunkStoreId", storeId);
-
-                updatedTotal += await cmd.ExecuteNonQueryAsync();
-            }
-
-            await tx.CommitAsync();
-        }
-        catch
-        {
-            await tx.RollbackAsync();
-            throw;
-        }
-    }
-
-    return updatedTotal;
 }
 
 /// <summary>
@@ -406,8 +477,6 @@ static async Task<Guid> DetectChunkStoreIdAsync(string connString, string fileDe
     await using var conn = new NpgsqlConnection(connString);
     await conn.OpenAsync();
 
-    // Try to find the ChunkStore whose LocalPath matches the store root parent
-    // BackendSettings is stored as jsonb with $type discriminator
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """SELECT "Id", "BackendSettings" FROM "ChunkStores" """;
 
@@ -425,7 +494,6 @@ static async Task<Guid> DetectChunkStoreIdAsync(string connString, string fileDe
     if (rows.Count == 0)
         throw new InvalidOperationException("No ChunkStores found in database.");
 
-    // Try to match by path contained in BackendSettings JSON
     var storeParent = Directory.GetParent(fileDefsRoot)?.FullName ?? fileDefsRoot;
     foreach (var (id, settings) in rows)
     {
@@ -434,7 +502,6 @@ static async Task<Guid> DetectChunkStoreIdAsync(string connString, string fileDe
             return id;
     }
 
-    // If only one store, use it
     if (rows.Count == 1)
     {
         Console.WriteLine($"      WARN: Could not match store root to ChunkStore by path; " +
@@ -447,65 +514,18 @@ static async Task<Guid> DetectChunkStoreIdAsync(string connString, string fileDe
         $"Found {rows.Count} ChunkStores. Please specify the ChunkStoreId manually.");
 }
 
-/// <summary>
-/// Runs pg_dump to create a SQL backup of the database before any changes.
-/// </summary>
-static int RunPgDump(string connString, string storeRoot)
-{
-    // Parse connection string for pg_dump args
-    var builder = new NpgsqlConnectionStringBuilder(connString);
-    var host     = builder.Host     ?? "localhost";
-    var port     = builder.Port > 0 ? builder.Port : 5432;
-    var database = builder.Database ?? "binstash";
-    var username = builder.Username ?? "postgres";
-    var password = builder.Password;
+// -----------------------------------------------------------------------
+// Types
+// -----------------------------------------------------------------------
 
-    var backupPath = Path.Combine(storeRoot, $"binstash-backup-{DateTime.UtcNow:yyyyMMdd-HHmmss}.sql");
-    Console.WriteLine($"      Backup path: {backupPath}");
-
-    var psi = new ProcessStartInfo
-    {
-        FileName  = "pg_dump",
-        Arguments = $"-h {host} -p {port} -U {username} -d {database} -f \"{backupPath}\" --no-password",
-        UseShellExecute        = false,
-        RedirectStandardOutput = true,
-        RedirectStandardError  = true,
-    };
-
-    if (!string.IsNullOrEmpty(password))
-        psi.Environment["PGPASSWORD"] = password;
-
-    try
-    {
-        using var proc = Process.Start(psi)
-                         ?? throw new InvalidOperationException("Failed to start pg_dump.");
-        proc.WaitForExit(120_000);
-
-        var stderr = proc.StandardError.ReadToEnd();
-        if (!string.IsNullOrWhiteSpace(stderr))
-            Console.Error.WriteLine($"      pg_dump stderr: {stderr}");
-
-        if (proc.ExitCode != 0)
-            Console.Error.WriteLine($"      pg_dump exited with code {proc.ExitCode}.");
-
-        return proc.ExitCode;
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"      pg_dump invocation failed: {ex.Message}");
-        Console.Error.WriteLine("      Hint: ensure pg_dump is on PATH, or skip backup with --no-backup flag.");
-        // Return 0 to allow proceeding if pg_dump is simply not installed
-        // and user accepts the risk — change to 'return 1;' for strict mode.
-        Console.Error.WriteLine("      Continuing without backup (pg_dump not available).");
-        return 0;
-    }
-}
-
-// ============================================================
-// Result record
-// ============================================================
-
-internal sealed record PrefixMigrationResult(
+internal sealed record LegacyBucket(
     string Prefix,
-    List<(Hash32 Hash, IndexEntry Entry)> SortedSegmentEntries,
-    List<(Hash32 FileHash, Hash32 StorageKey, Guid ChunkStoreId)> DbUpdates);
+    string Directory,
+    string LegacyIndexPath,
+    Dictionary<Hash32, (int FileNo, long Offset, int Length)> Index);
+
+internal readonly record struct BucketResult(string Prefix, bool Success, int EntriesWritten, string? Error)
+{
+    public static BucketResult Ok(string prefix, int entries) => new(prefix, true, entries, null);
+    public static BucketResult Fail(string prefix, string error) => new(prefix, false, 0, error);
+}

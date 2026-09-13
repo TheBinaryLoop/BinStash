@@ -59,5 +59,11 @@ public interface IChunkStoreStorage
     /// </summary>
     Task<bool> RebuildStorageWithProgressAsync(IProgress<bool> progress, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// One entry per bucket that failed during the most recent rebuild, describing why.
+    /// Empty when the last rebuild succeeded.
+    /// </summary>
+    IReadOnlyList<string> LastRebuildFailures { get; }
+
     Task<Dictionary<string, object>> GetStorageStatsAsync();
 }

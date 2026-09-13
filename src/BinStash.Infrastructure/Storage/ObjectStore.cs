@@ -13,6 +13,7 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Collections.Concurrent;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Storage.Stats;
 using BinStash.Infrastructure.Storage.FileDefinition;
@@ -32,6 +33,13 @@ public class ObjectStore : IDisposable, IAsyncDisposable
     
     private readonly string _basePath;
     private readonly AsyncLruHandlerCache<HandlerCacheKey> _handlerCache;
+    private readonly ConcurrentBag<string> _rebuildFailures = new();
+
+    /// <summary>
+    /// One entry per bucket that failed during the most recent rebuild, describing
+    /// why it failed. Empty when the last rebuild succeeded.
+    /// </summary>
+    public IReadOnlyList<string> RebuildFailures => _rebuildFailures.ToArray();
 
     public ObjectStore(string basePath, int maxOpenHandlers = 256)
     {
@@ -64,6 +72,8 @@ public class ObjectStore : IDisposable, IAsyncDisposable
     
     public async Task<bool> RebuildStorageAsync()
     {
+        _rebuildFailures.Clear();
+
         // Phase 1: relocate any file-def entries that are in the wrong prefix bucket
         // (can happen when upgrading from the old StorageKey-keyed store to FileHash-keyed).
         await RepackFileDefsAsync(CancellationToken.None).ConfigureAwait(false);
@@ -84,6 +94,8 @@ public class ObjectStore : IDisposable, IAsyncDisposable
     
     public async Task<bool> RebuildStorageWithProgressAsync(IProgress<bool> progress, CancellationToken cancellationToken)
     {
+        _rebuildFailures.Clear();
+
         // Phase 1: relocate any file-def entries that are in the wrong prefix bucket.
         // Progress is not reported for this phase (it is a prerequisite scan, not a per-bucket step).
         await RepackFileDefsAsync(cancellationToken).ConfigureAwait(false);
@@ -144,7 +156,7 @@ public class ObjectStore : IDisposable, IAsyncDisposable
 
         // Pass 1 — for each bucket, identify misrouted entries and write them to the correct bucket.
         // Collect the set of source prefixes that had at least one misrouted entry (need pack rewrite).
-        var dirtyPrefixes = new System.Collections.Concurrent.ConcurrentBag<string>();
+        var dirtyPrefixes = new ConcurrentBag<string>();
 
         var scanTasks = new List<Task>(4096);
         for (var i = 0; i < 4096; i++)
@@ -256,12 +268,33 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         try
         {
             using var lease = await _handlerCache.AcquireAsync(new HandlerCacheKey(category, prefix)).ConfigureAwait(false);
-            return await lease.Handler.RebuildIndexFile().ConfigureAwait(false);
+            if (await lease.Handler.RebuildIndexFile().ConfigureAwait(false))
+                return true;
+
+            _rebuildFailures.Add(DescribeRebuildFailure(category, prefix, lease.Handler.LastRebuildError));
+            return false;
         }
         finally
         {
             throttler.Release();
         }
+    }
+
+    /// <summary>
+    /// Turns a bucket rebuild failure into an operator-readable line. A FileDef
+    /// bucket that still holds pre-LSM payloads fails on the record magic check,
+    /// which says nothing useful on its own — name the actual remedy instead.
+    /// </summary>
+    private static string DescribeRebuildFailure(string category, string prefix, Exception? error)
+    {
+        if (category == "fileDefs" && error is InvalidDataException or NotSupportedException)
+        {
+            return $"{category}/{prefix}: pack entries are not FileDefinitionRecords " +
+                   $"({error.Message}). This store predates the self-describing file-definition " +
+                   "format; run BinStash.StoreMigration against it to convert the FileDef packs.";
+        }
+
+        return $"{category}/{prefix}: {error?.Message ?? "rebuild failed with no reported error."}";
     }
 
     public async Task<int> WriteChunkAsync(ReadOnlyMemory<byte> chunkData)

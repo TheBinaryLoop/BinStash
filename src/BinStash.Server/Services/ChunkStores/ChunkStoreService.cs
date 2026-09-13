@@ -112,6 +112,12 @@ public sealed class ChunkStoreService : IChunkStoreService
         return storage.RebuildStorageWithProgressAsync(progress, cancellationToken);
     }
 
+    public IReadOnlyList<string> GetLastRebuildFailures(ChunkStore store)
+    {
+        var storage = _storageFactory.Create(store);
+        return storage.LastRebuildFailures;
+    }
+
     public Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(ChunkStore store, IReadOnlyCollection<string> fileHashes)
     {
         var storage = _storageFactory.Create(store);

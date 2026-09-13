@@ -222,38 +222,43 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
                     if (release.SerializerVersion >= jobData.TargetSerializerVersion)
                     {
                         // Already on the target format — it was selected only to backfill
-                        // metrics, so do not rewrite the .rdef.
+                        // metrics, so do not rewrite the .rdef. Fall through to the batch
+                        // commit rather than continuing the loop: on a store where every
+                        // release takes this path, skipping it would defer all recomputed
+                        // metrics to a single commit at the very end and leave the job
+                        // reporting no progress throughout.
                         progress.SkippedReleases++;
-                        continue;
                     }
-
-                    // Step 3: Re-serialize to latest version
-                    var (newData, _) = await ReleasePackageSerializer.SerializeAsync(package, cancellationToken: cancellationToken);
-
-                    // Step 4: Compute new BLAKE3 hash
-                    var newHash = new Hash32(Blake3.Hasher.Hash(newData).AsSpan());
-                    var newHashHex = newHash.ToHexString();
-
-                    // Track size delta
-                    var delta = newData.Length - oldData.Length;
-                    if (delta < 0)
-                        progress.BytesSaved += Math.Abs(delta);
-                    else if (delta > 0)
-                        progress.BytesGrown += delta;
-
-                    // Step 5: Write new .rdef to storage (idempotent if hash unchanged)
-                    if (oldHash != newHashHex)
+                    else
                     {
-                        await chunkStoreService.StoreReleasePackageAsync(store, newData);
+                        // Step 3: Re-serialize to latest version
+                        var (newData, _) = await ReleasePackageSerializer.SerializeAsync(package, cancellationToken: cancellationToken);
+
+                        // Step 4: Compute new BLAKE3 hash
+                        var newHash = new Hash32(Blake3.Hasher.Hash(newData).AsSpan());
+                        var newHashHex = newHash.ToHexString();
+
+                        // Track size delta
+                        var delta = newData.Length - oldData.Length;
+                        if (delta < 0)
+                            progress.BytesSaved += Math.Abs(delta);
+                        else if (delta > 0)
+                            progress.BytesGrown += delta;
+
+                        // Step 5: Write new .rdef to storage (idempotent if hash unchanged)
+                        if (oldHash != newHashHex)
+                        {
+                            await chunkStoreService.StoreReleasePackageAsync(store, newData);
+                        }
+
+                        // Step 6: Update DB row
+                        release.SerializerVersion = jobData.TargetSerializerVersion;
+                        release.ReleaseDefinitionChecksum = newHash;
+
+                        // Track for deferred deletion
+                        pendingDeletions.Add((oldHash, newHashHex));
+                        progress.ProcessedReleases++;
                     }
-
-                    // Step 6: Update DB row
-                    release.SerializerVersion = jobData.TargetSerializerVersion;
-                    release.ReleaseDefinitionChecksum = newHash;
-
-                    // Track for deferred deletion
-                    pendingDeletions.Add((oldHash, newHashHex));
-                    progress.ProcessedReleases++;
                 }
                 catch (Exception ex)
                 {

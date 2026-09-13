@@ -45,6 +45,12 @@ public interface IChunkStoreService
     /// </summary>
     Task<bool> RebuildStorageWithProgressAsync(ChunkStore store, IProgress<bool> progress, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// One entry per bucket that failed during the most recent rebuild of
+    /// <paramref name="store"/>, describing why. Empty when it succeeded.
+    /// </summary>
+    IReadOnlyList<string> GetLastRebuildFailures(ChunkStore store) => Array.Empty<string>();
+
     Task<Dictionary<string, byte[]>> RetrieveFileDefinitionsAsync(ChunkStore store, IReadOnlyCollection<string> fileHashes);
     Task<Dictionary<string, byte[]>> RetrieveReleasePackagesAsync(ChunkStore store, IReadOnlyCollection<string> packageIds);
     Task<ChunkStorePhysicalStats> GetPhysicalStatsAsync(ChunkStore store);
