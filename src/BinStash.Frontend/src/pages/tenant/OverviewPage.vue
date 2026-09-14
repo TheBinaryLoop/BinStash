@@ -46,6 +46,17 @@ const entitlements = computed(() => {
   ]
 })
 
+/**
+ * The billed figure is the workspace's own content deduplicated against itself, so the gap
+ * between it and the released total is a saving this workspace actually receives — worth
+ * stating on the card rather than leaving the smaller number unexplained.
+ */
+const savedHint = computed(() => {
+  const s = stats.value
+  if (!s || s.deduplicationSavedBytes <= 0) return 'Deduplicated across your releases'
+  return `${formatBytes(s.deduplicationSavedBytes)} not charged`
+})
+
 </script>
 
 <template>
@@ -85,9 +96,9 @@ const entitlements = computed(() => {
           numeric
         />
         <StatCard
-          label="Stored"
-          :value="formatBytes(stats?.logicalBytes ?? 0)"
-          hint="Total size of all releases"
+          label="Billed storage"
+          :value="formatBytes(stats?.uniqueLogicalBytes ?? 0)"
+          :hint="savedHint"
           :icon="HardDrive"
           numeric
         />
@@ -134,12 +145,22 @@ const entitlements = computed(() => {
 
         <UsageMeter
           v-if="stats"
-          :used="stats.logicalBytes"
+          :used="stats.uniqueLogicalBytes"
           :limit="stats.maxStorageBytes"
           :is-limited="stats.isLimited"
         />
 
         <dl v-if="stats" class="space-y-1.5 text-xs">
+          <div class="flex justify-between gap-3">
+            <dt class="text-muted-foreground">Released content</dt>
+            <dd class="font-mono tabular-nums">{{ formatBytes(stats.logicalBytes) }}</dd>
+          </div>
+          <div v-if="stats.deduplicationSavedBytes > 0" class="flex justify-between gap-3">
+            <dt class="text-muted-foreground">Not charged</dt>
+            <dd class="text-success font-mono tabular-nums">
+              −{{ formatBytes(stats.deduplicationSavedBytes) }}
+            </dd>
+          </div>
           <div class="flex justify-between gap-3">
             <dt class="text-muted-foreground">Repositories</dt>
             <dd class="font-mono tabular-nums">{{ formatNumber(stats.repositoryCount) }}</dd>

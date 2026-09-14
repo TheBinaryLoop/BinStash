@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 //
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -53,7 +53,7 @@ public sealed class TenantQuotaGuard(BillingLimitsCache limitsCache, TenantUsage
         // lands, which is exactly why finalize checks again against the real size.
         if (IsLimited(limits.MaxStorageBytes))
         {
-            var used = await usage.GetLogicalBytesAsync(tenantId, ct);
+            var used = await usage.GetBillableBytesAsync(tenantId, ct);
             if (used >= limits.MaxStorageBytes)
             {
                 return await DenyAsync(tenantId, "storage", $"Storage quota reached ({used:N0} of {limits.MaxStorageBytes:N0} bytes used).", ct);
@@ -82,7 +82,7 @@ public sealed class TenantQuotaGuard(BillingLimitsCache limitsCache, TenantUsage
         if (!IsLimited(limits.MaxStorageBytes))
             return QuotaDecision.Allowed;
 
-        var used = await usage.GetLogicalBytesAsync(tenantId, ct);
+        var used = await usage.GetBillableBytesAsync(tenantId, ct);
         if (used + additionalBytes <= limits.MaxStorageBytes)
             return QuotaDecision.Allowed;
 

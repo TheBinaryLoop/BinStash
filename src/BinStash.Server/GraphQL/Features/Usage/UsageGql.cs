@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -19,14 +19,18 @@ namespace BinStash.Server.GraphQL.Features.Usage;
 /// Consumption and entitlement for a single tenant.
 /// </summary>
 /// <remarks>
-/// Reports ONLY undeduplicated, uncompressed logical bytes, because that is what a tenant
-/// is billed on and it is the only storage figure that is purely a function of the
-/// tenant's own data.
+/// Every storage figure here is a function of this tenant's own releases and nothing else.
+/// That is the rule, and it is what makes these numbers both billable and safe to show.
 ///
-/// Deduplicated/compressed footprint and the savings derived from them are deliberately
-/// NOT exposed here. Tenants share a chunk store, so those numbers depend on what other
-/// tenants have uploaded: a tenant watching its own "bytes saved" move after an upload
-/// learns that someone else already stored identical content. Those figures are still
+/// The billable one is <see cref="UniqueLogicalBytes"/>: the tenant's content deduplicated
+/// against itself, as if they owned a private chunk store. Deduplicating within the tenant
+/// is safe precisely because it consults no other tenant's data — and it is also the fair
+/// measure, since it charges two tenants holding identical content identically, rather than
+/// charging whoever uploaded a shared library first while everyone after them rides free.
+///
+/// What remains deliberately NOT exposed is the footprint after CROSS-tenant deduplication,
+/// and any compression ratio of the shared store. Those move when other tenants upload: a
+/// tenant watching them would learn that someone else stored identical content. They are
 /// meaningful for the instance as a whole and belong on instance-admin surfaces.
 ///
 /// Limits come from <see cref="Core.Billing.IBillingProvider"/>, which resolves to the NoOp
@@ -38,16 +42,37 @@ public sealed class TenantUsageGql
     public Guid TenantId { get; set; }
 
     /// <summary>
-    /// Logical size of all releases as published, before deduplication or compression.
-    /// The billable quantity.
+    /// Logical size of all releases as published, as if each were extracted side by side.
+    /// Informational: it double-counts everything the tenant's releases share with each other.
     /// </summary>
     public long LogicalBytes { get; set; }
+
+    /// <summary>
+    /// The billable quantity: uncompressed bytes of the distinct content this tenant holds,
+    /// counted once each.
+    /// </summary>
+    public long UniqueLogicalBytes { get; set; }
+
+    /// <summary>
+    /// <see cref="LogicalBytes"/> minus <see cref="UniqueLogicalBytes"/> — what the tenant is
+    /// not being charged for because their own content repeats. Entirely their own data, so it
+    /// is safe to show, and it is the figure that makes a multi-target release look like the
+    /// bargain it is.
+    /// </summary>
+    public long DeduplicationSavedBytes { get; set; }
+
+    /// <summary>
+    /// When the footprint was last established by a full walk, or null if it never has been.
+    /// Worth surfacing: the figure is a snapshot, and a tenant who just uploaded should be able
+    /// to see that it predates their upload rather than conclude it was free.
+    /// </summary>
+    public DateTimeOffset? FootprintComputedAt { get; set; }
 
     public int RepositoryCount { get; set; }
 
     public int ReleaseCount { get; set; }
 
-    /// <summary>Quota ceiling in logical bytes, or null when the plan imposes none.</summary>
+    /// <summary>Quota ceiling in unique logical bytes, or null when the plan imposes none.</summary>
     public long? MaxStorageBytes { get; set; }
 
     /// <summary>False when no finite storage quota applies (self-hosted / NoOp billing).</summary>

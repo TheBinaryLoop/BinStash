@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -22,6 +22,7 @@ using BinStash.Core.Storage;
 using BinStash.Core.Storage.Gc;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage.FileDefinition;
+using BinStash.Server.Services.Reachability;
 using BinStash.Server.Services.ReleaseUpgrade;
 using HotChocolate.Subscriptions;
 using Microsoft.EntityFrameworkCore;
@@ -358,10 +359,8 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
     /// <returns>The set of release-package hashes that are still referenced by a release row.</returns>
     private async Task<HashSet<string>> MarkAsync(GcRunContext ctx, GcMarkSet marks, CancellationToken ct)
     {
-        var releases = await ctx.Db.Releases
-            .Where(r => r.Repository.ChunkStoreId == ctx.ChunkStoreId)
-            .Select(r => new ReleaseRoot(r.Id, r.Version, r.ReleaseDefinitionChecksum))
-            .ToListAsync(ct);
+        var releases = await ReleaseRootQueries.ForChunkStore(ctx.Db, ctx.ChunkStoreId).ToListAsync(ct);
+        var walker = new ReleaseReachabilityWalker(ctx.Storage, ctx.Collector);
 
         ctx.Progress.TotalReleases = releases.Count;
         var referencedPackages = new HashSet<string>(releases.Count, StringComparer.OrdinalIgnoreCase);
@@ -374,50 +373,19 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             var packageHash = release.DefinitionChecksum.ToHexString();
             referencedPackages.Add(packageHash);
 
-            byte[]? packageBytes;
+            IReadOnlyList<Hash32> fileHashes;
             try
             {
-                packageBytes = await ctx.Storage.RetrieveReleasePackageAsync(packageHash);
+                fileHashes = await walker.ReadReferencedFileHashesAsync(release, ct);
             }
-            catch (Exception ex)
+            catch (ReachabilityAbortedException ex)
             {
                 throw new GcAbortedException(
-                    $"Release '{release.Version}' ({release.Id}) references release package {packageHash}, " +
-                    $"which could not be read ({ex.GetType().Name}: {ex.Message}). Refusing to collect: every " +
-                    "object that release reaches would be treated as unreachable. Repair or remove the release first.");
+                    $"{ex.Message} Refusing to collect: every object that release reaches would be " +
+                    "treated as unreachable. Repair or remove the release first.");
             }
 
-            if (packageBytes is null || packageBytes.Length == 0)
-            {
-                throw new GcAbortedException(
-                    $"Release '{release.Version}' ({release.Id}) references release package {packageHash}, " +
-                    "which is missing from the store. Refusing to collect: every object that release reaches " +
-                    "would be treated as unreachable. Repair or remove the release first.");
-            }
-
-            ReleasePackage package;
-            try
-            {
-                (package, _) = await ReleasePackageSerializer.DeserializeAsync(packageBytes, ct);
-            }
-            catch (Exception ex)
-            {
-                throw new GcAbortedException(
-                    $"Release package {packageHash} for release '{release.Version}' ({release.Id}) could not be " +
-                    $"deserialized ({ex.GetType().Name}: {ex.Message}). Refusing to collect.");
-            }
-
-            if (package.PackageFormatVersion == 5)
-            {
-                // V5 addresses file definitions by StorageKey, an identity the store no longer
-                // carries. Marking it would look successful and mark nothing.
-                throw new GcAbortedException(
-                    $"Release '{release.Version}' ({release.Id}) is stored in the legacy V5 format, whose file " +
-                    "references cannot be resolved against the current file-definition index. Run the release " +
-                    "upgrade job on this chunk store before collecting.");
-            }
-
-            foreach (var fileHash in CollectReferencedFileHashes(package))
+            foreach (var fileHash in fileHashes)
                 marks.Add(GcObjectCategory.FileDefinition, fileHash);
 
             ctx.Progress.MarkedReleases++;
@@ -461,30 +429,18 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             {
                 ct.ThrowIfCancellationRequested();
 
-                var blob = await ctx.Collector.ReadFileDefinitionForMarkAsync(fileHash, ct);
-                if (blob is null)
-                {
-                    // Reachable from a release but not present. The release is already broken;
-                    // saying so is more useful than quietly collecting the rest of its chunks.
-                    throw new GcAbortedException(
-                        $"File definition {fileHash.ToHexString()} is referenced by a release but is missing from " +
-                        "the store. Refusing to collect: its chunks would be treated as unreachable. Rebuild the " +
-                        "chunk store index, or repair the affected release, and try again.");
-                }
-
-                FileDefinitionRecord record;
+                IReadOnlyList<Hash32> chunkHashes;
                 try
                 {
-                    record = FileDefinitionRecord.Deserialize(blob);
+                    chunkHashes = await walker.ReadChunkHashesAsync(fileHash, ct);
                 }
-                catch (Exception ex)
+                catch (ReachabilityAbortedException ex)
                 {
                     throw new GcAbortedException(
-                        $"File definition {fileHash.ToHexString()} could not be decoded " +
-                        $"({ex.GetType().Name}: {ex.Message}). Refusing to collect.");
+                        $"{ex.Message} Refusing to collect: its chunks would be treated as unreachable.");
                 }
 
-                foreach (var chunkHash in record.ChunkHashes)
+                foreach (var chunkHash in chunkHashes)
                     marks.Add(GcObjectCategory.Chunk, chunkHash);
 
                 ctx.Progress.ResolvedFileDefinitions++;
@@ -507,43 +463,6 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
 
         await PersistProgressAsync(ctx, ct);
         return referencedPackages;
-    }
-
-    private readonly record struct ReleaseRoot(Guid Id, string Version, Hash32 DefinitionChecksum);
-
-    /// <summary>
-    /// Every file-content hash a release package reaches, across both artifact backings.
-    /// A backing the serializer does not recognise aborts the run rather than contributing
-    /// nothing, because "no hashes" and "no hashes I understood" are indistinguishable to a
-    /// sweep and only one of them is safe.
-    /// </summary>
-    private static IEnumerable<Hash32> CollectReferencedFileHashes(ReleasePackage package)
-    {
-        foreach (var artifact in package.OutputArtifacts)
-        {
-            switch (artifact.Backing)
-            {
-                case OpaqueBlobBacking opaque:
-                    if (opaque.ContentHash is null)
-                        throw new GcAbortedException($"Output artifact '{artifact.Path}' has no content hash. Refusing to collect.");
-                    yield return opaque.ContentHash.Value;
-                    break;
-
-                case ReconstructedContainerBacking reconstructed:
-                    foreach (var member in reconstructed.Members)
-                    {
-                        if (member.ContentHash is null)
-                            throw new GcAbortedException($"Container member '{member.EntryPath}' of '{artifact.Path}' has no content hash. Refusing to collect.");
-                        yield return member.ContentHash.Value;
-                    }
-                    break;
-
-                default:
-                    throw new GcAbortedException(
-                        $"Output artifact '{artifact.Path}' uses backing type '{artifact.Backing.GetType().Name}', which this " +
-                        "server does not know how to walk. Refusing to collect.");
-            }
-        }
     }
 
     // =======================================================================

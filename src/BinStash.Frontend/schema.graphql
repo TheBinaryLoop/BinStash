@@ -869,6 +869,9 @@ type TenantTrafficTotalGql {
 type TenantUsageGql {
   tenantId: UUID!
   logicalBytes: Long!
+  uniqueLogicalBytes: Long!
+  deduplicationSavedBytes: Long!
+  footprintComputedAt: DateTime
   repositoryCount: Int!
   releaseCount: Int!
   maxStorageBytes: Long
