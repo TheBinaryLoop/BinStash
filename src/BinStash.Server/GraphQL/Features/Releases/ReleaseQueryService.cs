@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Release;
 using System.Text.Json;
 using BinStash.Core.Auth.Repository;
 using BinStash.Infrastructure.Data;
@@ -70,6 +71,41 @@ public sealed class ReleaseQueryService
             RepoId = releaseMeta.RepoId,
             CustomProperties = ParseJsonOrNull(releaseMeta.CustomProperties)
         };
+    }
+
+    /// <summary>The build targets a release ships, oldest first.</summary>
+    /// <remarks>
+    /// Not authorized separately: it is reached only through a release the caller has already been
+    /// authorized for, and a target key reveals nothing the release itself does not.
+    /// </remarks>
+    public async Task<List<ReleaseVariantGql>> GetVariantsForReleaseIdAsync(Guid releaseId, CancellationToken ct)
+    {
+        var rows = await _db.ReleaseVariants
+            .AsNoTracking()
+            .Where(v => v.ReleaseId == releaseId)
+            .OrderBy(v => v.CreatedAt)
+            .ThenBy(v => v.TargetKey)
+            .Select(v => new
+            {
+                v.Id,
+                v.TargetKey,
+                v.CreatedAt,
+                Metrics = _db.ReleaseMetrics
+                    .Where(m => m.VariantId == v.Id)
+                    .Select(m => new { m.TotalLogicalBytes, m.FilesInRelease })
+                    .FirstOrDefault()
+            })
+            .ToListAsync(ct);
+
+        return rows.Select(r => new ReleaseVariantGql
+        {
+            Id = r.Id,
+            TargetKey = r.TargetKey,
+            IsDefault = ReleaseTarget.IsDefault(r.TargetKey),
+            CreatedAt = r.CreatedAt,
+            TotalLogicalBytes = r.Metrics?.TotalLogicalBytes,
+            FilesInVariant = r.Metrics?.FilesInRelease
+        }).ToList();
     }
 
     public async Task<ReleaseMetricsGql?> GetReleaseMetricsForReleaseIdAsync(Guid releaseId, CancellationToken ct)

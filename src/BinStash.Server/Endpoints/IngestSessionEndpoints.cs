@@ -140,8 +140,21 @@ public static class IngestSessionEndpoints
         if (repo is null)
             return Results.Problem("No repo found", statusCode: 404);
         
-        if (db.Releases.Any(r => r.RepoId == repoId && r.Version == body.IntendedRelease))
-            return Results.Problem("A release with the intended version already exists for this repository.", statusCode: 400);
+        if (!ReleaseTarget.TryCanonicalize(body.TargetKey, out var targetKey, out var targetError))
+            return Results.Problem(targetError, statusCode: 400);
+
+        // Only the (version, target) pair has to be free. An existing version is what publishing a
+        // second target of it looks like, so rejecting on the version alone would make a build
+        // matrix fail on everything after its first agent. The authoritative check is still at
+        // finalize; this one exists to fail fast, before the payload is uploaded.
+        if (db.ReleaseVariants.Any(v => v.Release.RepoId == repoId
+                                        && v.Release.Version == body.IntendedRelease
+                                        && v.TargetKey == targetKey))
+        {
+            return Results.Problem(
+                $"Release '{body.IntendedRelease}' already has a '{targetKey}' variant in this repository.",
+                statusCode: 400);
+        }
         
         var session = new IngestSession
         {
@@ -151,7 +164,8 @@ public static class IngestSessionEndpoints
             LastUpdatedAt = DateTimeOffset.UtcNow,
             ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
             State = IngestSessionState.Created,
-            IntendedRelease = body.IntendedRelease
+            IntendedRelease = body.IntendedRelease,
+            TargetKey = targetKey
         };
         
         db.IngestSessions.Add(session);
