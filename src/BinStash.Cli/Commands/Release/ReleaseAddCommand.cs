@@ -45,7 +45,7 @@ public partial class ReleaseAddCommand : TenantCommandBase
     [CommandOption("component-map", 'c', Description = "The path to the component map file.")]
     public string ComponentMapFile { get; set; } = string.Empty;
 
-    [CommandOption("target", 't', Description = "Build target this payload is for, e.g. linux-x64. Omit for a release that ships a single payload.")]
+    [CommandOption("target", Description = "Build target this payload is for, e.g. linux-x64. Omit for a release that ships a single payload.")]
     public string Target { get; set; } = string.Empty;
     
     [CommandOption("custom-property", 'p', Description = "Custom property to add to the release. Can be specified multiple times.", Converter = typeof(DictionaryConverter))]
