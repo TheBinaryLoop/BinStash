@@ -189,11 +189,21 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             await db.SaveChangesAsync(CancellationToken.None);
             await BroadcastAsync(job, jobData, progress, CancellationToken.None);
 
+            // The mode leads, because the counts alone do not carry it. A dry run reports the
+            // same "quarantined N objects" as a real one — it counts what it would have done
+            // without writing a tombstone — so a log line without the mode cannot be read at all
+            // without going back to the job's payload to find out whether anything happened.
+            var mode = options.DryRun
+                ? "DRY RUN, nothing changed"
+                : options.SkipReclaim
+                    ? "quarantine only, nothing destroyed"
+                    : "full run";
+
             _logger.LogInformation(
-                "GC job {JobId} completed for chunk store {ChunkStoreId}: quarantined {Quarantined} object(s) ({QuarantinedBytes} B), " +
+                "GC job {JobId} completed for chunk store {ChunkStoreId} [{Mode}]: quarantined {Quarantined} object(s) ({QuarantinedBytes} B), " +
                 "reclaimed {Reclaimed} object(s) ({ReclaimedBytes} B of dead entries), compacted {Packs} pack(s), " +
                 "deleted {Deleted} pack file(s) returning {PackBytesDeleted} B to the filesystem",
-                jobId, store.Id, progress.QuarantinedObjects, progress.QuarantinedBytes,
+                jobId, store.Id, mode, progress.QuarantinedObjects, progress.QuarantinedBytes,
                 progress.ReclaimedObjects, progress.ReclaimedBytes, progress.PacksCompacted,
                 progress.PacksDeleted, progress.PackBytesDeleted);
         }

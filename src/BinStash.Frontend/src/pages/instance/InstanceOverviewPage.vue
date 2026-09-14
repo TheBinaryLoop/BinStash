@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Activity, Building2, Database, FolderGit2, HardDrive, Package, Users } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
@@ -15,13 +15,23 @@ import { jobTypeLabel } from '@/lib/jobs'
 
 const stats = useQuery(InstanceStatsDocument, {})
 const chunkStores = useQuery(ChunkStoresDocument, { first: 100 })
-const jobs = useQuery(BackgroundJobsDocument, { first: 5 })
+// Same reasoning as the chunk store page: poll only while something is running, so a job that
+// ended unobserved stops being reported as still going. The ref breaks the cycle between the
+// query and the result it polls on.
+const jobPollInterval = ref(0)
+const jobs = useQuery(BackgroundJobsDocument, { first: 5 }, { pollInterval: jobPollInterval })
 
 const instanceStats = computed(() => stats.result.value?.instanceStats)
 const storeCount = computed(
   () => instanceStats.value?.chunkStoreCount ?? chunkStores.result.value?.chunkStores?.totalCount ?? 0,
 )
 const recentJobs = computed(() => jobs.result.value?.backgroundJobs?.nodes ?? [])
+
+watch(
+  () => recentJobs.value.some((job) => job.status === 'Running' || job.status === 'Pending'),
+  (busy) => { jobPollInterval.value = busy ? 5000 : 0 },
+  { immediate: true },
+)
 
 /**
  * How much of the instance's logical data each physical byte carries. Instance-wide, so unlike

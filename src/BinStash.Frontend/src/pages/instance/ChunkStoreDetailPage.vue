@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Hammer, RefreshCw, ShieldOff, Trash2 } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
 
@@ -35,10 +35,24 @@ const chunkStoreId = computed(() => route.params.chunkStoreId as string)
 const store = useQuery(ChunkStoreDocument, () => ({ id: chunkStoreId.value }))
 const stats = useQuery(ChunkStoreStatsDocument, () => ({ chunkStoreId: chunkStoreId.value }))
 const gcConfig = useQuery(GcConfigDocument, {})
-const jobs = useQuery(BackgroundJobsDocument, () => ({
-  first: 10,
-  chunkStoreId: chunkStoreId.value,
-}))
+/**
+ * Polled while a job is in flight, and only then.
+ *
+ * The subscription carries live progress, but it cannot report what happened while nobody was
+ * looking: a job that finished before this page was opened emits nothing, and a run whose stream
+ * was cut by a server restart never emits again. Either leaves the cached status stuck on
+ * Running with no event that will ever correct it.
+ *
+ * Held in a ref rather than derived inline, because the cadence depends on the query's own
+ * result and the query reads this while it is being created.
+ */
+const jobPollInterval = ref(0)
+
+const jobs = useQuery(
+  BackgroundJobsDocument,
+  () => ({ first: 10, chunkStoreId: chunkStoreId.value }),
+  { pollInterval: jobPollInterval },
+)
 
 const detail = computed(() => store.result.value?.chunkStore)
 const figures = computed(() => stats.result.value?.chunkStoreStats)
@@ -46,6 +60,8 @@ const jobList = computed(() => jobs.result.value?.backgroundJobs?.nodes ?? [])
 const activeJob = computed(() =>
   jobList.value.find((job) => job.status === 'Running' || job.status === 'Pending'),
 )
+
+watch(activeJob, (active) => { jobPollInterval.value = active ? 5000 : 0 }, { immediate: true })
 
 /**
  * Free space as a fraction, but only when the backend could report a volume at all — a
