@@ -103,7 +103,7 @@ public class EgressMeterTests : IDisposable
         var (tenantId, releaseId) = await SeedReleaseAsync();
         var meteringService = new SpyEgressMeteringService();
 
-        var result = await InvokeDownloadAsync(
+        var (result, _) = await InvokeDownloadAsync(
             tenantId, releaseId, meteringService,
             BuildQuotaGuard(isEgressAllowed: false),
             new BillingSettings());
@@ -118,25 +118,22 @@ public class EgressMeterTests : IDisposable
             "a tenant that is out of plan must be refused before it is served a single byte");
     }
 
-    [Fact]
-    public async Task GetReleaseDownload_WithTightCheckpoints_MetersTheSameTotal()
+    [Theory]
+    [InlineData(1L)]
+    [InlineData(16L)]
+    [InlineData(0L)]
+    public async Task GetReleaseDownload_MetersExactlyWhatItServed(long checkpointBytes)
     {
         var (tenantId, releaseId) = await SeedReleaseAsync();
-        var tight = new SpyEgressMeteringService();
-        var single = new SpyEgressMeteringService();
+        var meteringService = new SpyEgressMeteringService();
 
-        // How the stream is partitioned into meter events must not change the total billed.
-        // (That the partitioning happens at all is covered directly by MeteredResponseStreamSpecs;
-        // this fixture streams an almost empty tar, too little to force several checkpoints.)
-        await InvokeDownloadAsync(tenantId, releaseId, tight, BuildQuotaGuard(),
-            new BillingSettings { EgressMeterCheckpointBytes = 1 });
-        await InvokeDownloadAsync(tenantId, releaseId, single, BuildQuotaGuard(),
-            new BillingSettings { EgressMeterCheckpointBytes = 0 });
+        var (_, servedBytes) = await InvokeDownloadAsync(
+            tenantId, releaseId, meteringService, BuildQuotaGuard(),
+            new BillingSettings { EgressMeterCheckpointBytes = checkpointBytes });
 
-        tight.Calls.Should().NotBeEmpty();
-        tight.Calls.Should().OnlyContain(c => c.TenantId == tenantId);
-        tight.Calls.Sum(c => c.Bytes).Should().Be(single.Calls.Sum(c => c.Bytes),
-            "checkpoints partition the stream — they must not change how much is billed");
+        meteringService.Calls.Should().OnlyContain(c => c.TenantId == tenantId);
+        meteringService.Calls.Sum(c => c.Bytes).Should().Be(servedBytes,
+            "however the stream is partitioned into meter events, the tenant is billed for exactly what was written to the response");
     }
 
     [Fact]
@@ -202,7 +199,7 @@ public class EgressMeterTests : IDisposable
         return (tenantId, releaseId);
     }
 
-    private async Task<IResult> InvokeDownloadAsync(Guid tenantId, Guid releaseId, IUsageMeteringService metering, TenantQuotaGuard quota, BillingSettings billingSettings, BufferedTrafficRecorder? traffic = null)
+    private async Task<(IResult Result, long ServedBytes)> InvokeDownloadAsync(Guid tenantId, Guid releaseId, IUsageMeteringService metering, TenantQuotaGuard quota, BillingSettings billingSettings, BufferedTrafficRecorder? traffic = null)
     {
         var method = typeof(ReleaseEndpoints).GetMethod(
             "GetReleaseDownloadAsync",
@@ -210,9 +207,10 @@ public class EgressMeterTests : IDisposable
         method.Should().NotBeNull("GetReleaseDownloadAsync must exist as a private static method");
 
         var httpContext = new DefaultHttpContext();
-        httpContext.Response.Body = new MemoryStream();
+        var body = new MemoryStream();
+        httpContext.Response.Body = body;
 
-        return await (Task<IResult>)method!.Invoke(null, [
+        var result = await (Task<IResult>)method!.Invoke(null, [
             tenantId,
             releaseId,
             null,           // component
@@ -229,6 +227,8 @@ public class EgressMeterTests : IDisposable
             NullLoggerFactory.Instance,
             CancellationToken.None
         ])!;
+
+        return (result, body.Length);
     }
 
     private static IServiceProvider BuildResultServices()
