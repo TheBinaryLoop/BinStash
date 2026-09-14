@@ -29,6 +29,7 @@ using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Server.Billing;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
+using BinStash.Server.Services.Billing;
 using BinStash.Server.Services.ChunkStores;
 using BinStash.Core.Traffic;
 using BinStash.Server.Services.Usage;
@@ -534,7 +535,7 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
     
-    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine, IAuditLogWriter audit, TenantQuotaGuard quota, HttpRequest request)
+    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine, IAuditLogWriter audit, TenantQuotaGuard quota, TenantFootprintRefreshQueue footprintRefresh, HttpRequest request)
     {
         var ingestSession = await db.IngestSessions.FindAsync(sessionId);
         var repo = await db.Repositories.FindAsync(repoId);
@@ -772,6 +773,10 @@ public static class IngestSessionEndpoints
             }
         });
 
+        // The tenant now holds more than their last snapshot says. Queue the recomputation so
+        // their plan limit is checked against a current figure rather than a day-old one.
+        footprintRefresh.Enqueue(repo.TenantId);
+
         return Results.Created($"/api/releases/{releaseId}", null);
     }
     
@@ -781,8 +786,7 @@ public static class IngestSessionEndpoints
     /// </summary>
     private const int IntegrityCheckBatchSize = 2000;
 
-    private static async Task<List<Hash32>> FindMissingFileDefinitionsAsync(
-        BinStashDbContext db, Guid chunkStoreId, IReadOnlyCollection<Hash32> hashes)
+    private static async Task<List<Hash32>> FindMissingFileDefinitionsAsync(BinStashDbContext db, Guid chunkStoreId, IReadOnlyCollection<Hash32> hashes)
     {
         var missing = new List<Hash32>();
 
@@ -799,8 +803,7 @@ public static class IngestSessionEndpoints
         return missing;
     }
 
-    private static async Task<List<Hash32>> FindMissingChunksAsync(
-        BinStashDbContext db, Guid chunkStoreId, IReadOnlyCollection<Hash32> hashes)
+    private static async Task<List<Hash32>> FindMissingChunksAsync(BinStashDbContext db, Guid chunkStoreId, IReadOnlyCollection<Hash32> hashes)
     {
         var missing = new List<Hash32>();
 

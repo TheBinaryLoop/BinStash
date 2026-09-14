@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Ban, CircleCheck, HardDrive, Info, Layers, Package } from '@lucide/vue'
+import { Ban, CircleCheck, FolderGit2, HardDrive, Info, Layers, Package } from '@lucide/vue'
 import { computed } from 'vue'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
@@ -10,13 +10,16 @@ import UsageMeter from '@/components/app/UsageMeter.vue'
 import { Badge } from '@/components/ui/badge'
 import { useQuery } from '@/composables/useGraphql'
 import { TenantUsageDocument } from '@/graphql/generated'
-import { formatBytes, formatNumber } from '@/lib/format'
+import { formatBytes, formatNumber, formatRelative } from '@/lib/format'
 
 /**
- * Everything here is expressed in undeduplicated, uncompressed logical bytes — what the
- * workspace is billed on. Deduplicated footprint and the savings it produces are NOT
- * shown: the chunk store is shared between workspaces, so those numbers depend on other
- * tenants' content and would leak it. They belong on instance-admin surfaces.
+ * The billed figure is `uniqueLogicalBytes`: this workspace's content deduplicated against
+ * ITSELF, as if it had a private chunk store. Deduplicating within the workspace is safe to
+ * show precisely because it consults no other workspace's data.
+ *
+ * What is still NOT shown is the footprint after deduplication ACROSS workspaces, and any
+ * compression ratio of the shared store. Those move when other tenants upload, so displaying
+ * them would leak their content. They belong on instance-admin surfaces.
  */
 const { result, loading, error, refetch } = useQuery(TenantUsageDocument, {})
 const usage = computed(() => result.value?.tenantUsage)
@@ -35,6 +38,29 @@ const averageReleaseSize = computed(() => {
   const stats = usage.value
   if (!stats || stats.releaseCount === 0) return null
   return stats.logicalBytes / stats.releaseCount
+})
+
+/**
+ * How much of the released content deduplication keeps off the bill. Stated as a share as well
+ * as a size because the share is what makes the model legible: a workspace publishing one
+ * release per platform sees most of it.
+ */
+const savedLabel = computed(() => {
+  const stats = usage.value
+  if (!stats || stats.logicalBytes <= 0 || stats.deduplicationSavedBytes <= 0) {
+    return 'Total size of all releases'
+  }
+  const share = Math.round((stats.deduplicationSavedBytes / stats.logicalBytes) * 100)
+  return `${formatBytes(stats.deduplicationSavedBytes)} (${share}%) not charged`
+})
+
+/**
+ * The footprint is established by a periodic walk, so a workspace that just uploaded should be
+ * able to see that the figure predates their upload rather than conclude the upload was free.
+ */
+const footprintAge = computed(() => {
+  const at = usage.value?.footprintComputedAt
+  return at ? formatRelative(at) : null
 })
 </script>
 
@@ -56,17 +82,18 @@ const averageReleaseSize = computed(() => {
       <div v-if="usage" class="space-y-6">
         <QuotaAlert :usage="usage" />
 
-        <div class="grid gap-3 sm:grid-cols-3">
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
-            label="Stored"
-            :value="formatBytes(usage.logicalBytes)"
-            hint="Billable — total size of all releases"
+            label="Billed storage"
+            :value="formatBytes(usage.uniqueLogicalBytes)"
+            :hint="footprintAge ? `Measured ${footprintAge}` : 'Not yet measured'"
             :icon="HardDrive"
             numeric
           />
           <StatCard
-            label="Repositories"
-            :value="formatNumber(usage.repositoryCount)"
+            label="Released content"
+            :value="formatBytes(usage.logicalBytes)"
+            :hint="savedLabel"
             :icon="Layers"
             numeric
           />
@@ -77,6 +104,12 @@ const averageReleaseSize = computed(() => {
             :icon="Package"
             numeric
           />
+          <StatCard
+            label="Repositories"
+            :value="formatNumber(usage.repositoryCount)"
+            :icon="FolderGit2"
+            numeric
+          />
         </div>
 
         <div class="grid gap-4 lg:grid-cols-3">
@@ -84,12 +117,12 @@ const averageReleaseSize = computed(() => {
             <div>
               <h2 class="text-sm font-medium">Plan usage</h2>
               <p class="text-muted-foreground text-xs">
-                Measured on the total size of your releases as published.
+                Measured on your content after deduplicating it against itself.
               </p>
             </div>
 
             <UsageMeter
-              :used="usage.logicalBytes"
+              :used="usage.uniqueLogicalBytes"
               :limit="usage.maxStorageBytes"
               :is-limited="usage.isLimited"
             />
@@ -99,10 +132,12 @@ const averageReleaseSize = computed(() => {
             >
               <Info class="mt-px size-3.5 shrink-0" />
               <p>
-                BinStash deduplicates and compresses your data before writing it to disk, so the
-                space it physically occupies is smaller than the figure above. Because that
-                storage is shared across workspaces, billing is based on your releases'
-                uncompressed, undeduplicated size rather than on the shared footprint.
+                You are billed for the distinct content this workspace holds, counted once. Bytes
+                repeated between your releases — successive versions, or the platforms of one
+                multi-target release — are charged once, not once per copy. The figure depends
+                only on your own data, so it never moves because of what another workspace
+                uploads. BinStash compresses and deduplicates further across workspaces before
+                writing to disk; that saving is the operator's and is not reflected here.
               </p>
             </div>
           </section>
