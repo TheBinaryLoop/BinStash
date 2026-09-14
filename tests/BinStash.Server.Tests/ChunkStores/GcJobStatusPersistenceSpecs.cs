@@ -41,6 +41,8 @@ namespace BinStash.Server.Tests.ChunkStores;
 /// </remarks>
 public sealed class GcJobStatusPersistenceSpecs : IDisposable
 {
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
     private readonly BinStashDbContext _db;
 
     public GcJobStatusPersistenceSpecs()
@@ -66,7 +68,7 @@ public sealed class GcJobStatusPersistenceSpecs : IDisposable
         };
 
         _db.BackgroundJobs.Add(job);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(Ct);
         _db.ChangeTracker.Clear();
 
         return job.Id;
@@ -77,17 +79,17 @@ public sealed class GcJobStatusPersistenceSpecs : IDisposable
     {
         var jobId = await SeedRunningJobAsync();
 
-        var job = await _db.BackgroundJobs.FirstAsync(j => j.Id == jobId);
+        var job = await _db.BackgroundJobs.FirstAsync(j => j.Id == jobId, Ct);
 
         // What the sweep and reclaim phases do between loading the job and completing it.
         _db.ChangeTracker.Clear();
 
         job.Status = BackgroundJobStatus.Completed;
         job.CompletedAt = DateTimeOffset.UtcNow;
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(Ct);
 
         _db.ChangeTracker.Clear();
-        var reloaded = await _db.BackgroundJobs.AsNoTracking().FirstAsync(j => j.Id == jobId);
+        var reloaded = await _db.BackgroundJobs.AsNoTracking().FirstAsync(j => j.Id == jobId, Ct);
 
         reloaded.Status.Should().Be(
             BackgroundJobStatus.Running,
@@ -99,17 +101,17 @@ public sealed class GcJobStatusPersistenceSpecs : IDisposable
     {
         var jobId = await SeedRunningJobAsync();
 
-        var job = await _db.BackgroundJobs.FirstAsync(j => j.Id == jobId);
+        var job = await _db.BackgroundJobs.FirstAsync(j => j.Id == jobId, Ct);
 
         _db.ChangeTracker.Clear();
 
         job.Status = BackgroundJobStatus.Completed;
         job.CompletedAt = DateTimeOffset.UtcNow;
         _db.BackgroundJobs.Update(job);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(Ct);
 
         _db.ChangeTracker.Clear();
-        var reloaded = await _db.BackgroundJobs.AsNoTracking().FirstAsync(j => j.Id == jobId);
+        var reloaded = await _db.BackgroundJobs.AsNoTracking().FirstAsync(j => j.Id == jobId, Ct);
 
         reloaded.Status.Should().Be(BackgroundJobStatus.Completed);
         reloaded.CompletedAt.Should().NotBeNull();
@@ -127,7 +129,7 @@ public sealed class GcJobStatusPersistenceSpecs : IDisposable
             .Where(j => j.JobType == BackgroundJobTypes.ChunkStoreGc
                         && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running))
             .Select(j => j.Id)
-            .ToListAsync();
+            .ToListAsync(Ct);
 
         resumable.Should().Contain(jobId);
     }
