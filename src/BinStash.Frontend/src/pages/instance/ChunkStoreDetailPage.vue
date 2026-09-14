@@ -64,6 +64,25 @@ const activeJob = computed(() =>
 watch(activeJob, (active) => { jobPollInterval.value = active ? 5000 : 0 }, { immediate: true })
 
 /**
+ * What each stage of the pipeline actually removes, as a fraction of what reached it.
+ *
+ * Expressed as reductions rather than as absolute savings because the two are not equally
+ * legible: a store deduplicating 12 TiB down to 21 GiB "saves" a number that rounds to the
+ * original, whereas "-99.8%" stays meaningful at any scale.
+ */
+const dedupReduction = computed(() => {
+  const snapshot = figures.value
+  if (!snapshot?.totalLogicalBytes) return null
+  return 1 - snapshot.uniqueLogicalChunkBytes / snapshot.totalLogicalBytes
+})
+
+const compressionReduction = computed(() => {
+  const snapshot = figures.value
+  if (!snapshot?.uniqueLogicalChunkBytes) return null
+  return 1 - snapshot.uniqueCompressedChunkBytes / snapshot.uniqueLogicalChunkBytes
+})
+
+/**
  * Free space as a fraction, but only when the backend could report a volume at all — a
  * store that cannot measure its disk must not render as a full one.
  */
@@ -256,21 +275,37 @@ async function confirmCollect({ dryRun, skipReclaim }: { dryRun: boolean; skipRe
         <div class="grid gap-4 lg:grid-cols-2">
           <!-- Efficiency figures are instance-scoped by necessity: the store is shared, so these
                numbers describe every tenant's content at once and cannot be shown per workspace. -->
+          <!-- Read as a reduction chain rather than a list of absolute figures. With a ratio
+               this steep the saving is within a rounding error of the total — 12.0 TiB less
+               21.2 GiB still renders as "12.0 TiB" — so two genuinely different numbers printed
+               identically and looked like a bug. What each step actually removes is the
+               interesting quantity, and a percentage says it without colliding. -->
           <section class="bg-card hairline space-y-3 rounded-lg p-4">
             <h2 class="text-sm font-medium">Efficiency</h2>
             <dl class="space-y-2 text-xs">
-              <div class="flex justify-between gap-3">
-                <dt class="text-muted-foreground">Released data (logical)</dt>
+              <div class="flex items-baseline justify-between gap-3">
+                <dt class="text-muted-foreground">Released data, as published</dt>
                 <dd class="font-mono tabular-nums">{{ formatBytes(figures?.totalLogicalBytes ?? 0) }}</dd>
               </div>
-              <div class="flex justify-between gap-3">
-                <dt class="text-muted-foreground">Unique chunks, uncompressed</dt>
+              <div class="flex items-baseline justify-between gap-3">
+                <dt class="text-muted-foreground pl-3">
+                  after deduplication
+                  <span v-if="dedupReduction != null" class="text-success">
+                    −{{ formatPercent(dedupReduction, 1) }}
+                  </span>
+                </dt>
                 <dd class="font-mono tabular-nums">{{ formatBytes(figures?.uniqueLogicalChunkBytes ?? 0) }}</dd>
               </div>
-              <div class="flex justify-between gap-3">
-                <dt class="text-muted-foreground">Unique chunks, compressed</dt>
+              <div class="flex items-baseline justify-between gap-3">
+                <dt class="text-muted-foreground pl-3">
+                  after compression
+                  <span v-if="compressionReduction != null" class="text-success">
+                    −{{ formatPercent(compressionReduction, 1) }}
+                  </span>
+                </dt>
                 <dd class="font-mono tabular-nums">{{ formatBytes(figures?.uniqueCompressedChunkBytes ?? 0) }}</dd>
               </div>
+
               <div class="border-hairline flex justify-between gap-3 border-t pt-2">
                 <dt class="text-muted-foreground">Saved by deduplication</dt>
                 <dd class="font-mono tabular-nums">{{ formatBytes(figures?.deduplicationSavedBytes ?? 0) }}</dd>
@@ -280,6 +315,11 @@ async function confirmCollect({ dryRun, skipReclaim }: { dryRun: boolean; skipRe
                 <dd class="font-mono tabular-nums">{{ formatBytes(figures?.compressionSavedBytes ?? 0) }}</dd>
               </div>
             </dl>
+
+            <p class="text-muted-foreground border-hairline border-t pt-2 text-xs">
+              Deduplication dominates here, so the bytes it saves are within a rounding error of
+              the published total — the percentages above are the figures worth comparing.
+            </p>
           </section>
 
           <section class="bg-card hairline space-y-3 rounded-lg p-4">
