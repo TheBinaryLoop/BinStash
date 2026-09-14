@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import {
   axisMax,
@@ -35,8 +35,6 @@ const props = defineProps<{
 
 const PLOT_HEIGHT = computed(() => props.height ?? 140)
 
-// viewBox units == px at the default width; the SVG scales with its container.
-const WIDTH = 720
 const AXIS_GUTTER = 52
 const LABEL_BAND = 18
 const SURFACE_GAP = 2
@@ -46,11 +44,35 @@ const MAX_COLUMN = 24
 // above the plot the top label is clipped in half by the viewBox.
 const TOP_PAD = 8
 
+/**
+ * The viewBox width tracks the element's real width so one unit is one pixel.
+ *
+ * A fixed viewBox width with a fixed pixel height does not stretch — preserveAspectRatio
+ * letterboxes it, so on a card wider than the viewBox the chart sits centred in a band of empty
+ * space. Measuring also makes the mark specs mean what they say: a 24px bar cap and a 2px gap are
+ * only 24 and 2 real pixels if the scale is 1:1.
+ */
+const root = ref<HTMLElement | null>(null)
+const width = ref(720)
+let observer: ResizeObserver | null = null
+
+onMounted(() => {
+  if (!root.value || typeof ResizeObserver === 'undefined') return
+
+  observer = new ResizeObserver((entries) => {
+    const measured = entries[0]?.contentRect.width
+    if (measured && measured > 0) width.value = Math.round(measured)
+  })
+  observer.observe(root.value)
+})
+
+onBeforeUnmount(() => observer?.disconnect())
+
 const buckets = computed(() => expandBuckets(props.fromUtc, props.toUtc, props.grain, props.points))
 const scaleMax = computed(() => axisMax(buckets.value))
 const ticks = computed(() => byteTicks(buckets.value.reduce((m, b) => Math.max(m, b.totalBytes), 0)))
 
-const plotWidth = computed(() => WIDTH - AXIS_GUTTER)
+const plotWidth = computed(() => Math.max(1, width.value - AXIS_GUTTER))
 const band = computed(() => (buckets.value.length > 0 ? plotWidth.value / buckets.value.length : plotWidth.value))
 
 /**
@@ -63,6 +85,21 @@ const columnWidth = computed(() => Math.min(MAX_COLUMN, Math.max(1, band.value -
 
 const hasTraffic = computed(() => buckets.value.some((b) => b.totalBytes > 0))
 const labelled = computed(() => labelledIndices(buckets.value.length))
+
+/**
+ * The outermost labels anchor inward. Centred on their band they would sit half outside the
+ * viewBox and be clipped — the axis runs to the very edge of the card by design.
+ */
+function labelAnchor(index: number): 'start' | 'middle' | 'end' {
+  if (index === 0) return 'start'
+  return index === buckets.value.length - 1 ? 'end' : 'middle'
+}
+
+function labelX(index: number): number {
+  if (index === 0) return AXIS_GUTTER
+  if (index === buckets.value.length - 1) return width.value
+  return AXIS_GUTTER + index * band.value + band.value / 2
+}
 
 const hovered = ref<number | null>(null)
 const hoveredBucket = computed(() => (hovered.value === null ? null : (buckets.value[hovered.value] ?? null)))
@@ -132,9 +169,9 @@ const totals = computed(() => ({
       </span>
     </figcaption>
 
-    <div class="relative">
+    <div ref="root" class="relative">
       <svg
-        :viewBox="`0 0 ${WIDTH} ${TOP_PAD + PLOT_HEIGHT + LABEL_BAND}`"
+        :viewBox="`0 0 ${width} ${TOP_PAD + PLOT_HEIGHT + LABEL_BAND}`"
         class="w-full"
         :style="{ height: `${TOP_PAD + PLOT_HEIGHT + LABEL_BAND}px` }"
         role="img"
@@ -147,7 +184,7 @@ const totals = computed(() => ({
             v-for="tick in ticks"
             :key="`grid-${tick}`"
             :x1="AXIS_GUTTER"
-            :x2="WIDTH"
+            :x2="width"
             :y1="y(tick)"
             :y2="y(tick)"
             class="stroke-border"
@@ -198,9 +235,9 @@ const totals = computed(() => ({
         <text
           v-for="index in labelled"
           :key="`label-${index}`"
-          :x="AXIS_GUTTER + index * band + band / 2"
+          :x="labelX(index)"
           :y="TOP_PAD + PLOT_HEIGHT + LABEL_BAND - 4"
-          text-anchor="middle"
+          :text-anchor="labelAnchor(index)"
           class="fill-muted-foreground text-[9px]"
         >
           {{ buckets[index] ? formatBucketLabel(buckets[index].start, grain) : '' }}
@@ -215,23 +252,30 @@ const totals = computed(() => ({
       </p>
     </div>
 
-    <!-- The same numbers as a table, for screen readers and for anyone who cannot use the hover. -->
-    <table class="sr-only">
-      <caption>
-        Traffic by {{ grain === 'DAILY' ? 'day' : 'hour' }}
-      </caption>
-      <thead>
-        <tr><th scope="col">Period</th><th scope="col">In</th><th scope="col">Out</th><th scope="col">Operations</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="bucket in buckets" :key="`row-${bucket.start.toISOString()}`">
-          <th scope="row">{{ formatBucketLabel(bucket.start, grain) }}</th>
-          <td>{{ formatBytes(bucket.ingressBytes) }}</td>
-          <td>{{ formatBytes(bucket.egressBytes) }}</td>
-          <td>{{ formatNumber(bucket.requestCount) }}</td>
-        </tr>
-      </tbody>
-    </table>
+    <!--
+      The same numbers as a table, for screen readers and for anyone who cannot use the hover.
+      The clip lives on a wrapping div rather than on the table: a table's caption is laid out
+      outside the table box, so `sr-only` on the table itself leaves the caption visible and
+      overflowing the card.
+    -->
+    <div class="sr-only">
+      <table>
+        <caption>
+          Traffic by {{ grain === 'DAILY' ? 'day' : 'hour' }}
+        </caption>
+        <thead>
+          <tr><th scope="col">Period</th><th scope="col">In</th><th scope="col">Out</th><th scope="col">Operations</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="bucket in buckets" :key="`row-${bucket.start.toISOString()}`">
+            <th scope="row">{{ formatBucketLabel(bucket.start, grain) }}</th>
+            <td>{{ formatBytes(bucket.ingressBytes) }}</td>
+            <td>{{ formatBytes(bucket.egressBytes) }}</td>
+            <td>{{ formatNumber(bucket.requestCount) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </figure>
 </template>
 
