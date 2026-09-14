@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -28,11 +28,7 @@ public sealed class UsageQueryService
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IAuthorizationService _authorizationService;
 
-    public UsageQueryService(
-        TenantUsageService usage,
-        IBillingProvider billingProvider,
-        IHttpContextAccessor httpContextAccessor,
-        IAuthorizationService authorizationService)
+    public UsageQueryService(TenantUsageService usage, IBillingProvider billingProvider, IHttpContextAccessor httpContextAccessor, IAuthorizationService authorizationService)
     {
         _usage = usage;
         _billingProvider = billingProvider;
@@ -51,10 +47,9 @@ public sealed class UsageQueryService
 
         var tenantId = tenantContext.TenantId;
 
-        // Only logical bytes are summed. Stored/compressed footprint is a property of the
-        // SHARED chunk store, not of this tenant, so it is neither billable here nor safe to
-        // report back (see TenantUsageGql). TenantUsageService owns that definition so the
-        // number shown here and the number the quota is enforced against cannot diverge.
+        // TenantUsageService owns the definition of both figures, so the number shown here and
+        // the number the quota is enforced against cannot diverge. Logical bytes are reported
+        // only to show what the tenant is NOT being charged for.
         var totals = await _usage.GetTotalsAsync(tenantId, ct);
 
         var limits = await _billingProvider.GetLimitsAsync(tenantId, ct);
@@ -62,18 +57,22 @@ public sealed class UsageQueryService
         // NoOp billing reports long.MaxValue, which is "no plan limit" rather than a real ceiling.
         var isLimited = limits.MaxStorageBytes is > 0 and < long.MaxValue;
         var logicalBytes = totals.LogicalBytes;
+        var uniqueLogicalBytes = totals.BillableBytes;
 
         return new TenantUsageGql
         {
             TenantId = tenantId,
             LogicalBytes = logicalBytes,
+            UniqueLogicalBytes = uniqueLogicalBytes,
+            DeduplicationSavedBytes = Math.Max(0, logicalBytes - uniqueLogicalBytes),
+            FootprintComputedAt = totals.FootprintComputedAt,
             ReleaseCount = totals.ReleaseCount,
             RepositoryCount = totals.RepositoryCount,
             MaxStorageBytes = isLimited ? limits.MaxStorageBytes : null,
             IsLimited = isLimited,
-            // Quota is measured against logical bytes, matching how the tenant is billed.
+            // Quota is measured against the deduplicated footprint, matching how the tenant is billed.
             StorageUsedFraction = isLimited
-                ? (double)logicalBytes / limits.MaxStorageBytes
+                ? (double)uniqueLogicalBytes / limits.MaxStorageBytes
                 : null,
             IsStorageAllowed = limits.IsStorageAllowed,
             IsIngestAllowed = limits.IsIngestAllowed,

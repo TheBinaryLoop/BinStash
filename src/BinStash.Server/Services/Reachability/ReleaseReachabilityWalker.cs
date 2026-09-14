@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 //
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -75,9 +75,7 @@ public sealed class ReleaseReachabilityWalker
     /// The package is missing, unreadable, undecodable, or in a format whose file references
     /// cannot be resolved against the current file-definition index.
     /// </exception>
-    public async Task<IReadOnlyList<Hash32>> ReadReferencedFileHashesAsync(
-        ReleaseRoot release,
-        CancellationToken ct = default)
+    public async Task<IReadOnlyList<Hash32>> ReadReferencedFileHashesAsync(ReleaseRoot release, CancellationToken ct = default)
     {
         var packageHash = release.DefinitionChecksum.ToHexString();
 

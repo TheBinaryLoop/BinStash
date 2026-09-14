@@ -1,8 +1,11 @@
-// Copyright (C) Lukas Eßmann — AGPLv3 or later
+﻿// Copyright (C) Lukas Eßmann — AGPLv3 or later
 
 using BinStash.Core.Billing;
 using BinStash.Server.Configuration;
+using BinStash.Infrastructure.Data;
+using BinStash.Server.Services.Billing;
 using BinStash.Server.Services.Usage;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace BinStash.Server.HostedServices;
@@ -49,17 +52,32 @@ public sealed class TenantStorageStatsHostedService : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
 
-        var meteringService = scope.ServiceProvider.GetRequiredService<IUsageMeteringService>();
+        var db = scope.ServiceProvider.GetRequiredService<BinStashDbContext>();
+        var calculator = scope.ServiceProvider.GetRequiredService<ITenantFootprintCalculator>();
+        var publisher = scope.ServiceProvider.GetRequiredService<ITenantFootprintPublisher>();
 
-        // One definition of "how much is this tenant storing", shared with the usage page and
-        // with quota enforcement — the meter and the ceiling have to agree on the number.
-        var usage = scope.ServiceProvider.GetRequiredService<TenantUsageService>();
-        var tenantStats = await usage.GetLogicalBytesByTenantAsync(cancellationToken);
+        var tenantIds = await db.Tenants.AsNoTracking().Select(t => t.Id).ToListAsync(cancellationToken);
 
-        foreach (var stat in tenantStats)
+        foreach (var tenantId in tenantIds)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await meteringService.RecordStorageSnapshotAsync(stat.TenantId, stat.LogicalBytes, cancellationToken);
+
+            try
+            {
+                // The walk is the only thing that establishes the figure. TenantUsageService and
+                // TenantQuotaGuard both read the snapshot it publishes, so the meter and the
+                // ceiling stay the same number.
+                var snapshot = await calculator.ComputeAsync(tenantId, cancellationToken);
+                await publisher.PublishAsync(snapshot, cancellationToken);
+            }
+            catch (TenantFootprintUnavailableException ex)
+            {
+                // One tenant with an unreadable release must not stop the rest from being
+                // measured, and must not overwrite their own last good figure with a low one.
+                _logger.LogWarning(
+                    "Billing: keeping the previous storage snapshot for tenant {TenantId}: {Reason}",
+                    tenantId, ex.Message);
+            }
         }
     }
 }

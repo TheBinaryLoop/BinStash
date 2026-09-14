@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -57,6 +57,7 @@ using BinStash.Server.Grpc;
 using BinStash.Server.Health;
 using BinStash.Server.Helpers;
 using BinStash.Server.HostedServices;
+using BinStash.Server.Services.Billing;
 using BinStash.Server.Middlewares;
 using BinStash.Server.Services.ChunkStores;
 using BinStash.Server.Services.ReleaseUpgrade;
@@ -138,6 +139,8 @@ public static class Program
         // Add services to the container.
         builder.Services.AddSingleton<IChunkStoreStorageFactory, ChunkStoreStorageFactory>();
         builder.Services.AddScoped<IChunkStoreService, ChunkStoreService>();
+        builder.Services.AddScoped<ITenantFootprintCalculator, TenantFootprintCalculator>();
+        builder.Services.AddScoped<ITenantFootprintPublisher, TenantFootprintPublisher>();
         builder.Services.AddScoped<ChunkStoreStatsCollector>();
         builder.Services.AddSingleton<ChunkStoreProbeCache>();
         builder.Services.AddSingleton<IEmailTemplateRenderer, EmailTemplateRenderer>(_ => new EmailTemplateRenderer(typeof(EmailTemplateRenderer).Assembly, "BinStash.Infrastructure"));
@@ -317,6 +320,11 @@ public static class Program
         builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
         builder.Services.AddHostedService<TenantStorageStatsHostedService>();
         builder.Services.AddHostedService<TrafficFlushHostedService>();
+
+        // Keeps the quota figure timely between daily sweeps without incremental accounting:
+        // an ingest queues its tenant, and the walk that follows is the same full walk.
+        builder.Services.AddSingleton<TenantFootprintRefreshQueue>();
+        builder.Services.AddHostedService<TenantFootprintRefreshService>();
         
         // Release upgrade pipeline: Channel queue → BackgroundService → ReleaseUpgradeService
         builder.Services.AddSingleton(Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
