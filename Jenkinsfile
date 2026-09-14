@@ -8,6 +8,9 @@ pipeline {
 
   options {
     timestamps()
+    // The build wipes the workspace before it starts, so two runs of this job sharing an agent
+    // would delete each other's sources mid-compile. Queue them instead of running them at once.
+    disableConcurrentBuilds()
   }
 
   environment {
