@@ -207,6 +207,12 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             job.Status = BackgroundJobStatus.Completed;
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.ProgressData = JsonSerializer.Serialize(progress);
+
+            // Same re-attach as PersistProgressAsync, and this is the one that matters most: a
+            // terminal status that fails to persist leaves the job Running for ever. The startup
+            // resume then re-queues it on every restart, and the "is this store busy" guard
+            // blocks every later collection and rebuild against the store.
+            db.BackgroundJobs.Update(job);
             await db.SaveChangesAsync(CancellationToken.None);
             await BroadcastAsync(job, jobData, progress, CancellationToken.None);
 
@@ -233,6 +239,7 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             job.Status = BackgroundJobStatus.Cancelled;
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.ProgressData = JsonSerializer.Serialize(progress);
+            db.BackgroundJobs.Update(job);
             await db.SaveChangesAsync(CancellationToken.None);
             await BroadcastAsync(job, jobData, progress, CancellationToken.None);
             _logger.LogInformation("GC job {JobId} cancelled during phase {Phase}", jobId, progress.Phase);
@@ -913,6 +920,13 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             throw new OperationCanceledException($"GC job {ctx.Job.Id} was cancelled by an operator.");
 
         ctx.Job.ProgressData = JsonSerializer.Serialize(ctx.Progress);
+
+        // Re-attached explicitly, because the sweep and reclaim phases call ChangeTracker.Clear()
+        // to stop the tracker growing with hundreds of thousands of tombstones — and that detaches
+        // this job row along with them. Without this the write silently succeeds and persists
+        // nothing, which is invisible here: the broadcast below still goes out, so progress keeps
+        // moving on screen while the database row stops changing.
+        ctx.Db.BackgroundJobs.Update(ctx.Job);
         await ctx.Db.SaveChangesAsync(CancellationToken.None);
         await BroadcastAsync(ctx.Job, ctx.JobData, ctx.Progress, ct);
     }
