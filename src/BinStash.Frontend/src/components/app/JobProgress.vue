@@ -42,6 +42,7 @@ const gc = computed(() => {
     totalReleases: liveData?.totalReleases ?? stored?.totalReleases ?? 0,
     processedBuckets: liveData?.processedBuckets ?? stored?.processedBuckets ?? 0,
     totalBuckets: liveData?.totalBuckets ?? stored?.totalBuckets ?? 0,
+    reachableObjects: liveData?.reachableObjects ?? stored?.reachableObjects ?? 0,
     quarantinedObjects: liveData?.quarantinedObjects ?? stored?.quarantinedObjects ?? 0,
     quarantinedBytes: liveData?.quarantinedBytes ?? stored?.quarantinedBytes ?? 0,
     reclaimedObjects: liveData?.reclaimedObjects ?? stored?.reclaimedObjects ?? 0,
@@ -109,9 +110,14 @@ const tone = computed(() => {
         >
           {{ status }}
         </Badge>
-        <!-- For collection the phase is the headline: "Sweep" and "Reclaim" mean very
-             different things for whether anything has actually been destroyed yet. -->
-        <span v-if="isGc" class="text-muted-foreground text-xs">{{ gc.phase }}</span>
+        <!-- The phase is the headline while a collection runs, because "Sweep" and "Reclaim"
+             mean very different things for whether anything has been destroyed yet. Once the job
+             reaches a terminal state the phase repeats it verbatim — a finished run rendered
+             "Completed Completed" — so it is shown only when it adds something. On a failure it
+             still does: it says which phase the run died in. -->
+        <span v-if="isGc && gc.phase !== status" class="text-muted-foreground text-xs">
+          {{ gc.phase }}
+        </span>
         <Badge v-if="isGc && gc.dryRun" variant="outline" class="text-xs">dry run</Badge>
         <span v-if="live" class="text-muted-foreground text-xs">live</span>
       </div>
@@ -135,10 +141,29 @@ const tone = computed(() => {
       />
     </div>
 
+    <!-- A dry run counts what it WOULD collect without writing a tombstone, so labelling its
+         figures "Quarantined" claims something that did not happen — the same ambiguity the
+         completion log line had. Dropped and Freed are structurally zero in that mode, so they
+         are omitted rather than shown as three zeros that look like a failed run. -->
+    <dl v-if="isGc && gc.dryRun" class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Unreachable</dt>
+        <dd class="font-mono tabular-nums">{{ formatBytes(gc.quarantinedBytes) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Objects</dt>
+        <dd class="font-mono tabular-nums">{{ formatNumber(gc.quarantinedObjects) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Still reachable</dt>
+        <dd class="font-mono tabular-nums">{{ formatNumber(gc.reachableObjects) }}</dd>
+      </div>
+    </dl>
+
     <!-- Collection's outcome is two numbers, not one, and conflating them would overstate
          what a run achieved: quarantined content is hidden but still on disk, and only the
          pack bytes deleted have actually returned to the volume. -->
-    <dl v-if="isGc" class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+    <dl v-else-if="isGc" class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
       <div class="flex justify-between gap-2">
         <dt class="text-muted-foreground">Quarantined</dt>
         <dd class="font-mono tabular-nums">{{ formatBytes(gc.quarantinedBytes) }}</dd>
@@ -156,6 +181,15 @@ const tone = computed(() => {
         <dd class="font-mono tabular-nums">{{ formatNumber(gc.quarantinedObjects) }}</dd>
       </div>
     </dl>
+
+    <!-- The mark phase's coverage, which is what makes the figures above trustworthy: the run
+         aborts rather than under-marking, so "all releases walked" is the evidence that nothing
+         was called unreachable merely because it could not be resolved. -->
+    <p v-if="isGc && gc.totalReleases > 0" class="text-muted-foreground text-xs">
+      Walked {{ formatNumber(gc.markedReleases) }} of {{ formatNumber(gc.totalReleases) }}
+      release<template v-if="gc.totalReleases !== 1">s</template>
+      <template v-if="gc.dryRun"> · nothing was quarantined or destroyed</template>
+    </p>
 
     <p v-if="isGc && gc.resurrectedObjects > 0" class="text-warning text-xs">
       {{ formatNumber(gc.resurrectedObjects) }} object(s) were taken back by an in-flight upload —
