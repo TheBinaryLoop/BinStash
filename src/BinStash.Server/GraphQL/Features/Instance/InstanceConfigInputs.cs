@@ -57,3 +57,33 @@ public sealed class SetDomainConfigInput
 {
     public string? BaseUrl { get; init; }
 }
+
+/// <summary>
+/// Changes to unattended chunk-store collection. Every field is optional; omitting one leaves it
+/// as configured.
+/// </summary>
+/// <remarks>
+/// The window is a pair: clearing one half means "no window". It is expressed in whole UTC hours
+/// rather than the viewer's local time because the instance may serve admins in several zones,
+/// and a schedule that means different things to two admins is worse than one they both have to
+/// convert.
+/// </remarks>
+public sealed class SetGcConfigInput
+{
+    public bool? Enabled { get; init; }
+    public double? IntervalHours { get; init; }
+    public int? WindowStartHourUtc { get; init; }
+    public int? WindowEndHourUtc { get; init; }
+
+    /// <summary>Pass true to clear the window entirely, since null means "leave unchanged".</summary>
+    public bool? ClearWindow { get; init; }
+
+    public bool? DryRun { get; init; }
+    public bool? SkipReclaim { get; init; }
+
+    /// <summary>
+    /// How long quarantined content stays recoverable, in hours. Applies to every run, scheduled
+    /// or manual, that does not override it explicitly.
+    /// </summary>
+    public double? RetentionHours { get; init; }
+}

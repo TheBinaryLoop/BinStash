@@ -118,6 +118,11 @@ public sealed class MutationType : ObjectType<Mutation>
             .Authorize();
 
         descriptor
+            .Field(x => x.SetGcConfig(null!, null!))
+            .Type<NonNullType<ObjectType<GcConfigGql>>>()
+            .Authorize();
+
+        descriptor
             .Field(x => x.SetStorageClassDefaultMappings(null!, null!, CancellationToken.None))
             .Authorize();
 

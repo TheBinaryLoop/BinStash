@@ -78,6 +78,17 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
     /// <summary>Releases marked between progress persists / subscription broadcasts.</summary>
     private const int BroadcastEveryReleases = 25;
 
+    /// <summary>
+    /// Longest a phase may run without saying anything.
+    ///
+    /// <para>
+    /// Count-based reporting cannot bound this on its own, because the cost of one unit varies by
+    /// orders of magnitude between stores. A wall-clock floor is what makes "the run has not told
+    /// me anything for minutes" impossible regardless of the shape of the data.
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan ProgressReportInterval = TimeSpan.FromSeconds(3);
+
     /// <summary>Tombstones inserted or deleted per database round trip.</summary>
     private const int DbBatchSize = 1000;
 
@@ -168,17 +179,27 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
         {
             var watermarks = await SnapshotWatermarksAsync(ctx, cancellationToken);
 
+            // Each transition is announced as it happens rather than at the next interval. The
+            // previous phase's counters stop meaning anything the moment the phase changes, so a
+            // transition that waits to be reported leaves the operator reading stale numbers —
+            // and reading them as "stuck", because they are the last thing that moved.
             ctx.Progress.Phase = ChunkStoreGcPhases.Mark;
+            await PersistProgressAsync(ctx, cancellationToken);
+
             var releaseHashes = await MarkAsync(ctx, marks, cancellationToken);
             marks.Flush();
 
             ctx.Progress.Phase = ChunkStoreGcPhases.Sweep;
+            await PersistProgressAsync(ctx, cancellationToken);
+
             await SweepAsync(ctx, marks, watermarks, cancellationToken);
             await SweepReleasePackagesAsync(ctx, releaseHashes, cancellationToken);
 
             if (!options.SkipReclaim && !options.DryRun)
             {
                 ctx.Progress.Phase = ChunkStoreGcPhases.Reclaim;
+                await PersistProgressAsync(ctx, cancellationToken);
+
                 await ReclaimAsync(ctx, cancellationToken);
             }
 
@@ -186,14 +207,30 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             job.Status = BackgroundJobStatus.Completed;
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.ProgressData = JsonSerializer.Serialize(progress);
+
+            // Same re-attach as PersistProgressAsync, and this is the one that matters most: a
+            // terminal status that fails to persist leaves the job Running for ever. The startup
+            // resume then re-queues it on every restart, and the "is this store busy" guard
+            // blocks every later collection and rebuild against the store.
+            db.BackgroundJobs.Update(job);
             await db.SaveChangesAsync(CancellationToken.None);
             await BroadcastAsync(job, jobData, progress, CancellationToken.None);
 
+            // The mode leads, because the counts alone do not carry it. A dry run reports the
+            // same "quarantined N objects" as a real one — it counts what it would have done
+            // without writing a tombstone — so a log line without the mode cannot be read at all
+            // without going back to the job's payload to find out whether anything happened.
+            var mode = options.DryRun
+                ? "DRY RUN, nothing changed"
+                : options.SkipReclaim
+                    ? "quarantine only, nothing destroyed"
+                    : "full run";
+
             _logger.LogInformation(
-                "GC job {JobId} completed for chunk store {ChunkStoreId}: quarantined {Quarantined} object(s) ({QuarantinedBytes} B), " +
+                "GC job {JobId} completed for chunk store {ChunkStoreId} [{Mode}]: quarantined {Quarantined} object(s) ({QuarantinedBytes} B), " +
                 "reclaimed {Reclaimed} object(s) ({ReclaimedBytes} B of dead entries), compacted {Packs} pack(s), " +
                 "deleted {Deleted} pack file(s) returning {PackBytesDeleted} B to the filesystem",
-                jobId, store.Id, progress.QuarantinedObjects, progress.QuarantinedBytes,
+                jobId, store.Id, mode, progress.QuarantinedObjects, progress.QuarantinedBytes,
                 progress.ReclaimedObjects, progress.ReclaimedBytes, progress.PacksCompacted,
                 progress.PacksDeleted, progress.PackBytesDeleted);
         }
@@ -202,6 +239,7 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             job.Status = BackgroundJobStatus.Cancelled;
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.ProgressData = JsonSerializer.Serialize(progress);
+            db.BackgroundJobs.Update(job);
             await db.SaveChangesAsync(CancellationToken.None);
             await BroadcastAsync(job, jobData, progress, CancellationToken.None);
             _logger.LogInformation("GC job {JobId} cancelled during phase {Phase}", jobId, progress.Phase);
@@ -393,8 +431,26 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
 
         marks.Flush();
 
+        // Pass 1 reports every 25 releases, so it almost always ends mid-interval — leaving the
+        // counter short of its own total. Settle it before the phase changes, or the last thing
+        // the operator sees of marking is "3,175 / 3,185" frozen for the whole of pass 2.
+        await PersistProgressAsync(ctx, ct);
+
         // ---- Pass 2: file definitions -> chunks ---------------------------
-        foreach (var prefix in marks.MarkedPrefixes(GcObjectCategory.FileDefinition))
+        var fileDefinitionPrefixes = marks.MarkedPrefixes(GcObjectCategory.FileDefinition).ToList();
+
+        ctx.Progress.Phase = ChunkStoreGcPhases.Resolve;
+        ctx.Progress.TotalFileDefinitionGroups = fileDefinitionPrefixes.Count;
+        ctx.Progress.ProcessedFileDefinitionGroups = 0;
+
+        // Announced before the first group rather than after the first interval: the transition
+        // itself is the information, and it is the point at which the previous phase's numbers
+        // stop meaning anything.
+        await PersistProgressAsync(ctx, ct);
+
+        var lastReport = DateTimeOffset.UtcNow;
+
+        foreach (var prefix in fileDefinitionPrefixes)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -430,9 +486,23 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
 
                 foreach (var chunkHash in record.ChunkHashes)
                     marks.Add(GcObjectCategory.Chunk, chunkHash);
+
+                ctx.Progress.ResolvedFileDefinitions++;
             }
 
             marks.Flush();
+            ctx.Progress.ProcessedFileDefinitionGroups++;
+
+            // Throttled by time rather than by a count of groups. Groups vary enormously in how
+            // much work they represent, so any fixed count either floods a cheap store with
+            // round trips or leaves an expensive one silent for minutes — which is the failure
+            // this phase was added to fix.
+            var now = DateTimeOffset.UtcNow;
+            if (now - lastReport >= ProgressReportInterval)
+            {
+                lastReport = now;
+                await PersistProgressAsync(ctx, ct);
+            }
         }
 
         await PersistProgressAsync(ctx, ct);
@@ -497,6 +567,7 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
         CancellationToken ct)
     {
         var processed = 0;
+        var lastReport = DateTimeOffset.UtcNow;
 
         foreach (var (bucket, watermark) in watermarks)
         {
@@ -528,8 +599,15 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
 
             ctx.Progress.ProcessedBuckets = ++processed;
 
-            if (processed % BroadcastEveryBuckets == 0)
+            // Buckets are wildly uneven — file-definition buckets are swept before chunk buckets
+            // and are far cheaper — so a fixed count of buckets is a poor proxy for elapsed time.
+            // The wall-clock floor bounds the silence; the count keeps cheap runs from chattering.
+            var now = DateTimeOffset.UtcNow;
+            if (processed % BroadcastEveryBuckets == 0 || now - lastReport >= ProgressReportInterval)
+            {
+                lastReport = now;
                 await PersistProgressAsync(ctx, ct);
+            }
         }
 
         await PersistProgressAsync(ctx, ct);
@@ -842,6 +920,13 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             throw new OperationCanceledException($"GC job {ctx.Job.Id} was cancelled by an operator.");
 
         ctx.Job.ProgressData = JsonSerializer.Serialize(ctx.Progress);
+
+        // Re-attached explicitly, because the sweep and reclaim phases call ChangeTracker.Clear()
+        // to stop the tracker growing with hundreds of thousands of tombstones — and that detaches
+        // this job row along with them. Without this the write silently succeeds and persists
+        // nothing, which is invisible here: the broadcast below still goes out, so progress keeps
+        // moving on screen while the database row stops changing.
+        ctx.Db.BackgroundJobs.Update(ctx.Job);
         await ctx.Db.SaveChangesAsync(CancellationToken.None);
         await BroadcastAsync(ctx.Job, ctx.JobData, ctx.Progress, ct);
     }
@@ -878,6 +963,22 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
                 TotalBuckets = progress.TotalBuckets,
                 ProcessedBuckets = progress.ProcessedBuckets,
                 FailedBuckets = 0,
+                TotalReleases = progress.TotalReleases,
+                GcPhase = progress.Phase,
+                MarkedReleases = progress.MarkedReleases,
+                ResolvedFileDefinitions = progress.ResolvedFileDefinitions,
+                ProcessedFileDefinitionGroups = progress.ProcessedFileDefinitionGroups,
+                TotalFileDefinitionGroups = progress.TotalFileDefinitionGroups,
+                ReachableObjects = progress.ReachableObjects,
+                QuarantinedObjects = progress.QuarantinedObjects,
+                QuarantinedBytes = progress.QuarantinedBytes,
+                ReclaimedObjects = progress.ReclaimedObjects,
+                ReclaimedBytes = progress.ReclaimedBytes,
+                PacksCompacted = progress.PacksCompacted,
+                PacksDeleted = progress.PacksDeleted,
+                PackBytesDeleted = progress.PackBytesDeleted,
+                ResurrectedObjects = progress.ResurrectedObjects,
+                GcDryRun = jobData?.DryRun ?? false,
                 ChunkStoreId = jobData?.ChunkStoreId,
                 StartedAt = job.StartedAt,
                 CompletedAt = job.CompletedAt

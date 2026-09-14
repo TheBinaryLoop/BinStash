@@ -126,5 +126,6 @@ public static class AuditActions
     public const string InstanceEmailConfigChanged = "instance.email_config.changed";
     public const string InstanceTenancyConfigChanged = "instance.tenancy_config.changed";
     public const string InstanceDomainConfigChanged = "instance.domain_config.changed";
+    public const string InstanceGcConfigChanged = "instance.gc_config.changed";
     public const string InstanceStorageDefaultsChanged = "instance.storage_defaults.changed";
 }

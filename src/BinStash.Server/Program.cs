@@ -290,6 +290,11 @@ public static class Program
         builder.Services.AddScoped<IGcQuarantineService, GcQuarantineService>();
         builder.Services.AddHostedService<ChunkStoreGcBackgroundService>();
 
+        // Queues unattended runs onto that same channel. Registered unconditionally — it reads
+        // its own enablement each tick, so turning the schedule on from instance settings takes
+        // effect without a restart.
+        builder.Services.AddHostedService<ChunkStoreGcSchedulerService>();
+
         builder.Services.AddGraphQLServer()
             // Cost limits are enforced: the schema exposes filtering/sorting/paging to every
             // authenticated tenant, so an unbounded query is a noisy-neighbour/DoS vector on a
@@ -311,6 +316,9 @@ public static class Program
             .AddMutationType<MutationType>()
             .AddSubscriptionType<SubscriptionType>()
             .AddInMemorySubscriptions()
+            // Repository totals are asked for once per row on the repositories page; batching the
+            // aggregate keeps that one query rather than one per repository.
+            .AddDataLoader<RepositoryMetricsDataLoader>()
             .BindRuntimeType<ulong, UnsignedLongType>()
             .BindRuntimeType<ulong?, UnsignedLongType>()
             .AddFiltering()

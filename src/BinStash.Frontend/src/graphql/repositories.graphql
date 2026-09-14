@@ -7,12 +7,21 @@ fragment RepositorySummary on RepositoryGql {
   chunker { type minChunkSize avgChunkSize maxChunkSize }
 }
 
+fragment RepositoryTotals on RepositoryGql {
+  metrics {
+    releaseCount
+    totalLogicalBytes
+    lastReleaseAt
+  }
+}
+
 query Repositories($first: Int, $after: String, $where: RepositoryGqlFilterInput, $order: [RepositoryGqlSortInput!]) {
   repositories(first: $first, after: $after, where: $where, order: $order) {
     totalCount
     pageInfo { hasNextPage endCursor }
     nodes {
       ...RepositorySummary
+      ...RepositoryTotals
       releases(first: 1, order: [{ createdAt: DESC }]) {
         totalCount
         nodes { id version createdAt }
@@ -22,7 +31,10 @@ query Repositories($first: Int, $after: String, $where: RepositoryGqlFilterInput
 }
 
 query Repository($id: UUID!) {
-  repository(id: $id) { ...RepositorySummary }
+  repository(id: $id) {
+    ...RepositorySummary
+    ...RepositoryTotals
+  }
 }
 
 query RepositoryReleases($id: UUID!, $first: Int, $after: String, $order: [ReleaseGqlSortInput!]) {

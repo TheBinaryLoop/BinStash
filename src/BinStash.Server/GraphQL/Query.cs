@@ -87,6 +87,9 @@ public class Query
     public Task<DomainConfigGql> GetDomainConfig([Service] InstanceQueryService service)
         => service.GetDomainConfigAsync();
 
+    public Task<GcConfigGql> GetGcConfig([Service] InstanceQueryService service)
+        => service.GetGcConfigAsync();
+
     public Task<List<StorageClassDetailsGql>> GetStorageClasses([Service] StorageClassQueryService service, CancellationToken cancellationToken)
         => service.GetStorageClassesAsync(cancellationToken);
 
@@ -107,6 +110,10 @@ public class Query
 
     public Task<ChunkStoreStatsGql?> GetChunkStoreStats(Guid chunkStoreId, [Service] ChunkStoreQueryService service, CancellationToken cancellationToken)
         => service.GetChunkStoreStatsAsync(chunkStoreId, cancellationToken);
+
+    public Task<List<ChunkStoreStatsGql>> GetChunkStoreStatsHistory(
+        Guid chunkStoreId, [Service] ChunkStoreQueryService service, CancellationToken cancellationToken, int days = 30)
+        => service.GetChunkStoreStatsHistoryAsync(chunkStoreId, days, cancellationToken);
 
     public Task<List<ChunkStoreTypeInfoGql>> GetEnabledChunkStoreTypes([Service] ChunkStoreQueryService service)
         => service.GetEnabledChunkStoreTypesAsync();

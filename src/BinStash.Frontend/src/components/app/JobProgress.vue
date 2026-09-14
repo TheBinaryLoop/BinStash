@@ -6,6 +6,7 @@ import { useSubscription } from '@/composables/useGraphql'
 import { BackgroundJobProgressDocument } from '@/graphql/generated'
 import type { BackgroundJobSummaryFragment } from '@/graphql/generated'
 import { formatBytes, formatNumber } from '@/lib/format'
+import { gcPhaseLabel } from '@/lib/jobs'
 
 const props = defineProps<{ job: BackgroundJobSummaryFragment }>()
 
@@ -25,12 +26,63 @@ const progress = computed(() => result.value?.backgroundJobProgress)
 
 const status = computed(() => progress.value?.status ?? props.job.status)
 
+const isGc = computed(() => props.job.jobType === 'ChunkStoreGc')
+
+/**
+ * Collection reports a phase rather than one counter, because its two long phases count
+ * different things: mark walks releases, sweep and reclaim walk buckets. Showing a single
+ * "x / y" across both would jump backwards at the phase change.
+ */
+const gc = computed(() => {
+  const liveData = progress.value
+  const stored = props.job.gcProgress
+
+  return {
+    phase: liveData?.gcPhase ?? stored?.phase ?? 'Pending',
+    markedReleases: liveData?.markedReleases ?? stored?.markedReleases ?? 0,
+    totalReleases: liveData?.totalReleases ?? stored?.totalReleases ?? 0,
+    processedBuckets: liveData?.processedBuckets ?? stored?.processedBuckets ?? 0,
+    totalBuckets: liveData?.totalBuckets ?? stored?.totalBuckets ?? 0,
+    reachableObjects: liveData?.reachableObjects ?? stored?.reachableObjects ?? 0,
+    resolvedFileDefinitions: liveData?.resolvedFileDefinitions ?? stored?.resolvedFileDefinitions ?? 0,
+    processedFileDefinitionGroups:
+      liveData?.processedFileDefinitionGroups ?? stored?.processedFileDefinitionGroups ?? 0,
+    totalFileDefinitionGroups:
+      liveData?.totalFileDefinitionGroups ?? stored?.totalFileDefinitionGroups ?? 0,
+    quarantinedObjects: liveData?.quarantinedObjects ?? stored?.quarantinedObjects ?? 0,
+    quarantinedBytes: liveData?.quarantinedBytes ?? stored?.quarantinedBytes ?? 0,
+    reclaimedObjects: liveData?.reclaimedObjects ?? stored?.reclaimedObjects ?? 0,
+    reclaimedBytes: liveData?.reclaimedBytes ?? stored?.reclaimedBytes ?? 0,
+    packBytesDeleted: liveData?.packBytesDeleted ?? stored?.packBytesDeleted ?? 0,
+    packsCompacted: liveData?.packsCompacted ?? stored?.packsCompacted ?? 0,
+    resurrectedObjects: liveData?.resurrectedObjects ?? stored?.resurrectedObjects ?? 0,
+    dryRun: liveData?.gcDryRun ?? stored?.dryRun ?? false,
+  }
+})
+
 /**
  * Rebuilds count buckets, upgrades count releases. Prefer the live payload and fall
  * back to whatever the job record carried.
  */
 const counters = computed(() => {
   const liveData = progress.value
+
+  if (isGc.value) {
+    // Each phase counts a different thing, so the denominator follows the phase rather than the
+    // job. Carrying one counter across all of them would make the bar jump backwards twice.
+    if (gc.value.phase === 'Mark') {
+      return { unit: 'releases', processed: gc.value.markedReleases, total: gc.value.totalReleases, failed: 0 }
+    }
+    if (gc.value.phase === 'Resolve') {
+      return {
+        unit: 'file groups',
+        processed: gc.value.processedFileDefinitionGroups,
+        total: gc.value.totalFileDefinitionGroups,
+        failed: 0,
+      }
+    }
+    return { unit: 'buckets', processed: gc.value.processedBuckets, total: gc.value.totalBuckets, failed: 0 }
+  }
 
   const buckets = {
     processed: liveData?.processedBuckets ?? props.job.rebuildProgress?.processedBuckets ?? 0,
@@ -73,6 +125,15 @@ const tone = computed(() => {
         >
           {{ status }}
         </Badge>
+        <!-- The phase is the headline while a collection runs, because "Sweep" and "Reclaim"
+             mean very different things for whether anything has been destroyed yet. Once the job
+             reaches a terminal state the phase repeats it verbatim — a finished run rendered
+             "Completed Completed" — so it is shown only when it adds something. On a failure it
+             still does: it says which phase the run died in. -->
+        <span v-if="isGc && gc.phase !== status" class="text-muted-foreground text-xs">
+          {{ gcPhaseLabel(gc.phase) }}
+        </span>
+        <Badge v-if="isGc && gc.dryRun" variant="outline" class="text-xs">dry run</Badge>
         <span v-if="live" class="text-muted-foreground text-xs">live</span>
       </div>
       <span class="text-muted-foreground font-mono text-xs tabular-nums">
@@ -95,7 +156,69 @@ const tone = computed(() => {
       />
     </div>
 
-    <div class="text-muted-foreground flex gap-4 text-xs">
+    <!-- A dry run counts what it WOULD collect without writing a tombstone, so labelling its
+         figures "Quarantined" claims something that did not happen — the same ambiguity the
+         completion log line had. Dropped and Freed are structurally zero in that mode, so they
+         are omitted rather than shown as three zeros that look like a failed run. -->
+    <dl v-if="isGc && gc.dryRun" class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Unreachable</dt>
+        <dd class="font-mono tabular-nums">{{ formatBytes(gc.quarantinedBytes) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Objects</dt>
+        <dd class="font-mono tabular-nums">{{ formatNumber(gc.quarantinedObjects) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Still reachable</dt>
+        <dd class="font-mono tabular-nums">{{ formatNumber(gc.reachableObjects) }}</dd>
+      </div>
+    </dl>
+
+    <!-- Collection's outcome is two numbers, not one, and conflating them would overstate
+         what a run achieved: quarantined content is hidden but still on disk, and only the
+         pack bytes deleted have actually returned to the volume. -->
+    <dl v-else-if="isGc" class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Quarantined</dt>
+        <dd class="font-mono tabular-nums">{{ formatBytes(gc.quarantinedBytes) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Dropped</dt>
+        <dd class="font-mono tabular-nums">{{ formatBytes(gc.reclaimedBytes) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Freed on disk</dt>
+        <dd class="font-mono tabular-nums">{{ formatBytes(gc.packBytesDeleted) }}</dd>
+      </div>
+      <div class="flex justify-between gap-2">
+        <dt class="text-muted-foreground">Objects</dt>
+        <dd class="font-mono tabular-nums">{{ formatNumber(gc.quarantinedObjects) }}</dd>
+      </div>
+    </dl>
+
+    <!-- The mark phase's coverage, which is what makes the figures above trustworthy: the run
+         aborts rather than under-marking, so "all releases walked" is the evidence that nothing
+         was called unreachable merely because it could not be resolved. -->
+    <p v-if="isGc && gc.phase === 'Resolve'" class="text-muted-foreground text-xs">
+      Expanding {{ formatNumber(gc.resolvedFileDefinitions) }} file definition<template
+        v-if="gc.resolvedFileDefinitions !== 1"
+      >s</template>
+      to the chunks they reach — the longest part of a run on a large store.
+    </p>
+
+    <p v-else-if="isGc && gc.totalReleases > 0" class="text-muted-foreground text-xs">
+      Walked {{ formatNumber(gc.markedReleases) }} of {{ formatNumber(gc.totalReleases) }}
+      release<template v-if="gc.totalReleases !== 1">s</template>
+      <template v-if="gc.dryRun"> · nothing was quarantined or destroyed</template>
+    </p>
+
+    <p v-if="isGc && gc.resurrectedObjects > 0" class="text-warning text-xs">
+      {{ formatNumber(gc.resurrectedObjects) }} object(s) were taken back by an in-flight upload —
+      if this keeps happening, the quarantine retention is too short for how long uploads run here.
+    </p>
+
+    <div v-if="!isGc" class="text-muted-foreground flex gap-4 text-xs">
       <span v-if="counters.failed > 0" class="text-destructive">
         {{ formatNumber(counters.failed) }} failed
       </span>

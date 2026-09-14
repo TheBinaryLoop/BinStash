@@ -34,7 +34,7 @@ import {
   TenantStorageClassesDocument,
 } from '@/graphql/generated'
 import { errorMessage } from '@/lib/errors'
-import { formatDateOnly, formatRelative } from '@/lib/format'
+import { formatBytes, formatDateOnly, formatRelative } from '@/lib/format'
 import { useTenantStore } from '@/stores/tenant'
 
 const tenants = useTenantStore()
@@ -184,19 +184,29 @@ async function submitCreate() {
                 {{ repo.description || 'No description.' }}
               </p>
 
-              <div class="border-hairline mt-auto flex items-baseline justify-between border-t pt-3">
-                <span class="text-muted-foreground text-xs">
-                  {{ repo.releases?.totalCount ?? 0 }} release{{
-                    (repo.releases?.totalCount ?? 0) === 1 ? '' : 's'
-                  }}
-                </span>
-                <span class="text-muted-foreground font-mono text-xs">
+              <div class="border-hairline mt-auto space-y-1.5 border-t pt-3">
+                <div class="flex items-baseline justify-between gap-2">
+                  <span class="text-muted-foreground text-xs">
+                    {{ repo.releases?.totalCount ?? 0 }} release{{
+                      (repo.releases?.totalCount ?? 0) === 1 ? '' : 's'
+                    }}
+                  </span>
+                  <!-- Logical size: the quantity this workspace is billed on, and the one that
+                       makes "which repository is using the quota?" answerable from the list. -->
+                  <span class="font-mono text-xs tabular-nums">
+                    {{ formatBytes(repo.metrics?.totalLogicalBytes ?? 0) }}
+                  </span>
+                </div>
+                <div class="text-muted-foreground flex items-baseline justify-between gap-2 font-mono text-xs">
                   <template v-if="repo.releases?.nodes?.[0]">
-                    {{ repo.releases.nodes[0].version }} ·
-                    {{ formatRelative(repo.releases.nodes[0].createdAt) }}
+                    <span class="truncate">{{ repo.releases.nodes[0].version }}</span>
+                    <span class="shrink-0">{{ formatRelative(repo.releases.nodes[0].createdAt) }}</span>
                   </template>
-                  <template v-else>{{ formatDateOnly(repo.createdAt) }}</template>
-                </span>
+                  <template v-else>
+                    <span>No releases</span>
+                    <span class="shrink-0">{{ formatDateOnly(repo.createdAt) }}</span>
+                  </template>
+                </div>
               </div>
             </RouterLink>
           </li>

@@ -53,6 +53,12 @@ public sealed class GcMarkSet : IDisposable
     private readonly Lock _gate = new();
     private int _bufferedTotal;
 
+    /// <summary>
+    /// Set once the spill files are deleted. From that point the set is inert: there is nothing
+    /// left to write to, and the run it belonged to has finished with it either way.
+    /// </summary>
+    private bool _discarded;
+
     public GcMarkSet(string directory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
@@ -111,6 +117,12 @@ public sealed class GcMarkSet : IDisposable
 
         lock (_gate)
         {
+            // Once the spill directory is gone there is nowhere to flush to, and nothing worth
+            // flushing: the run that owned these marks is over. Writing would recreate the
+            // directory the run just deleted, and fail anyway if the parent is gone with it.
+            if (_discarded)
+                return;
+
             pending = _buffers.Where(static kvp => kvp.Value.Count > 0).ToList();
             foreach (var kvp in pending)
                 _buffers[kvp.Key] = new List<Hash32>(BucketFlushThreshold);
@@ -171,6 +183,9 @@ public sealed class GcMarkSet : IDisposable
     /// <summary>Removes the run's spill files. Safe to call more than once.</summary>
     public void DeleteSpillFiles()
     {
+        lock (_gate)
+            _discarded = true;
+
         try
         {
             if (System.IO.Directory.Exists(_directory))
@@ -183,7 +198,22 @@ public sealed class GcMarkSet : IDisposable
         }
     }
 
-    public void Dispose() => Flush();
+    public void Dispose()
+    {
+        // A dispose that throws replaces whatever ended the run with an I/O error. That is how a
+        // clean cancellation came to be logged as an unhandled fault: the run deletes its spill
+        // files in a finally block, and the using-scope then disposed the set afterwards and
+        // tried to flush into the directory that had just been removed.
+        try
+        {
+            Flush();
+        }
+        catch
+        {
+            // Nothing downstream can use these marks: the only caller disposes at the end of a
+            // run, by which point the set has either been consumed or abandoned.
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Helpers

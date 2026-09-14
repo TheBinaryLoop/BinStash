@@ -123,6 +123,22 @@ public sealed class ChunkStoreGcProgressData
     public int MarkedReleases { get; set; }
     public int TotalReleases { get; set; }
 
+    /// <summary>
+    /// File definitions read and decoded while expanding releases to the chunks they reach.
+    ///
+    /// <para>
+    /// Tracked separately because this is the long half of marking and it is not proportional to
+    /// the release count: one release names many files, and the same file is named by many
+    /// releases. Without its own counter the release figure stops moving while the run is still
+    /// doing most of its work.
+    /// </para>
+    /// </summary>
+    public long ResolvedFileDefinitions { get; set; }
+
+    /// <summary>Prefix groups of file definitions resolved, and how many there are in total.</summary>
+    public int ProcessedFileDefinitionGroups { get; set; }
+    public int TotalFileDefinitionGroups { get; set; }
+
     /// <summary>Distinct objects found reachable from the roots.</summary>
     public long ReachableObjects { get; set; }
 
@@ -176,8 +192,19 @@ public static class ChunkStoreGcPhases
     /// <summary>Capturing per-bucket append watermarks.</summary>
     public const string Snapshot = "Snapshot";
 
-    /// <summary>Walking releases to their chunks.</summary>
+    /// <summary>Walking releases to the file definitions they name.</summary>
     public const string Mark = "Mark";
+
+    /// <summary>
+    /// Expanding those file definitions to the chunks they reach.
+    ///
+    /// <para>
+    /// Its own phase rather than part of <see cref="Mark"/>: it is where a run spends most of its
+    /// marking time, and reporting it as "Mark" leaves the release counter frozen at its final
+    /// value for minutes while the run is demonstrably still working.
+    /// </para>
+    /// </summary>
+    public const string Resolve = "Resolve";
 
     /// <summary>Quarantining everything the mark phase did not reach.</summary>
     public const string Sweep = "Sweep";

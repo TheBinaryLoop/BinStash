@@ -1,5 +1,15 @@
 query InstanceStats {
-  instanceStats { userCount tenantCount repositoryCount }
+  instanceStats {
+    userCount
+    tenantCount
+    repositoryCount
+    releaseCount
+    chunkStoreCount
+    totalLogicalBytes
+    totalPhysicalBytes
+    minVolumeFreeBytes
+    minVolumeFreeChunkStoreName
+  }
 }
 
 query InstanceTenants($first: Int, $after: String, $where: TenantGqlFilterInput) {
@@ -33,6 +43,25 @@ query TenancyConfig {
 
 query DomainConfig {
   domainConfig { baseUrl }
+}
+
+fragment GcConfigDetail on GcConfigGql {
+  enabled
+  intervalHours
+  windowStartHourUtc
+  windowEndHourUtc
+  dryRun
+  skipReclaim
+  retentionHours
+  nextEligibleAt
+}
+
+query GcConfig {
+  gcConfig { ...GcConfigDetail }
+}
+
+mutation SetGcConfig($input: SetGcConfigInput!) {
+  setGcConfig(input: $input) { ...GcConfigDetail }
 }
 
 mutation SetEmailConfig($input: SetEmailConfigInput!) {

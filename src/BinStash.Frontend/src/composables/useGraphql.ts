@@ -20,6 +20,16 @@ interface UseQueryOptions {
   enabled?: MaybeRefOrGetter<boolean>
   fetchPolicy?: WatchQueryFetchPolicy
   errorPolicy?: ErrorPolicy
+  /**
+   * Re-run the query every N milliseconds; 0 or undefined disables it.
+   *
+   * Reactive, so a view can poll only while it has a reason to — the intended use is
+   * "something on screen is still changing", not a standing refresh. Subscriptions cover
+   * live progress; polling exists for the state a subscription cannot report, such as a
+   * job that finished before the page was opened, or one whose stream was cut by a server
+   * restart and will never emit again.
+   */
+  pollInterval?: MaybeRefOrGetter<number>
 }
 
 export interface UseQueryReturn<TData, TVars> {
@@ -43,9 +53,19 @@ export function useQuery<TData, TVars extends OperationVariables>(
   let subscription: { unsubscribe(): void } | null = null
 
   function stop() {
+    // Polling lives on the observable, so it has to be wound down before the handle is
+    // dropped — otherwise the timer outlives the component that asked for it.
+    observable?.stopPolling()
     subscription?.unsubscribe()
     subscription = null
     observable = null
+  }
+
+  function applyPolling() {
+    if (!observable) return
+    const ms = options.pollInterval === undefined ? 0 : toValue(options.pollInterval)
+    if (ms > 0) observable.startPolling(ms)
+    else observable.stopPolling()
   }
 
   function start(vars: TVars) {
@@ -72,7 +92,16 @@ export function useQuery<TData, TVars extends OperationVariables>(
         loading.value = false
       },
     })
+
+    applyPolling()
   }
+
+  // Started and stopped on the live observable rather than folded into the restart watcher
+  // below: toggling the cadence must not tear the query down and refetch it.
+  watch(
+    () => (options.pollInterval === undefined ? 0 : toValue(options.pollInterval)),
+    () => applyPolling(),
+  )
 
   watch(
     () => ({

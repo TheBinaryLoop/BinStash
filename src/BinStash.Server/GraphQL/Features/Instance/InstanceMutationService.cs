@@ -166,6 +166,84 @@ public sealed class InstanceMutationService
         return await _queryService.GetDomainConfigAsync();
     }
 
+    /// <summary>
+    /// Changes the unattended collection schedule.
+    /// </summary>
+    /// <remarks>
+    /// Values are written as configuration keys rather than to a dedicated table so the schedule
+    /// stays overridable by appsettings and environment variables the same way every other
+    /// instance setting is — an operator can pin it in a container image, and the UI edits the
+    /// database layer that sits on top.
+    /// </remarks>
+    public async Task<GcConfigGql> SetGcConfigAsync(SetGcConfigInput input)
+    {
+        await EnsureAdminAsync();
+
+        var updates = new Dictionary<string, string?>();
+        var errors = new List<string>();
+
+        if (input.Enabled is { } enabled)
+            updates["ChunkStoreGc:Schedule:Enabled"] = enabled ? "true" : "false";
+
+        if (input.IntervalHours is { } interval)
+        {
+            // An interval at or below zero would make every tick find every store due, turning
+            // the scheduler into a loop that never lets a run finish before queuing the next.
+            if (interval <= 0)
+                errors.Add("Collection interval must be greater than zero hours.");
+            else if (interval > 24 * 365)
+                errors.Add("Collection interval must be at most a year.");
+            else
+                updates["ChunkStoreGc:Schedule:Interval"] = TimeSpan.FromHours(interval).ToString("c", CultureInfo.InvariantCulture);
+        }
+
+        if (input.ClearWindow == true)
+        {
+            updates["ChunkStoreGc:Schedule:WindowStartHourUtc"] = null;
+            updates["ChunkStoreGc:Schedule:WindowEndHourUtc"] = null;
+        }
+        else
+        {
+            AddHour(updates, errors, "ChunkStoreGc:Schedule:WindowStartHourUtc", input.WindowStartHourUtc);
+            AddHour(updates, errors, "ChunkStoreGc:Schedule:WindowEndHourUtc", input.WindowEndHourUtc);
+        }
+
+        if (input.DryRun is { } dryRun)
+            updates["ChunkStoreGc:Schedule:DryRun"] = dryRun ? "true" : "false";
+
+        if (input.SkipReclaim is { } skipReclaim)
+            updates["ChunkStoreGc:Schedule:SkipReclaim"] = skipReclaim ? "true" : "false";
+
+        if (input.RetentionHours is { } retention)
+        {
+            // Retention is the whole safety margin: it is how long an ingest that was told "you
+            // already have this" has to finalise before the object it relied on can be destroyed.
+            // Zero is a legitimate operator choice for draining a store, but it is not one to
+            // arrive at by leaving a field blank, so it is rejected here rather than defaulted.
+            if (retention <= 0)
+                errors.Add("Quarantine retention must be greater than zero hours. Collect with an explicit per-run override to reclaim immediately.");
+            else if (retention > 24 * 365)
+                errors.Add("Quarantine retention must be at most a year.");
+            else
+                updates["ChunkStoreGc:RetentionWindow"] = TimeSpan.FromHours(retention).ToString("c", CultureInfo.InvariantCulture);
+        }
+
+        Apply(updates, errors);
+        await AuditConfigChangeAsync(AuditActions.InstanceGcConfigChanged, updates);
+        return await _queryService.GetGcConfigAsync();
+    }
+
+    private static void AddHour(Dictionary<string, string?> updates, List<string> errors, string key, int? value)
+    {
+        if (value is null)
+            return;
+
+        if (value is < 0 or > 23)
+            errors.Add($"{key.Split(':')[^1]} must be a whole hour between 0 and 23.");
+        else
+            updates[key] = value.Value.ToString(CultureInfo.InvariantCulture);
+    }
+
     private void Apply(Dictionary<string, string?> updates, List<string> errors)
     {
         if (errors.Count > 0)

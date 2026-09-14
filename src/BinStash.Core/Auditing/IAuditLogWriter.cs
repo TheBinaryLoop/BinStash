@@ -48,5 +48,24 @@ public sealed record AuditEntryDraft
     /// <summary>When true the entry is recorded without a tenant, even if one is resolved.</summary>
     public bool InstanceScoped { get; init; }
 
+    /// <summary>
+    /// Records the entry as performed by the instance itself rather than by a caller.
+    ///
+    /// <para>
+    /// Needed because background work has no request to derive an actor from, and the default for
+    /// "no request" is <see cref="AuditActorType.Anonymous"/> — which in an audit trail reads as
+    /// an unauthenticated outsider rather than as the scheduler. The distinction matters most for
+    /// exactly the actions background work performs, since those are the ones nobody remembers
+    /// triggering.
+    /// </para>
+    /// </summary>
+    public bool SystemActor { get; init; }
+
+    /// <summary>
+    /// What to show as the actor when <see cref="SystemActor"/> is set — name the mechanism, not
+    /// the process (<c>"garbage-collection schedule"</c>, not <c>"BinStash.Server"</c>).
+    /// </summary>
+    public string? SystemActorDisplay { get; init; }
+
     public IReadOnlyDictionary<string, object?>? Metadata { get; init; }
 }

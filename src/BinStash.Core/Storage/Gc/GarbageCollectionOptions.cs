@@ -27,7 +27,17 @@ namespace BinStash.Core.Storage.Gc;
 /// </summary>
 public sealed class GarbageCollectionOptions
 {
-    /// <summary>Configuration section these options bind from.</summary>
+    /// <summary>
+    /// Configuration section these options bind from.
+    /// </summary>
+    /// <remarks>
+    /// Every default below is expressed here in code and deliberately <em>not</em> mirrored into
+    /// <c>appsettings.json</c>. The database-backed configuration provider that instance settings
+    /// write to is registered at the lowest priority, so a key present in appsettings wins over
+    /// the database — a default shipped there would silently overwrite the operator's saved value
+    /// on the next restart. Keeping the defaults in code leaves appsettings and environment
+    /// variables free to do what they are for: pinning a value so the UI cannot change it.
+    /// </remarks>
     public const string SectionName = "ChunkStoreGc";
 
     /// <summary>
@@ -91,6 +101,13 @@ public sealed class GarbageCollectionOptions
     public bool SkipReclaim { get; set; }
 
     /// <summary>
+    /// Governs the unattended runs the scheduler queues. Disabled by default: collection is
+    /// destructive at the end of its retention window, so an instance must opt in to it rather
+    /// than inherit it from an upgrade.
+    /// </summary>
+    public GcScheduleOptions Schedule { get; set; } = new();
+
+    /// <summary>
     /// Throws if any value would make the run unsafe or degenerate.
     /// </summary>
     public void Validate()
@@ -109,5 +126,116 @@ public sealed class GarbageCollectionOptions
 
         if (BucketConcurrency < 1)
             throw new ArgumentOutOfRangeException(nameof(BucketConcurrency), "Bucket concurrency must be at least 1.");
+
+        Schedule.Validate();
+    }
+}
+
+/// <summary>
+/// When, and how often, the instance collects its chunk stores without being asked.
+///
+/// <para>
+/// A scheduled run is the same run an operator triggers by hand — same phases, same safety
+/// gates. The only thing this adds is <em>when</em>, which matters because collection is
+/// sustained background I/O against the same disks that serve ingest and download.
+/// </para>
+/// </summary>
+public sealed class GcScheduleOptions
+{
+    /// <summary>
+    /// Whether the scheduler queues runs at all.
+    ///
+    /// <para>
+    /// Off by default, and deliberately so. Every other knob here only moves work around in
+    /// time; this one decides whether an instance starts destroying content it was not
+    /// destroying yesterday. An upgrade must not make that decision on an operator's behalf.
+    /// </para>
+    /// </summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// Minimum age of the last run before a store is collected again.
+    ///
+    /// <para>
+    /// Measured from the previous run's <em>start</em>, not its completion, so a store whose
+    /// collection takes hours still gets a predictable cadence rather than drifting later with
+    /// every run.
+    /// </para>
+    /// </summary>
+    public TimeSpan Interval { get; set; } = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// First hour (UTC, 0–23) of the daily window in which runs may <em>start</em>. Null, or a
+    /// null <see cref="WindowEndHourUtc"/>, means any hour is acceptable.
+    ///
+    /// <para>
+    /// Only the start is gated. A run that begins inside the window and outlives it is left
+    /// alone: aborting collection part-way through would throw away the mark phase's work and
+    /// leave quarantine decisions half-made, which costs more than the I/O it would save.
+    /// </para>
+    /// </summary>
+    public int? WindowStartHourUtc { get; set; }
+
+    /// <summary>
+    /// Hour (UTC, 0–23) the window closes, exclusive. May be smaller than
+    /// <see cref="WindowStartHourUtc"/>, which expresses a window that crosses midnight —
+    /// 22 to 4 is the usual overnight case.
+    /// </summary>
+    public int? WindowEndHourUtc { get; set; }
+
+    /// <summary>
+    /// Queue scheduled runs as dry runs: they report what they would collect and change nothing.
+    /// The honest way to watch a real workload for a week before letting collection bite.
+    /// </summary>
+    public bool DryRun { get; set; }
+
+    /// <summary>
+    /// Queue scheduled runs that quarantine but never reclaim. Unreachable content stops being
+    /// deduplicated against and stops growing, while every byte stays recoverable until an
+    /// operator runs a reclaiming pass by hand.
+    /// </summary>
+    public bool SkipReclaim { get; set; }
+
+    /// <summary>
+    /// True when <paramref name="utcNow"/> falls inside the configured window, including the
+    /// wrap-around case where the window crosses midnight. An incompletely configured window is
+    /// treated as no window at all rather than as a window that never opens — failing to run is
+    /// the less obvious failure, so it must not be the one a half-filled form produces.
+    /// </summary>
+    public bool IsWithinWindow(DateTimeOffset utcNow)
+    {
+        if (WindowStartHourUtc is not { } start || WindowEndHourUtc is not { } end || start == end)
+            return true;
+
+        var hour = utcNow.UtcDateTime.Hour;
+
+        return start < end
+            ? hour >= start && hour < end
+            : hour >= start || hour < end;
+    }
+
+    /// <summary>
+    /// True when a store whose last run started at <paramref name="lastRunStartedAt"/> is due
+    /// again. A store that has never been collected is due as soon as the window allows.
+    /// </summary>
+    public bool IsDue(DateTimeOffset utcNow, DateTimeOffset? lastRunStartedAt)
+    {
+        if (!Enabled || !IsWithinWindow(utcNow))
+            return false;
+
+        return lastRunStartedAt is not { } last || utcNow - last >= Interval;
+    }
+
+    /// <summary>Throws if any value would make the schedule unsafe or degenerate.</summary>
+    public void Validate()
+    {
+        if (Enabled && Interval <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(Interval), "Scheduled collection interval must be positive.");
+
+        if (WindowStartHourUtc is < 0 or > 23)
+            throw new ArgumentOutOfRangeException(nameof(WindowStartHourUtc), "Window start hour must be between 0 and 23.");
+
+        if (WindowEndHourUtc is < 0 or > 23)
+            throw new ArgumentOutOfRangeException(nameof(WindowEndHourUtc), "Window end hour must be between 0 and 23.");
     }
 }

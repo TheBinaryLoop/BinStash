@@ -22,6 +22,7 @@ using BinStash.Infrastructure.Data;
 using BinStash.Server.Configuration;
 using BinStash.Server.GraphQL.Auth;
 using BinStash.Server.HostedServices;
+using BinStash.Server.Services.ChunkStores;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -190,7 +191,9 @@ public sealed class ChunkStoreMutationService
             {
                 BackendType = "LocalFolder",
                 LocalPath = (backendSettings as LocalFolderBackendSettings)?.Path
-            }
+            },
+            ProbeMode = chunkStore.ProbeMode.ToString(),
+            MinFreeBytes = chunkStore.MinFreeBytes
         };
     }
 
@@ -203,10 +206,10 @@ public sealed class ChunkStoreMutationService
         if (store is null)
             throw new GraphQLException($"Chunk store '{chunkStoreId}' not found.");
 
-        var hasActiveJob = _db.BackgroundJobs.Where(j =>
-            j.JobType == BackgroundJobTypes.ChunkStoreRebuild
-            && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running)
-            && j.JobData != null).AsEnumerable().Any(j => j.JobData!.Contains(chunkStoreId.ToString()));
+        var hasActiveJob = await _db.BackgroundJobs
+            .AsNoTracking()
+            .ForChunkStore(BackgroundJobTypes.ChunkStoreRebuild, chunkStoreId)
+            .AnyAsync(j => j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running, ct);
 
         if (hasActiveJob)
             throw new GraphQLException("A rebuild job is already running or pending for this chunk store.");
@@ -252,10 +255,10 @@ public sealed class ChunkStoreMutationService
         if (store.Type != BinStash.Core.Entities.ChunkStoreType.Local)
             throw new GraphQLException("Release upgrade is currently only supported for local chunk stores.");
 
-        var hasActiveJob = _db.BackgroundJobs.Where(j =>
-            j.JobType == BackgroundJobTypes.ReleaseUpgrade
-            && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running)
-            && j.JobData != null).AsEnumerable().Any(j => j.JobData!.Contains(chunkStoreId.ToString()));
+        var hasActiveJob = await _db.BackgroundJobs
+            .AsNoTracking()
+            .ForChunkStore(BackgroundJobTypes.ReleaseUpgrade, chunkStoreId)
+            .AnyAsync(j => j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running, ct);
 
         if (hasActiveJob)
             throw new GraphQLException("An upgrade job is already running or pending for this chunk store.");
@@ -330,13 +333,7 @@ public sealed class ChunkStoreMutationService
         if (retentionHours is < 0)
             throw new GraphQLException("Retention hours cannot be negative.");
 
-        // A rebuild tears the bucket indexes down and recreates them; a collection is reading
-        // those same indexes to decide what to destroy. Letting the two overlap would mean
-        // deciding against an index that is being replaced underneath.
-        var conflicting = _db.BackgroundJobs.Where(j =>
-            (j.JobType == BackgroundJobTypes.ChunkStoreGc || j.JobType == BackgroundJobTypes.ChunkStoreRebuild)
-            && (j.Status == BackgroundJobStatus.Pending || j.Status == BackgroundJobStatus.Running)
-            && j.JobData != null).AsEnumerable().Any(j => j.JobData!.Contains(chunkStoreId.ToString()));
+        var conflicting = await ChunkStoreJobQueries.HasActiveMaintenanceJobAsync(_db, chunkStoreId, ct);
 
         if (conflicting)
             throw new GraphQLException("A garbage-collection or rebuild job is already running or pending for this chunk store.");

@@ -25,6 +25,32 @@ public sealed class RepositoryGql
     public DateTimeOffset CreatedAt { get; init; }
 }
 
+/// <summary>
+/// Per-repository totals, for answering "which repository is using the quota?" without
+/// paging through every release.
+/// </summary>
+/// <remarks>
+/// Logical bytes only, deliberately. This is tenant-facing, and deduplicated or compressed
+/// figures for a repository depend on what other tenants sharing the chunk store have stored.
+/// Logical size is both leak-free and the quantity the workspace is billed on.
+/// </remarks>
+public sealed class RepositoryMetricsGql
+{
+    public required int ReleaseCount { get; init; }
+    public required long TotalLogicalBytes { get; init; }
+
+    /// <summary>When the most recent release was published, or null if there are none.</summary>
+    public DateTimeOffset? LastReleaseAt { get; init; }
+
+    /// <summary>A repository with no releases — a known zero rather than an absent value.</summary>
+    public static RepositoryMetricsGql Empty { get; } = new()
+    {
+        ReleaseCount = 0,
+        TotalLogicalBytes = 0,
+        LastReleaseAt = null
+    };
+}
+
 public sealed class ChunkStoreChunkerGql
 {
     public required string Type { get; init; }
@@ -121,11 +147,107 @@ public sealed class ChunkStoreGql
     public required string Type { get; init; }
     public ChunkStoreChunkerGql? Chunker { get; init; }
     public ChunkStoreBackendSettingsGql? BackendSettings { get; init; }
+
+    /// <summary>
+    /// How the health probe tests this store — <c>ReadWrite</c> or <c>ReadOnly</c>.
+    /// </summary>
+    /// <remarks>
+    /// This governs the <em>probe</em>, not the store: a <c>ReadWrite</c> probe writes a small
+    /// file into <c>.health/</c> every 15 seconds, reads it back and deletes it, while a
+    /// <c>ReadOnly</c> probe reports free space and skips that round trip. Ingest is never gated
+    /// on it — a store set to <c>ReadOnly</c> still accepts uploads.
+    ///
+    /// <para>
+    /// Worth surfacing because the two answer different questions: under a <c>ReadOnly</c> probe
+    /// a healthy verdict means "the path exists and has space", not "writes to it work".
+    /// </para>
+    /// </remarks>
+    public required string ProbeMode { get; init; }
+
+    /// <summary>
+    /// Free space below which the store stops accepting writes, or null for no floor.
+    /// </summary>
+    public long? MinFreeBytes { get; init; }
 }
 
+/// <summary>
+/// What a chunk store holds and what it costs on disk.
+/// </summary>
+/// <remarks>
+/// Instance-admin only, and that is a boundary rather than an oversight. Tenants share a chunk
+/// store, so deduplication and compression figures here are a function of every tenant's content
+/// at once: publishing them per workspace would leak what other workspaces store. Tenant-facing
+/// surfaces report undeduplicated logical bytes, which is also what they are billed on.
+///
+/// <para>
+/// Everything except <see cref="TotalChunks"/> comes from the most recent hourly snapshot, so it
+/// is accurate as of <see cref="CollectedAt"/> rather than as of the request. Recomputing it
+/// live would mean walking the whole store on a page load.
+/// </para>
+/// </remarks>
 public sealed class ChunkStoreStatsGql
 {
     public required int TotalChunks { get; init; }
+
+    /// <summary>
+    /// When the snapshot these figures come from was taken. Null means no snapshot has been
+    /// collected yet — a store younger than the hourly collection interval — and every field
+    /// below is then zero rather than unknown, which is why the timestamp is worth rendering.
+    /// </summary>
+    public DateTimeOffset? CollectedAt { get; init; }
+
+    // --- Counts ---
+    public long ChunkCount { get; init; }
+    public long FileDefinitionCount { get; init; }
+    public long ReleaseCount { get; init; }
+
+    // --- Physical footprint ---
+    public long ChunkPackBytes { get; init; }
+    public long FileDefinitionPackBytes { get; init; }
+    public long ReleasePackageBytes { get; init; }
+    public long IndexBytes { get; init; }
+
+    /// <summary>Everything the store occupies on the volume, including indexes and metadata.</summary>
+    public long PhysicalBytesTotal { get; init; }
+
+    // --- Logical sizes ---
+
+    /// <summary>Summed size of every release as published — what tenants are billed on.</summary>
+    public long TotalLogicalBytes { get; init; }
+    public long UniqueFileBytes { get; init; }
+    public long UniqueLogicalChunkBytes { get; init; }
+    public long UniqueCompressedChunkBytes { get; init; }
+    public long ReferencedUniqueChunkBytes { get; init; }
+
+    // --- Efficiency ---
+    public double CompressionRatio { get; init; }
+    public double DeduplicationRatio { get; init; }
+
+    /// <summary>Logical bytes stored per physical byte used — the headline "what is this worth" number.</summary>
+    public double EffectiveStorageRatio { get; init; }
+
+    public long CompressionSavedBytes { get; init; }
+    public long DeduplicationSavedBytes { get; init; }
+
+    // --- On-disk layout ---
+    public int ChunkPackFileCount { get; init; }
+    public int FileDefinitionPackFileCount { get; init; }
+    public int ReleasePackageFileCount { get; init; }
+    public int IndexFileCount { get; init; }
+
+    // --- Volume ---
+
+    /// <summary>
+    /// Capacity of the volume the store sits on. Zero when the backend cannot report it.
+    /// Surfaced because a chunk store filling its disk fails ingest for every tenant on it, and
+    /// that is the one number an instance admin needs <em>before</em> it happens.
+    /// </summary>
+    public long VolumeTotalBytes { get; init; }
+    public long VolumeFreeBytes { get; init; }
+
+    // --- Averages ---
+    public long AvgChunkSize { get; init; }
+    public long AvgCompressedChunkSize { get; init; }
 }
 
 public sealed class ChunkStoreTypeInfoGql
@@ -186,6 +308,29 @@ public sealed class InstanceStatsGql
     public required int UserCount { get; init; }
     public required int TenantCount { get; init; }
     public required int RepositoryCount { get; init; }
+    public required int ReleaseCount { get; init; }
+    public required int ChunkStoreCount { get; init; }
+
+    /// <summary>
+    /// Logical bytes across every workspace — the sum of what tenants are billed on.
+    /// </summary>
+    public required long TotalLogicalBytes { get; init; }
+
+    /// <summary>
+    /// What those releases actually occupy across all chunk stores, from the latest snapshot of
+    /// each. Instance-wide, so unlike the per-tenant view it can be set against
+    /// <see cref="TotalLogicalBytes"/> without leaking one tenant's content to another.
+    /// </summary>
+    public required long TotalPhysicalBytes { get; init; }
+
+    /// <summary>
+    /// Free space on the tightest chunk-store volume, or null when no store has reported one.
+    /// The instance's real storage headroom is its worst store, not its total.
+    /// </summary>
+    public long? MinVolumeFreeBytes { get; init; }
+
+    /// <summary>Name of the store <see cref="MinVolumeFreeBytes"/> refers to.</summary>
+    public string? MinVolumeFreeChunkStoreName { get; init; }
 }
 
 public sealed class EmailConfigGql
@@ -225,6 +370,38 @@ public sealed class TenancyConfigGql
 public sealed class DomainConfigGql
 {
     public string? BaseUrl { get; init; }
+}
+
+/// <summary>
+/// The instance's unattended chunk-store collection settings.
+/// </summary>
+/// <remarks>
+/// <see cref="RetentionHours"/> is not part of the schedule — it applies to every run — but it is
+/// surfaced alongside it because it is the setting that decides how long "collected" stays
+/// reversible, and reading a cadence without it tells you when bytes get quarantined but not when
+/// they are actually gone.
+/// </remarks>
+public sealed class GcConfigGql
+{
+    public required bool Enabled { get; init; }
+    public required double IntervalHours { get; init; }
+
+    /// <summary>Start of the daily window in which runs may begin, in whole UTC hours. Null means any hour.</summary>
+    public int? WindowStartHourUtc { get; init; }
+
+    /// <summary>End of that window, exclusive. Smaller than the start means the window crosses midnight.</summary>
+    public int? WindowEndHourUtc { get; init; }
+
+    public required bool DryRun { get; init; }
+    public required bool SkipReclaim { get; init; }
+    public required double RetentionHours { get; init; }
+
+    /// <summary>
+    /// When the scheduler would next consider a store that is idle right now — null when the
+    /// schedule is disabled. An estimate: the run still has to clear the per-store interval and
+    /// find no other maintenance job in flight.
+    /// </summary>
+    public DateTimeOffset? NextEligibleAt { get; init; }
 }
 
 public sealed class StorageClassDetailsGql
@@ -354,6 +531,15 @@ public sealed class GcJobProgressGql
     public int ProcessedBuckets { get; init; }
     public int TotalReleases { get; init; }
     public int MarkedReleases { get; init; }
+
+    /// <summary>
+    /// File definitions expanded to their chunks. This is the long half of marking and is not
+    /// proportional to the release count, so it carries its own progress.
+    /// </summary>
+    public long ResolvedFileDefinitions { get; init; }
+
+    public int ProcessedFileDefinitionGroups { get; init; }
+    public int TotalFileDefinitionGroups { get; init; }
 
     /// <summary>Distinct objects found reachable from the releases on this store.</summary>
     public long ReachableObjects { get; init; }

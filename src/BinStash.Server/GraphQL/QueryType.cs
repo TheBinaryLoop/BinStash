@@ -164,6 +164,11 @@ public sealed class QueryType : ObjectType<Query>
             .Authorize();
 
         descriptor
+            .Field(x => x.GetGcConfig(null!))
+            .Type<NonNullType<ObjectType<GcConfigGql>>>()
+            .Authorize();
+
+        descriptor
             .Field(x => x.GetStorageClasses(null!, CancellationToken.None))
             .Authorize();
 
@@ -191,6 +196,11 @@ public sealed class QueryType : ObjectType<Query>
         descriptor
             .Field(x => x.GetChunkStoreStats(Guid.Empty, null!, CancellationToken.None))
             .Type<ObjectType<ChunkStoreStatsGql>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetChunkStoreStatsHistory(Guid.Empty, null!, CancellationToken.None, 30))
+            .Type<NonNullType<ListType<NonNullType<ObjectType<ChunkStoreStatsGql>>>>>()
             .Authorize();
 
         descriptor

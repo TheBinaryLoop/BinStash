@@ -452,8 +452,14 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
 /// <summary>
 /// DTO broadcast via GraphQL subscriptions on each progress update.
 /// Fields relevant to upgrade jobs are populated for <c>ReleaseUpgrade</c> job types;
-/// fields relevant to rebuild jobs are populated for <c>ChunkStoreRebuild</c> job types.
+/// fields relevant to rebuild jobs are populated for <c>ChunkStoreRebuild</c> job types;
+/// fields relevant to collection are populated for <c>ChunkStoreGc</c> job types.
 /// </summary>
+/// <remarks>
+/// One flat DTO across three unrelated job shapes, which is why every job type must contribute
+/// its own progress fields here. A job whose fields are missing does not fail — it streams zeros,
+/// and a client showing "0 / 0" cannot tell that apart from a run that has not started.
+/// </remarks>
 public sealed class BackgroundJobProgressDto
 {
     public Guid JobId { get; init; }
@@ -470,6 +476,31 @@ public sealed class BackgroundJobProgressDto
     public int TotalBuckets { get; init; }
     public int ProcessedBuckets { get; init; }
     public int FailedBuckets { get; init; }
+    // --- ChunkStoreGc fields ---
+
+    /// <summary>
+    /// Which phase the run is in. Collection has no single monotonic counter — mark walks
+    /// releases, sweep walks buckets — so the phase is what makes a percentage interpretable.
+    /// </summary>
+    public string? GcPhase { get; init; }
+
+    public int MarkedReleases { get; init; }
+    public long ResolvedFileDefinitions { get; init; }
+    public int ProcessedFileDefinitionGroups { get; init; }
+    public int TotalFileDefinitionGroups { get; init; }
+    public long ReachableObjects { get; init; }
+    public long QuarantinedObjects { get; init; }
+    public long QuarantinedBytes { get; init; }
+    public long ReclaimedObjects { get; init; }
+    public long ReclaimedBytes { get; init; }
+    public int PacksCompacted { get; init; }
+    public int PacksDeleted { get; init; }
+    public long PackBytesDeleted { get; init; }
+    public long ResurrectedObjects { get; init; }
+
+    /// <summary>True when the run reports what it would collect and changes nothing.</summary>
+    public bool GcDryRun { get; init; }
+
     // --- Common ---
     public Guid? ChunkStoreId { get; init; }
     public DateTimeOffset? StartedAt { get; init; }
