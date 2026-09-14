@@ -19,13 +19,16 @@ using System.Text;
 using System.Text.Encodings.Web;
 using BinStash.Contracts.Auth;
 using BinStash.Core.Auth.Tokens;
+using BinStash.Core.Auditing;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Auth.Tenant;
 using BinStash.Server.Configuration;
+using BinStash.Server.Extensions;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
@@ -51,9 +54,15 @@ public static class IdentityEndpoints
         // We'll figure out a unique endpoint name based on the final route pattern during endpoint generation.
         string? confirmEmailEndpointName = null;
         
+        var requestLimits = app.ServiceProvider.GetRequiredService<IOptions<RequestLimitSettings>>().Value;
+
         var group = app.MapGroup("/api/auth")
             .WithTags("Authentication")
-            .WithDescription("Endpoints for authenticating users.");
+            .WithDescription("Endpoints for authenticating users.")
+            // Every endpoint here takes a small JSON document. Without this they inherit the
+            // server-wide ceiling, which has to stay large for chunk upload — meaning an
+            // unauthenticated caller could make the server read tens of megabytes per request.
+            .RequireSmallRequestBody(requestLimits.MaxSmallRequestBodyBytes);
         
         group.MapPost("/register", async Task<Results<Ok, ValidationProblem>>
             ([FromBody] RegisterRequest registration, HttpContext context, [FromServices] IServiceProvider sp) =>
@@ -96,11 +105,14 @@ public static class IdentityEndpoints
             }
 
             await SendConfirmationEmailAsync(user, userManager, context, email);
-            
+
+            await AuditAuthAsync(sp, AuditActions.UserRegistered, AuditOutcome.Success, user.Id, email);
+
             var tenantJoinService = sp.GetRequiredService<TenantJoinService>();
             await tenantJoinService.JoinOnRegisterAsync(user.Id, registration, context.RequestAborted);
             return TypedResults.Ok();
-        });
+        })
+            .RequireRateLimiting(RateLimitPolicies.EmailDispatch);
 
         group.MapPost("/login", async Task<Results<IResult, EmptyHttpResult, ProblemHttpResult>>
             ([FromBody] LoginRequest login, [FromQuery] bool? useCookies, [FromQuery] bool? useSessionCookies, [FromServices] IServiceProvider sp) =>
@@ -114,26 +126,60 @@ public static class IdentityEndpoints
 
             var user = await signInManager.UserManager.FindByEmailAsync(login.Email);
             if (user is null)
+            {
+                // Recorded with the attempted address and no subject id. A run of these against
+                // addresses that do not exist is what account enumeration looks like, and it is
+                // invisible unless the miss is written down.
+                await AuditAuthAsync(sp, AuditActions.AuthLoginFailed, AuditOutcome.Failed, null, login.Email,
+                    new Dictionary<string, object?> { ["reason"] = "unknown_account" });
                 return TypedResults.Unauthorized();
-            
+            }
+
             var result = await signInManager.CheckPasswordSignInAsync(user, login.Password, lockoutOnFailure: true);
 
+            var secondFactorAttempted = false;
             if (result.RequiresTwoFactor)
             {
                 if (!string.IsNullOrEmpty(login.TwoFactorCode))
                 {
+                    secondFactorAttempted = true;
                     result = await signInManager.TwoFactorAuthenticatorSignInAsync(login.TwoFactorCode, isPersistent, rememberClient: isPersistent);
                 }
                 else if (!string.IsNullOrEmpty(login.TwoFactorRecoveryCode))
                 {
+                    secondFactorAttempted = true;
                     result = await signInManager.TwoFactorRecoveryCodeSignInAsync(login.TwoFactorRecoveryCode);
                 }
             }
 
             if (!result.Succeeded)
             {
+                // A bare RequiresTwoFactor is not a failure — it is the server asking for the
+                // second factor, and the client is expected to come back with one. Recording it
+                // would bury the real failures in noise.
+                if (result.IsLockedOut)
+                {
+                    await AuditAuthAsync(sp, AuditActions.AuthLoginLockedOut, AuditOutcome.Denied, user.Id, user.Email);
+                }
+                else if (secondFactorAttempted)
+                {
+                    await AuditAuthAsync(sp, AuditActions.AuthTwoFactorFailed, AuditOutcome.Failed, user.Id, user.Email);
+                }
+                else if (!result.RequiresTwoFactor)
+                {
+                    await AuditAuthAsync(sp, AuditActions.AuthLoginFailed, AuditOutcome.Failed, user.Id, user.Email,
+                        new Dictionary<string, object?> { ["reason"] = result.IsNotAllowed ? "not_allowed" : "bad_credentials" });
+                }
+
                 return TypedResults.Problem(result.ToString(), statusCode: StatusCodes.Status401Unauthorized);
             }
+
+            await AuditAuthAsync(sp, AuditActions.AuthLoginSucceeded, AuditOutcome.Success, user.Id, user.Email,
+                new Dictionary<string, object?>
+                {
+                    ["scheme"] = useCookieScheme ? "cookie" : "bearer",
+                    ["twoFactor"] = secondFactorAttempted
+                });
             
             if (useCookieScheme)
             {
@@ -150,7 +196,8 @@ public static class IdentityEndpoints
                 RefreshToken = refreshToken,
                 ExpiresIn = 15 * 60 // 15 minutes
             });
-        });
+        })
+            .RequireRateLimiting(RateLimitPolicies.Authentication);
 
         group.MapPost("/logout", async Task<Results<IResult, EmptyHttpResult, ProblemHttpResult>>
         ([FromQuery] bool? useCookies, [FromServices] IServiceProvider sp) =>
@@ -162,7 +209,14 @@ public static class IdentityEndpoints
             
             if (useCookieScheme)
             {
+                var signedOut = sp.GetRequiredService<IHttpContextAccessor>().HttpContext?.User;
                 await signInManager.SignOutAsync();
+
+                Guid.TryParse(signedOut?.FindFirstValue(ClaimTypes.NameIdentifier), out var signedOutId);
+                await AuditAuthAsync(sp, AuditActions.AuthLogout, AuditOutcome.Success,
+                    signedOutId == Guid.Empty ? null : signedOutId,
+                    signedOut?.FindFirstValue(ClaimTypes.Email));
+
                 return TypedResults.Ok();
             }
             
@@ -176,7 +230,8 @@ public static class IdentityEndpoints
             var hasher = sp.GetRequiredService<IPasswordHasher<ApiKey>>();
 
             return TypedResults.NotFound("Not implemented");
-        });
+        })
+            .RequireRateLimiting(RateLimitPolicies.Authentication);
 
         group.MapPost("/refresh", async Task<Results<Ok<AccessTokenResponse>, UnauthorizedHttpResult, ProblemHttpResult, ChallengeHttpResult>>
             ([FromBody] RefreshRequest refreshRequest, [FromServices] IServiceProvider sp) =>
@@ -197,7 +252,14 @@ public static class IdentityEndpoints
             
             // Reject the /refresh attempt with a 401 if the token expired or the security stamp validation fails
             if (existing is null || !existing.IsActive)
+            {
+                // Presenting a token that is no longer good covers the replay case: a token that
+                // has already been rotated away comes back here, and that is worth seeing.
+                await AuditAuthAsync(sp, AuditActions.AuthTokenRefreshRejected, AuditOutcome.Failed,
+                    existing?.User?.Id, existing?.User?.Email,
+                    new Dictionary<string, object?> { ["reason"] = existing is null ? "unknown_token" : "inactive_token" });
                 return TypedResults.Unauthorized();
+            }
 
             var user = existing.User;
 
@@ -209,7 +271,11 @@ public static class IdentityEndpoints
             );
 
             if (verificationResult == PasswordVerificationResult.Failed)
+            {
+                await AuditAuthAsync(sp, AuditActions.AuthTokenRefreshRejected, AuditOutcome.Failed, user.Id, user.Email,
+                    new Dictionary<string, object?> { ["reason"] = "secret_mismatch" });
                 return TypedResults.Unauthorized();
+            }
 
             // rotate token
             existing.RevokedAt = DateTime.UtcNow;
@@ -220,13 +286,16 @@ public static class IdentityEndpoints
             // existing.RevokedAt already tracked
             await db.SaveChangesAsync();
 
+            await AuditAuthAsync(sp, AuditActions.AuthTokenRefreshed, AuditOutcome.Success, user.Id, user.Email);
+
             return TypedResults.Ok(new AccessTokenResponse
             {
                 AccessToken = newAccessToken,
                 RefreshToken = newRefreshToken,
                 ExpiresIn = 15 * 60 // 15 minutes
             });
-        });
+        })
+            .RequireRateLimiting(RateLimitPolicies.Authentication);
 
         group.MapGet("/confirmEmail", async Task<Results<Ok,UnauthorizedHttpResult>>
             ([FromQuery] string userId, [FromQuery] string code, [FromQuery] string? changedEmail, [FromServices] IServiceProvider sp) =>
@@ -270,8 +339,11 @@ public static class IdentityEndpoints
                 return TypedResults.Unauthorized();
             }
 
+            await AuditAuthAsync(sp, AuditActions.UserEmailConfirmed, AuditOutcome.Success, user.Id, user.Email,
+                string.IsNullOrEmpty(changedEmail) ? null : new Dictionary<string, object?> { ["changedEmail"] = changedEmail });
+
             return TypedResults.Ok();
-            //return TypedResults.Content("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>Email Confirmed</title></head><body><h1>Email Confirmed</h1><p>Your email has been successfully confirmed. You can now close this window and return to the application.</p></body></html>", "text/html");
+            //return TypedResults.Content(""<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>Email Confirmed</title></head><body><h1>Email Confirmed</h1><p>Your email has been successfully confirmed. You can now close this window and return to the application.</p></body></html>", "text/html");
         })
         ?.Add(endpointBuilder =>
         {
@@ -338,7 +410,8 @@ public static class IdentityEndpoints
 
             await SendConfirmationEmailAsync(user, userManager, context, resendRequest.Email);
             return TypedResults.Ok();
-        });
+        })
+            .RequireRateLimiting(RateLimitPolicies.EmailDispatch);
 
         group.MapPost("/forgotPassword", async Task<Results<Ok, ValidationProblem>>
             ([FromBody] ForgotPasswordRequest resetRequest, [FromServices] IServiceProvider sp) =>
@@ -352,12 +425,18 @@ public static class IdentityEndpoints
                 code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
 
                 await emailSender.SendPasswordResetCodeAsync(user, resetRequest.Email, HtmlEncoder.Default.Encode(code));
+
+                // Only written when a mail actually went out. The endpoint deliberately answers
+                // the same way for an unknown address, and an entry for every probe would turn
+                // the audit log into the account-existence oracle the response refuses to be.
+                await AuditAuthAsync(sp, AuditActions.UserPasswordResetRequested, AuditOutcome.Success, user.Id, user.Email);
             }
 
             // Don't reveal that the user does not exist or is not confirmed, so don't return a 200 if we had
             // returned a 400 for an invalid code given a valid user email.
             return TypedResults.Ok();
-        });
+        })
+            .RequireRateLimiting(RateLimitPolicies.EmailDispatch);
 
         group.MapPost("/resetPassword", async Task<Results<Ok, ValidationProblem>>
             ([FromBody] ResetPasswordRequest resetRequest, [FromServices] IServiceProvider sp) =>
@@ -386,11 +465,16 @@ public static class IdentityEndpoints
 
             if (!result.Succeeded)
             {
+                await AuditAuthAsync(sp, AuditActions.UserPasswordResetCompleted, AuditOutcome.Failed, user.Id, user.Email,
+                    new Dictionary<string, object?> { ["reason"] = "invalid_token_or_password" });
                 return CreateValidationProblem(result);
             }
 
+            await AuditAuthAsync(sp, AuditActions.UserPasswordResetCompleted, AuditOutcome.Success, user.Id, user.Email);
+
             return TypedResults.Ok();
-        });
+        })
+            .RequireRateLimiting(RateLimitPolicies.Authentication);
         
         var accountGroup = group.MapGroup("/manage").RequireAuthorization();
 
@@ -425,10 +509,17 @@ public static class IdentityEndpoints
                 }
 
                 await userManager.SetTwoFactorEnabledAsync(user, true);
+                await AuditAuthAsync(sp, AuditActions.UserTwoFactorEnabled, AuditOutcome.Success, user.Id, user.Email);
             }
             else if (tfaRequest.Enable == false || tfaRequest.ResetSharedKey)
             {
                 await userManager.SetTwoFactorEnabledAsync(user, false);
+
+                // Also reached by ResetSharedKey, which disables 2FA until the new key is proved.
+                // Recorded either way: an account's second factor coming off is the event worth
+                // seeing, regardless of which request turned it off.
+                await AuditAuthAsync(sp, AuditActions.UserTwoFactorDisabled, AuditOutcome.Success, user.Id, user.Email,
+                    new Dictionary<string, object?> { ["reason"] = tfaRequest.ResetSharedKey ? "shared_key_reset" : "disabled" });
             }
 
             if (tfaRequest.ResetSharedKey)
@@ -580,6 +671,37 @@ public static class IdentityEndpoints
         return group;
     }
     
+    /// <summary>
+    /// Records an authentication or account-lifecycle event.
+    /// </summary>
+    /// <remarks>
+    /// These are written from unauthenticated requests, so the entry's actor is Anonymous and the
+    /// account the request was <em>about</em> is the target. That is what makes a failed attempt
+    /// attributable at all — there is no authenticated caller to name.
+    ///
+    /// <para>
+    /// Deliberately instance-scoped. A tenant may be resolved from the subdomain by the time a
+    /// login arrives, but the user has not been authenticated yet and may not belong to that
+    /// tenant at all; filing the event under it would attribute a stranger's login attempt to a
+    /// customer's audit trail. Authentication is the operator's security surface.
+    /// </para>
+    /// </remarks>
+    private static async Task AuditAuthAsync(IServiceProvider sp, string action, AuditOutcome outcome, Guid? userId, string? display, IReadOnlyDictionary<string, object?>? metadata = null)
+    {
+        var audit = sp.GetRequiredService<IAuditLogWriter>();
+
+        await audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = action,
+            InstanceScoped = true,
+            Outcome = outcome,
+            TargetType = nameof(BinStashUser),
+            TargetId = userId?.ToString(),
+            TargetName = display,
+            Metadata = metadata
+        });
+    }
+
     private static ValidationProblem CreateValidationProblem(string errorCode, string errorDescription) =>
         TypedResults.ValidationProblem(new Dictionary<string, string[]> {
             { errorCode, [errorDescription] }

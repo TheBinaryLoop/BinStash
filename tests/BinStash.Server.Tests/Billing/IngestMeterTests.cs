@@ -3,6 +3,7 @@
 using System.Security.Claims;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Billing;
+using BinStash.Core.Traffic;
 using BinStash.Core.Entities;
 using BinStash.Core.Storage.Stats;
 using BinStash.Grpc;
@@ -78,13 +79,9 @@ public class IngestMeterTests : IDisposable
         var chunkStoreService = new AlwaysSucceedChunkStoreService();
         var authorizationService = new AlwaysSucceedAuthorizationService();
 
-        var svc = new IngestGrpcService(
-            _db,
-            chunkStoreService,
-            authorizationService,
-            meteringService,
-            new GcQuarantineService(_db, NullLogger<GcQuarantineService>.Instance),
-            NullLogger<IngestGrpcService>.Instance);
+        var trafficRecorder = new BufferedTrafficRecorder();
+
+        var svc = new IngestGrpcService(_db, chunkStoreService, authorizationService, meteringService, trafficRecorder, new GcQuarantineService(_db, NullLogger<GcQuarantineService>.Instance), NullLogger<IngestGrpcService>.Instance);
 
         var stream = new SingleItemAsyncStreamReader<UploadChunkRequest>(request);
         var callContext = new FakeServerCallContext(ingestId, repoId);
@@ -96,6 +93,13 @@ public class IngestMeterTests : IDisposable
         meteringService.Calls.Should().HaveCount(1);
         meteringService.Calls[0].TenantId.Should().Be(tenantId);
         meteringService.Calls[0].Bytes.Should().Be(chunkData.Length);
+
+        // The same bytes are recorded for the instance's own traffic series, through a separate
+        // path — a billing plugin and the operator's charts must not depend on each other.
+        var traffic = trafficRecorder.Drain().Should().ContainSingle().Subject;
+        traffic.TenantId.Should().Be(tenantId);
+        traffic.IngressBytes.Should().Be(chunkData.Length);
+        traffic.EgressBytes.Should().Be(0);
     }
 
     // -------------------------------------------------------------------------

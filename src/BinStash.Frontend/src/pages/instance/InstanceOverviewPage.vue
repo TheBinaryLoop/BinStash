@@ -4,16 +4,18 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
+import TrafficChart from '@/components/app/TrafficChart.vue'
 import StatCard from '@/components/app/StatCard.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useQuery } from '@/composables/useGraphql'
-import { BackgroundJobsDocument, ChunkStoresDocument, InstanceStatsDocument } from '@/graphql/generated'
+import { BackgroundJobsDocument, ChunkStoresDocument, InstanceStatsDocument, InstanceTrafficDocument } from '@/graphql/generated'
 import { apiJson } from '@/lib/http'
 import { formatBytes, formatNumber, formatRelative } from '@/lib/format'
 import { jobTypeLabel } from '@/lib/jobs'
 
 const stats = useQuery(InstanceStatsDocument, {})
+const traffic = useQuery(InstanceTrafficDocument, { grain: 'HOURLY' as const })
 const chunkStores = useQuery(ChunkStoresDocument, { first: 100 })
 // Same reasoning as the chunk store page: poll only while something is running, so a job that
 // ended unobserved stops being reported as still going. The ref breaks the cycle between the
@@ -26,6 +28,13 @@ const storeCount = computed(
   () => instanceStats.value?.chunkStoreCount ?? chunkStores.result.value?.chunkStores?.totalCount ?? 0,
 )
 const recentJobs = computed(() => jobs.result.value?.backgroundJobs?.nodes ?? [])
+
+const trafficSeries = computed(() => traffic.result.value?.instanceTraffic?.total)
+/**
+ * The per-tenant split is instance-admin only. It is exactly the cross-tenant information the
+ * workspace-facing views withhold, which is why it lives here and nowhere else.
+ */
+const trafficByTenant = computed(() => traffic.result.value?.instanceTraffic?.byTenant ?? [])
 
 watch(
   () => recentJobs.value.some((job) => job.status === 'Running' || job.status === 'Pending'),
@@ -162,6 +171,48 @@ const statusTone: Record<string, string> = {
         </div>
       </div>
     </AsyncSection>
+
+    <section class="bg-card hairline space-y-4 rounded-lg p-4">
+      <div>
+        <h2 class="text-sm font-medium">Traffic</h2>
+        <p class="text-muted-foreground text-xs">
+          Bytes moved in and out of this instance over the last 7 days, across every workspace.
+        </p>
+      </div>
+
+      <AsyncSection
+        :loading="traffic.loading.value"
+        :error="traffic.error.value"
+        :has-data="!!trafficSeries"
+        :skeleton-rows="3"
+        @retry="traffic.refetch()"
+      >
+        <div v-if="trafficSeries" class="space-y-4">
+          <TrafficChart
+            :points="trafficSeries.points"
+            :from-utc="trafficSeries.fromUtc"
+            :to-utc="trafficSeries.toUtc"
+            grain="HOURLY"
+          />
+
+          <div v-if="trafficByTenant.length" class="border-hairline border-t pt-3">
+            <h3 class="text-muted-foreground mb-2 text-xs font-medium">By workspace</h3>
+            <ul class="space-y-1.5">
+              <li
+                v-for="tenant in trafficByTenant.slice(0, 6)"
+                :key="tenant.tenantId"
+                class="flex items-baseline justify-between gap-3 text-xs"
+              >
+                <span class="truncate">{{ tenant.tenantName }}</span>
+                <span class="text-muted-foreground shrink-0 font-mono tabular-nums">
+                  {{ formatBytes(tenant.ingressBytes) }} in · {{ formatBytes(tenant.egressBytes) }} out
+                </span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </AsyncSection>
+    </section>
 
     <div class="grid gap-4 lg:grid-cols-2">
       <section class="space-y-3">

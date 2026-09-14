@@ -22,6 +22,7 @@ using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
 using BinStash.Server.GraphQL.Features.StorageClasses;
 using BinStash.Server.GraphQL.Features.Tenants;
+using BinStash.Server.GraphQL.Features.Traffic;
 using BinStash.Server.GraphQL.Features.Usage;
 using BinStash.Server.GraphQL.Features.Users;
 
@@ -120,6 +121,12 @@ public class Query
 
     public Task<TenantUsageGql> GetTenantUsage([Service] UsageQueryService service, CancellationToken cancellationToken)
         => service.GetTenantUsageAsync(cancellationToken);
+
+    public Task<TrafficSeriesGql> GetTenantTraffic(TrafficGrainGql grain, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, [Service] TrafficQueryService service, CancellationToken cancellationToken)
+        => service.GetTenantTrafficAsync(grain, fromUtc, toUtc, cancellationToken);
+
+    public Task<InstanceTrafficGql> GetInstanceTraffic(TrafficGrainGql grain, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, [Service] TrafficQueryService service, CancellationToken cancellationToken)
+        => service.GetInstanceTrafficAsync(grain, fromUtc, toUtc, cancellationToken);
 
     public Task<IQueryable<AuditLogEntryGql>> GetAuditLog([Service] AuditQueryService service)
         => service.GetTenantAuditLogAsync();

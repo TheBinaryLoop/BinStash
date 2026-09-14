@@ -17,6 +17,7 @@ using System.Text;
 using BinStash.Contracts.Hashing;
 using BinStash.Core.Auth.Repository;
 using BinStash.Core.Billing;
+using BinStash.Core.Traffic;
 using BinStash.Core.Compression;
 using BinStash.Core.Entities;
 using BinStash.Core.Serialization.Utils;
@@ -40,15 +41,17 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
     private readonly IChunkStoreService _chunkStoreService;
     private readonly IAuthorizationService _authorizationService;
     private readonly IUsageMeteringService _meteringSvc;
+    private readonly ITrafficRecorder _trafficRecorder;
     private readonly IGcQuarantineService _quarantine;
     private readonly ILogger<IngestGrpcService> _logger;
 
-    public IngestGrpcService(BinStashDbContext db, IChunkStoreService chunkStoreService, IAuthorizationService authorizationService, IUsageMeteringService meteringSvc, IGcQuarantineService quarantine, ILogger<IngestGrpcService> logger)
+    public IngestGrpcService(BinStashDbContext db, IChunkStoreService chunkStoreService, IAuthorizationService authorizationService, IUsageMeteringService meteringSvc, ITrafficRecorder trafficRecorder, IGcQuarantineService quarantine, ILogger<IngestGrpcService> logger)
     {
         _db = db;
         _chunkStoreService = chunkStoreService;
         _authorizationService = authorizationService;
         _meteringSvc = meteringSvc;
+        _trafficRecorder = trafficRecorder;
         _quarantine = quarantine;
         _logger = logger;
     }
@@ -333,6 +336,10 @@ public sealed class IngestGrpcService : IngestService.IngestServiceBase
             // Billing: meter fires for ALL chunks including duplicates (per pricing policy)
             try { _meteringSvc.RecordIngest(repo.TenantId, msg.Data.Length); }
             catch (Exception ex) { _logger.LogWarning(ex, "Billing: failed to record ingest meter event"); }
+
+            // Traffic: the same bytes, recorded for the instance's own charts. Separate from the
+            // meter on purpose — this one buffers in memory and is never read to bill anyone.
+            _trafficRecorder.RecordIngress(repo.TenantId, msg.Data.Length);
 
             var hash = new Hash32(msg.Checksum.Span);
 

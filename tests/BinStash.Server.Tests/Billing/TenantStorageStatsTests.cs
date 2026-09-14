@@ -4,6 +4,7 @@ using BinStash.Core.Billing;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.HostedServices;
+using BinStash.Server.Services.Usage;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -137,6 +138,7 @@ public class TenantStorageStatsTests
             var services = new ServiceCollection();
             services.AddSingleton(_scopedDb);
             services.AddSingleton(meteringService);
+            services.AddScoped<TenantUsageService>();
             ServiceProvider = services.BuildServiceProvider();
         }
 

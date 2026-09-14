@@ -20,6 +20,7 @@ using BinStash.Server.GraphQL.Features.Releases;
 using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
 using BinStash.Server.GraphQL.Features.Tenants;
+using BinStash.Server.GraphQL.Features.Traffic;
 using BinStash.Server.GraphQL.Features.Usage;
 
 namespace BinStash.Server.GraphQL;
@@ -210,6 +211,18 @@ public sealed class QueryType : ObjectType<Query>
         descriptor
             .Field(x => x.GetTenantUsage(null!, CancellationToken.None))
             .Type<NonNullType<ObjectType<TenantUsageGql>>>()
+            .Authorize();
+
+        // Traffic is a fixed-size series shaped by its own window arguments, so it is returned
+        // whole rather than through the paging/filtering machinery the tables use.
+        descriptor
+            .Field(x => x.GetTenantTraffic(default, null, null, null!, CancellationToken.None))
+            .Type<NonNullType<ObjectType<TrafficSeriesGql>>>()
+            .Authorize();
+
+        descriptor
+            .Field(x => x.GetInstanceTraffic(default, null, null, null!, CancellationToken.None))
+            .Type<NonNullType<ObjectType<InstanceTrafficGql>>>()
             .Authorize();
 
         // Audit trails are paged/filtered/sorted server-side: these tables grow without bound and

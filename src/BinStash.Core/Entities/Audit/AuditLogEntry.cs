@@ -91,6 +91,58 @@ public static class AuditActions
     /// </summary>
     public const string ReleaseDownloaded = "release.downloaded";
 
+    // ---- Authentication and account lifecycle -------------------------------------------------
+    //
+    // These are written from unauthenticated requests, so the actor on the entry is Anonymous by
+    // construction. The account the attempt was *against* is the target — which is the only way
+    // a failed attempt can be attributed at all, and it is what makes "who tried to get in as
+    // whom" answerable. A failed attempt against an address that has no account is still
+    // recorded, with the attempted address as the target name and no target id: that pattern is
+    // precisely what account enumeration looks like.
+
+    public const string AuthLoginSucceeded = "auth.login.succeeded";
+    public const string AuthLoginFailed = "auth.login.failed";
+
+    /// <summary>Identity refused the attempt because the account is locked out.</summary>
+    public const string AuthLoginLockedOut = "auth.login.locked_out";
+
+    /// <summary>A second factor was required and the supplied code did not satisfy it.</summary>
+    public const string AuthTwoFactorFailed = "auth.two_factor.failed";
+
+    public const string AuthLogout = "auth.logout";
+
+    public const string AuthTokenRefreshed = "auth.token.refreshed";
+
+    /// <summary>
+    /// A refresh token was presented and rejected — unknown, expired, revoked, or failing its
+    /// hash check. Worth recording separately from a failed login: a rejected refresh means
+    /// someone held a token that is no longer good, which includes the replay case.
+    /// </summary>
+    public const string AuthTokenRefreshRejected = "auth.token.refresh_rejected";
+
+    /// <summary>An authentication request was throttled. See the rate-limiting settings.</summary>
+    public const string AuthRateLimited = "auth.rate_limited";
+
+    /// <summary>
+    /// An <c>ApiKey</c> credential was presented and refused. Recorded without the key id when
+    /// the id could not be parsed, since there is then nothing trustworthy to attribute it to.
+    /// </summary>
+    public const string AuthApiKeyRejected = "auth.api_key.rejected";
+
+    public const string UserRegistered = "user.registered";
+    public const string UserEmailConfirmed = "user.email_confirmed";
+    public const string UserPasswordResetRequested = "user.password.reset_requested";
+    public const string UserPasswordResetCompleted = "user.password.reset_completed";
+    public const string UserTwoFactorEnabled = "user.two_factor.enabled";
+    public const string UserTwoFactorDisabled = "user.two_factor.disabled";
+
+    /// <summary>
+    /// A request was refused because the tenant is over its plan. Recorded because "the tenant
+    /// says uploads stopped working" and "the tenant is out of quota" need to be the same
+    /// question, answerable after the fact.
+    /// </summary>
+    public const string QuotaExceeded = "quota.exceeded";
+
     public const string RepositoryCreated = "repository.created";
     public const string RepositoryUpdated = "repository.updated";
 

@@ -4,9 +4,9 @@ import { computed } from 'vue'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
+import QuotaAlert from '@/components/app/QuotaAlert.vue'
 import StatCard from '@/components/app/StatCard.vue'
 import UsageMeter from '@/components/app/UsageMeter.vue'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { useQuery } from '@/composables/useGraphql'
 import { TenantUsageDocument } from '@/graphql/generated'
@@ -31,8 +31,6 @@ const entitlements = computed(() => {
   ]
 })
 
-const anyBlocked = computed(() => entitlements.value.some((entitlement) => !entitlement.allowed))
-
 const averageReleaseSize = computed(() => {
   const stats = usage.value
   if (!stats || stats.releaseCount === 0) return null
@@ -56,13 +54,7 @@ const averageReleaseSize = computed(() => {
       @retry="refetch()"
     >
       <div v-if="usage" class="space-y-6">
-        <Alert v-if="anyBlocked" variant="destructive">
-          <AlertTitle>Some operations are blocked</AlertTitle>
-          <AlertDescription>
-            This workspace has reached a plan limit. Uploads or downloads will fail until usage
-            drops or the plan changes.
-          </AlertDescription>
-        </Alert>
+        <QuotaAlert :usage="usage" />
 
         <div class="grid gap-3 sm:grid-cols-3">
           <StatCard

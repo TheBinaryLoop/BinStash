@@ -242,6 +242,14 @@ public class BinStashApiClient
     
     public async Task<List<Hash32>> GetMissingFileChecksumsAsync(Guid tenantId, Guid repoId, Guid ingestSessionId, List<Hash32> fileChecksums)
         => await PostAsTransposedCompressedByteArrayAsync($"tenants/{tenantId}/repositories/{repoId}/ingest/sessions/{ingestSessionId}/files/missing", fileChecksums);
+
+    /// <summary>
+    /// Which of these chunks the repository's store does not already hold, without opening an
+    /// ingest session. Used by <c>analyze</c>, which must not consume write admission or leave a
+    /// session behind just to answer a question.
+    /// </summary>
+    public async Task<List<Hash32>> GetMissingChunkChecksumsForAnalysisAsync(Guid tenantId, Guid repoId, List<Hash32> chunkChecksums)
+        => await PostAsTransposedCompressedByteArrayAsync($"tenants/{tenantId}/repositories/{repoId}/analysis/chunks/missing", chunkChecksums);
     
     public async Task UploadChunksAsync(Guid tenantId, Guid repoId, Guid ingestSessionId, IChunker chunker, IEnumerable<ChunkMapEntry> chunksToUpload, int batchSize = 100, Func<int, int, Task>? progressCallback = null, CancellationToken cancellationToken = default)
     {

@@ -14,7 +14,9 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Cli.Commands;
+using BinStash.Cli.Commands.Analyze;
 using BinStash.Cli.Commands.Release;
+using BinStash.Cli.Services.Analysis;
 using BinStash.Cli.Services.Releases;
 using BinStash.Core.Ingestion.Abstractions;
 using BinStash.Core.Ingestion.Execution;
@@ -58,6 +60,9 @@ public static class Program
                 services.AddSingleton<ComponentMapLoader>();
                 services.AddSingleton<ServerUploadPlanner>();
                 services.AddSingleton<ReleaseAddOrchestrator>();
+
+                // CLI analysis services
+                services.AddSingleton<DedupAnalysisService>();
                 
                 // Register commands explicitly (generic overloads are AOT-safe; avoids IL2072 from AddTransient(Type))
                 services.AddTransient<AuthRootCommand>();
@@ -79,7 +84,7 @@ public static class Program
                 services.AddTransient<RepoRootCommand>();
                 services.AddTransient<RepoListCommand>();
                 services.AddTransient<RepoAddCommand>();
-                services.AddTransient<AnalyzeBaseCommand>();
+                services.AddTransient<AnalyzeCommand>();
                 services.AddTransient<AnalyzeChunkerCommand>();
                 services.AddTransient<TestBaseCommand>();
                 services.AddTransient<TestSerializationCommand>();

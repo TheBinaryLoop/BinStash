@@ -30,6 +30,10 @@ using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Server.Extensions;
 using BinStash.Server.Helpers;
 using BinStash.Server.Services.ChunkStores;
+using BinStash.Core.Traffic;
+using BinStash.Server.Services.Usage;
+using BinStash.Server.Configuration;
+using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using ZstdNet;
@@ -66,10 +70,16 @@ public static class ReleaseEndpoints
         return group;
     }
     
-    private static async Task<IResult> GetReleaseDownloadAsync(Guid tenantId, Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService, IUsageMeteringService meteringService, IAuditLogWriter audit, ILoggerFactory loggerFactory)
+    private static async Task<IResult> GetReleaseDownloadAsync(Guid tenantId, Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService, IUsageMeteringService meteringService, ITrafficRecorder trafficRecorder, TenantQuotaGuard quota, IOptions<BillingSettings> billingOptions, IAuditLogWriter audit, ILoggerFactory loggerFactory, CancellationToken ct)
     {
         if (!string.IsNullOrEmpty(file) && string.IsNullOrEmpty(component))
             return Results.BadRequest("Component must be specified when requesting a specific file.");
+
+        // Checked before any work: this is the endpoint the egress meter bills against, so a
+        // tenant that is out of plan must be turned away before it is served a single byte.
+        var egressAdmission = await quota.CheckEgressAsync(tenantId, ct);
+        if (!egressAdmission.IsAllowed)
+            return egressAdmission.ToProblem();
 
         var release = await db.Releases.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id);
         if (release == null)
@@ -200,8 +210,19 @@ public static class ReleaseEndpoints
             Inline = false
         }.ToString();
 
-        // BILLING: Metered endpoints: release download. Counts actual bytes written to response stream. NOT metered: health, OpenAPI, GraphQL.
-        var countingBody = new CountingStream(response.Body);
+        // BILLING: Metered endpoints: release download. Counts actual bytes written to response
+        // stream. NOT metered: health, OpenAPI, GraphQL.
+        //
+        // Metered in increments rather than once at the end. A download of a large release runs
+        // for minutes; if the process dies, the client disconnects, or the stream throws partway
+        // through, everything served so far used to be billed as nothing. Now at most one
+        // checkpoint's worth is lost.
+        var logger = loggerFactory.CreateLogger("BinStash.Server.Endpoints.ReleaseEndpoints");
+        var countingBody = new MeteredResponseStream(response.Body, billingOptions.Value.EgressMeterCheckpointBytes, delta => RecordEgressSafely(meteringService, trafficRecorder, logger, tenantId, delta));
+
+        var servedToCompletion = false;
+        try
+        {
         await using (var compressor = new CompressionStream(countingBody))
         await using (var tarWriter = new TarWriter(compressor))
         {
@@ -378,33 +399,69 @@ public static class ReleaseEndpoints
         }
         } // end await using tarWriter + compressor — flushes compressed bytes to countingBody
 
-        // BILLING: Record actual bytes written to response stream after all streaming is complete.
-        var logger = loggerFactory.CreateLogger("BinStash.Server.Endpoints.ReleaseEndpoints");
-        try { meteringService.RecordEgress(tenantId, countingBody.BytesWritten); }
-        catch (Exception ex) { logger.LogWarning(ex, "Billing: failed to record egress meter event"); }
-
-        // Egress is the other half of the artifact store's audit trail: who pulled what.
-        // Written here, next to the meter, so it reports the bytes actually served rather
-        // than the bytes requested — a cancelled or partial download is recorded as such.
-        await audit.WriteAsync(new AuditEntryDraft
+        servedToCompletion = true;
+        }
+        finally
         {
-            Action = AuditActions.ReleaseDownloaded,
-            TenantId = tenantId,
-            TargetType = nameof(Release),
-            TargetId = release.Id.ToString(),
-            TargetName = $"{repo.Name} {release.Version}",
-            Metadata = new Dictionary<string, object?>
+            // Whatever has not yet been checkpointed. Runs on the abort path too — a download the
+            // client walked away from still consumed the bandwidth it consumed.
+            var unmetered = countingBody.TakeUnmeteredBytes();
+            if (unmetered > 0)
+                RecordEgressSafely(meteringService, trafficRecorder, logger, tenantId, unmetered);
+
+            // Egress is the other half of the artifact store's audit trail: who pulled what.
+            // Written next to the meter so it reports the bytes actually served rather than the
+            // bytes requested — a cancelled or partial download is recorded as such, and as
+            // Failed rather than Success.
+            //
+            // Nothing was served and nothing completed means the request failed one of the
+            // lookups above and never became a download; there is no egress event to record.
+            if (servedToCompletion || countingBody.BytesWritten > 0)
             {
-                ["repositoryId"] = repo.Id,
-                ["version"] = release.Version,
-                ["bytesServed"] = countingBody.BytesWritten,
-                ["component"] = component,
-                ["file"] = file,
-                ["diffFromReleaseId"] = diffReleaseId
+                await audit.WriteAsync(new AuditEntryDraft
+                {
+                    Action = AuditActions.ReleaseDownloaded,
+                    TenantId = tenantId,
+                    Outcome = servedToCompletion ? AuditOutcome.Success : AuditOutcome.Failed,
+                    TargetType = nameof(Release),
+                    TargetId = release.Id.ToString(),
+                    TargetName = $"{repo.Name} {release.Version}",
+                    Metadata = new Dictionary<string, object?>
+                    {
+                        ["repositoryId"] = repo.Id,
+                        ["version"] = release.Version,
+                        ["bytesServed"] = countingBody.BytesWritten,
+                        ["completed"] = servedToCompletion,
+                        ["component"] = component,
+                        ["file"] = file,
+                        ["diffFromReleaseId"] = diffReleaseId
+                    }
+                });
             }
-        });
+        }
 
         return Results.Empty;
+    }
+
+    /// <summary>
+    /// Reports egress without letting a meter failure break the download. A dropped meter event
+    /// is lost revenue; an exception escaping here would be a failed customer download, which is
+    /// worse.
+    /// </summary>
+    private static void RecordEgressSafely(IUsageMeteringService metering, ITrafficRecorder traffic, ILogger logger, Guid tenantId, long bytes)
+    {
+        try
+        {
+            metering.RecordEgress(tenantId, bytes);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Billing: failed to record egress meter event for {Bytes} bytes", bytes);
+        }
+
+        // Recorded separately from the meter, and after it, so a billing provider that throws
+        // still leaves the operator's own traffic chart intact.
+        traffic.RecordEgress(tenantId, bytes);
     }
 
     /*private static async Task<IResult> GetReleaseStreamAsync(Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, CancellationToken ct)
@@ -638,25 +695,5 @@ public static class ReleaseEndpoints
         return result;
     }
 
-    private sealed class CountingStream(Stream inner) : Stream
-    {
-        public long BytesWritten { get; private set; }
-        public override bool CanRead => false;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() => inner.Flush();
-        public override Task FlushAsync(CancellationToken ct) => inner.FlushAsync(ct);
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) { inner.Write(buffer, offset, count); BytesWritten += count; }
-        public override void Write(ReadOnlySpan<byte> buffer) { inner.Write(buffer); BytesWritten += buffer.Length; }
-        public override void WriteByte(byte value) { inner.WriteByte(value); BytesWritten += 1; }
-        public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct) { await inner.WriteAsync(buffer, offset, count, ct); BytesWritten += count; }
-        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default) { await inner.WriteAsync(buffer, ct); BytesWritten += buffer.Length; }
-        protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
-    }
 
 }

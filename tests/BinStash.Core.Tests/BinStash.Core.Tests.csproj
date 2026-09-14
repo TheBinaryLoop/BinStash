@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="FluentAssertions" Version="8.10.0" />
     <PackageReference Include="FsCheck.Xunit.v3" Version="3.4.0" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.10.0" />
     <PackageReference Include="xunit.v3" Version="4.0.1" />
   </ItemGroup>
 

@@ -15,6 +15,7 @@
 
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using BinStash.Core.Auditing;
 using BinStash.Core.Auth;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
@@ -25,7 +26,7 @@ using Microsoft.Extensions.Options;
 
 namespace BinStash.Server.Auth.ApiKeys;
 
-public class ApiKeyAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder, BinStashDbContext db, IPasswordHasher<ApiKey> hasher) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+public class ApiKeyAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> options, ILoggerFactory logger, UrlEncoder encoder, BinStashDbContext db, IPasswordHasher<ApiKey> hasher, IAuditLogWriter audit) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
@@ -56,12 +57,26 @@ public class ApiKeyAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> opti
 
         var key = await db.ApiKeys.SingleOrDefaultAsync(k => k.Id == keyId);
 
-        if (key is null || !key.IsActive)
+        if (key is null)
             return AuthenticateResult.Fail("API key revoked/expired.");
+
+        // Only refusals involving a key that actually exists are recorded. A malformed or unknown
+        // key id costs a parse and a miss, and auditing those would let anyone fill the table by
+        // sending nonsense to any endpoint — the audit trail would become the amplifier. A real
+        // key being refused is the event worth keeping: a revoked credential still in use, or a
+        // secret that no longer matches.
+        if (!key.IsActive)
+        {
+            await AuditRejectionAsync(key, "revoked_or_expired");
+            return AuthenticateResult.Fail("API key revoked/expired.");
+        }
 
         var verified = hasher.VerifyHashedPassword(key, key.SecretHash, secret);
         if (verified == PasswordVerificationResult.Failed)
+        {
+            await AuditRejectionAsync(key, "secret_mismatch");
             return AuthenticateResult.Fail("Invalid API key.");
+        }
 
         key.LastUsedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -80,4 +95,21 @@ public class ApiKeyAuthHandler(IOptionsMonitor<AuthenticationSchemeOptions> opti
 
         return AuthenticateResult.Success(ticket);
     }
+
+    private Task AuditRejectionAsync(ApiKey key, string reason)
+        => audit.WriteAsync(new AuditEntryDraft
+        {
+            Action = AuditActions.AuthApiKeyRejected,
+            InstanceScoped = true,
+            Outcome = AuditOutcome.Denied,
+            TargetType = nameof(ApiKey),
+            TargetId = key.Id.ToString(),
+            TargetName = key.DisplayName,
+            Metadata = new Dictionary<string, object?>
+            {
+                ["reason"] = reason,
+                ["subjectType"] = key.SubjectType.ToString(),
+                ["subjectId"] = key.SubjectId
+            }
+        }, Context.RequestAborted);
 }
