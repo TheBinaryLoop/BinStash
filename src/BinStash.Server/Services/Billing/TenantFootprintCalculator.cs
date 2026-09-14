@@ -76,6 +76,7 @@ public sealed class TenantFootprintCalculator : ITenantFootprintCalculator
         var sw = Stopwatch.StartNew();
 
         var roots = await ReleaseRootQueries.ForTenant(_db, tenantId).ToListAsync(ct);
+        var releaseCount = await _db.Releases.AsNoTracking().CountAsync(r => r.Repository.TenantId == tenantId, ct);
         var repositoryCount = await _db.Repositories.AsNoTracking().CountAsync(r => r.TenantId == tenantId, ct);
 
         if (roots.Count == 0)
@@ -155,7 +156,7 @@ public sealed class TenantFootprintCalculator : ITenantFootprintCalculator
                 UniqueLogicalBytes = uniqueBytes,
                 UniqueChunkCount = uniqueChunks,
                 LogicalBytes = logicalBytes,
-                ReleaseCount = roots.Count,
+                ReleaseCount = releaseCount,
                 RepositoryCount = repositoryCount
             };
         }
@@ -274,10 +275,8 @@ public sealed class TenantFootprintCalculator : ITenantFootprintCalculator
     {
         var total = await _db.ReleaseMetrics
             .AsNoTracking()
-            .Join(_db.Releases.AsNoTracking(), rm => rm.ReleaseId, r => r.Id, (rm, r) => new { rm, r.RepoId })
-            .Join(_db.Repositories.AsNoTracking(), x => x.RepoId, repo => repo.Id, (x, repo) => new { x.rm, repo.TenantId })
-            .Where(x => x.TenantId == tenantId)
-            .SumAsync(x => (decimal)x.rm.TotalLogicalBytes, ct);
+            .Where(m => m.Variant.Release.Repository.TenantId == tenantId)
+            .SumAsync(m => (decimal)m.TotalLogicalBytes, ct);
 
         return (long)total;
     }

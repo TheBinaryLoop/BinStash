@@ -581,8 +581,21 @@ public static class IngestSessionEndpoints
         if (ingestSession.IntendedRelease != null && !string.Equals(ingestSession.IntendedRelease, releasePackage.Version, StringComparison.OrdinalIgnoreCase))
             return Results.BadRequest($"Release version '{releasePackage.Version}' does not match the intended version '{ingestSession.IntendedRelease}' for this ingest session.");
         
-        if (await db.Releases.AnyAsync(r => r.RepoId == repo.Id && r.Version == releasePackage.Version))
-            return Results.Conflict($"A release with version '{releasePackage.Version}' already exists for this repository.");
+        if (!ReleaseTarget.TryCanonicalize(ingestSession.TargetKey, out var targetKey, out var targetError))
+            return Results.BadRequest(targetError);
+
+        // A version may already exist: that is what publishing a second target of it looks like.
+        // Only the (version, target) pair has to be free.
+        var release = await db.Releases
+            .Include(r => r.Variants)
+            .FirstOrDefaultAsync(r => r.RepoId == repo.Id && r.Version == releasePackage.Version);
+
+        if (release is not null && release.Variants.Any(v => v.TargetKey == targetKey))
+        {
+            return Results.Conflict(
+                $"Release '{releasePackage.Version}' already has a '{targetKey}' variant in this repository. " +
+                "Variants are append-only and are never replaced; publish a new version instead.");
+        }
 
         var createdAt = DateTimeOffset.UtcNow;
 
@@ -595,19 +608,28 @@ public static class IngestSessionEndpoints
         var releasePackageData = releasePackageStream.ToArray();
         var releasePackageHash = new Hash32(Blake3.Hasher.Hash(releasePackageData).AsSpan());
 
-        var release = new Release
+        var isNewRelease = release is null;
+        release ??= new Release
         {
             Id = releaseId,
             Version = releasePackage.Version,
-             CreatedAt = createdAt,
-             Notes = releasePackage.Notes,
-             RepoId = repo.Id,
-             Repository = repo,
-             ReleaseDefinitionChecksum = releasePackageHash,
+            CreatedAt = createdAt,
+            Notes = releasePackage.Notes,
+            RepoId = repo.Id,
+            Repository = repo,
 #pragma warning disable IL2026, IL3050 // ToJson uses reflection; Server is not AOT-published
-             CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null,
+            CustomProperties = releasePackage.CustomProperties.Count > 0 ? releasePackage.CustomProperties.ToJson() : null,
 #pragma warning restore IL2026, IL3050
-             SerializerVersion = ReleasePackageSerializer.Version
+        };
+
+        var variant = new ReleaseVariant
+        {
+            ReleaseId = release.Id,
+            Release = release,
+            TargetKey = targetKey,
+            CreatedAt = createdAt,
+            ReleaseDefinitionChecksum = releasePackageHash,
+            SerializerVersion = ReleasePackageSerializer.Version
         };
 
         await chunkStoreService.StoreReleasePackageAsync(store, releasePackageData);
@@ -695,7 +717,10 @@ public static class IngestSessionEndpoints
         ingestSession.State = IngestSessionState.Completed;
         ingestSession.CompletedAt = DateTimeOffset.UtcNow;
 
-        await db.Releases.AddAsync(release);
+        if (isNewRelease)
+            await db.Releases.AddAsync(release);
+
+        await db.ReleaseVariants.AddAsync(variant);
 
         var fileArtifactsInRelease = outputArtifacts.Count(x => x.Kind == OutputArtifactKind.File);
         var componentCountInRelease = outputArtifacts
@@ -705,7 +730,7 @@ public static class IngestSessionEndpoints
 
         var releaseMetrics = new ReleaseMetrics
         {
-            ReleaseId = release.Id,
+            VariantId = variant.Id,
             IngestSessionId = ingestSession.Id,
             CreatedAt = release.CreatedAt,
 
@@ -767,6 +792,7 @@ public static class IngestSessionEndpoints
             {
                 ["repositoryId"] = repo.Id,
                 ["version"] = releasePackage.Version,
+                ["target"] = targetKey,
                 ["logicalBytes"] = (long)totalLogicalBytes,
                 ["files"] = releaseMetrics.FilesInRelease,
                 ["ingestSessionId"] = sessionId
@@ -777,7 +803,7 @@ public static class IngestSessionEndpoints
         // their plan limit is checked against a current figure rather than a day-old one.
         footprintRefresh.Enqueue(repo.TenantId);
 
-        return Results.Created($"/api/releases/{releaseId}", null);
+        return Results.Created($"/api/releases/{release.Id}", null);
     }
     
     /// <summary>

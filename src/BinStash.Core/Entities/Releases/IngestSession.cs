@@ -57,4 +57,10 @@ public class IngestSession
     
     // Intended release version (stored for observability; authoritative check is at finalize time)
     public string? IntendedRelease { get; set; }
+
+    /// <summary>
+    /// Which build target this session will publish. Null means the release declares no target,
+    /// which finalize folds to <see cref="Contracts.Release.ReleaseTarget.Default"/>.
+    /// </summary>
+    public string? TargetKey { get; set; }
 }

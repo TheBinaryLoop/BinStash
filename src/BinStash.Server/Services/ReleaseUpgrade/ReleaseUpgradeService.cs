@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -128,14 +128,17 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
             // whose content metrics were never recorded (builds before 2026-03 did not write
             // logical size or chunk count). Both cases need the package read; only the first
             // needs it rewritten.
-            var releasesMissingMetrics = db.ReleaseMetrics
+            var variantsMissingMetrics = db.ReleaseMetrics
                 .Where(m => m.TotalLogicalBytes == 0 || m.ChunksInRelease == 0)
-                .Select(m => m.ReleaseId);
+                .Select(m => m.VariantId);
 
-            var releasesToUpgrade = await db.Releases
-                .Where(r => repoIds.Contains(r.RepoId)
-                            && (r.SerializerVersion < jobData.TargetSerializerVersion
-                                || releasesMissingMetrics.Contains(r.Id)))
+            // Upgrading is per variant, because the definition being rewritten is per variant.
+            // A release whose Linux target is current and whose Windows target is not upgrades
+            // only the one that needs it.
+            var releasesToUpgrade = await db.ReleaseVariants
+                .Where(v => repoIds.Contains(v.Release.RepoId)
+                            && (v.SerializerVersion < jobData.TargetSerializerVersion
+                                || variantsMissingMetrics.Contains(v.Id)))
                 .ToListAsync(cancellationToken);
 
             progress.TotalReleases = releasesToUpgrade.Count;
@@ -349,10 +352,10 @@ public sealed class ReleaseUpgradeService : IReleaseUpgradeService
         IChunkStoreService chunkStoreService,
         ChunkStore store,
         ReleasePackage package,
-        Guid releaseId,
+        Guid variantId,
         CancellationToken ct)
     {
-        var metrics = await db.ReleaseMetrics.FirstOrDefaultAsync(m => m.ReleaseId == releaseId, ct);
+        var metrics = await db.ReleaseMetrics.FirstOrDefaultAsync(m => m.VariantId == variantId, ct);
         if (metrics is null)
             return;
 
