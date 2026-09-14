@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Hammer, RefreshCw, Trash2 } from '@lucide/vue'
+import { Hammer, RefreshCw, ShieldOff, Trash2 } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -14,6 +14,7 @@ import PageHeader from '@/components/app/PageHeader.vue'
 import StatCard from '@/components/app/StatCard.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMutation, useQuery } from '@/composables/useGraphql'
 import {
   BackgroundJobsDocument,
@@ -129,9 +130,22 @@ async function confirmCollect({ dryRun, skipReclaim }: { dryRun: boolean; skipRe
         <PageHeader :title="detail.name">
           <template #badge>
             <Badge variant="secondary" class="font-mono">{{ detail.type }}</Badge>
-            <!-- A read-only store rejects every upload routed to it; that is worth a badge
-                 rather than a line on the settings screen nobody opens. -->
-            <Badge v-if="detail.probeMode === 'ReadOnly'" variant="destructive">read-only</Badge>
+            <!-- Describes the health probe, NOT the store: a ReadOnly probe skips the write
+                 round trip, so "healthy" means the path exists and has space rather than that
+                 writes to it work. Deliberately not an alarm — ingest is never gated on this,
+                 and badging it as "read-only" reads as "this store is refusing uploads". -->
+            <Tooltip v-if="detail.probeMode === 'ReadOnly'">
+              <TooltipTrigger as-child>
+                <Badge variant="outline" class="cursor-default gap-1">
+                  <ShieldOff class="size-3" />
+                  write probe off
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent class="max-w-xs">
+                The health check reports free space but does not verify that writes succeed.
+                Uploads are unaffected.
+              </TooltipContent>
+            </Tooltip>
           </template>
           <template #meta>
             <div class="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">

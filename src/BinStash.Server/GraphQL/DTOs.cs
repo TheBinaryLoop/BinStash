@@ -149,10 +149,19 @@ public sealed class ChunkStoreGql
     public ChunkStoreBackendSettingsGql? BackendSettings { get; init; }
 
     /// <summary>
-    /// <c>ReadOnly</c> or <c>ReadWrite</c>. Worth showing rather than leaving to the settings
-    /// screen: a read-only store rejects ingest, and "uploads to this workspace started failing"
-    /// is otherwise a long way from its cause.
+    /// How the health probe tests this store — <c>ReadWrite</c> or <c>ReadOnly</c>.
     /// </summary>
+    /// <remarks>
+    /// This governs the <em>probe</em>, not the store: a <c>ReadWrite</c> probe writes a small
+    /// file into <c>.health/</c> every 15 seconds, reads it back and deletes it, while a
+    /// <c>ReadOnly</c> probe reports free space and skips that round trip. Ingest is never gated
+    /// on it — a store set to <c>ReadOnly</c> still accepts uploads.
+    ///
+    /// <para>
+    /// Worth surfacing because the two answer different questions: under a <c>ReadOnly</c> probe
+    /// a healthy verdict means "the path exists and has space", not "writes to it work".
+    /// </para>
+    /// </remarks>
     public required string ProbeMode { get; init; }
 
     /// <summary>
