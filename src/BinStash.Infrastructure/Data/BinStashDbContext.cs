@@ -14,15 +14,25 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Core.Entities;
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Infrastructure.Data;
 
+/// <summary>
+/// Also hosts the ASP.NET Data Protection key ring (<see cref="IDataProtectionKeyContext"/>).
+/// The default key ring is per-process and ephemeral, which silently invalidates every auth
+/// cookie and Identity-issued token on restart and makes those tokens unverifiable on any other
+/// replica. Persisting it to the database — already a hard dependency — is what lets the server
+/// restart without signing everyone out and lets more than one replica share a key.
+/// </summary>
 public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
-    : IdentityDbContext<BinStashUser, IdentityRole<Guid>, Guid>(options)
+    : IdentityDbContext<BinStashUser, IdentityRole<Guid>, Guid>(options), IDataProtectionKeyContext
 {
+    public DbSet<DataProtectionKey> DataProtectionKeys { get; set; }
+
     public DbSet<ApiKey> ApiKeys { get; set; }
     public DbSet<Chunk> Chunks { get; set; }
     public DbSet<ChunkStore> ChunkStores { get; set; }
@@ -51,6 +61,7 @@ public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     public DbSet<SetupCode> SetupCodes { get; set; }
     public DbSet<BackgroundJob> BackgroundJobs { get; set; }
     public DbSet<AuditLogEntry> AuditLogEntries { get; set; }
+    public DbSet<TenantTrafficSample> TenantTrafficSamples { get; set; }
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -30,6 +30,9 @@ using BinStash.Server.Billing;
 using BinStash.Server.Context;
 using BinStash.Server.Extensions;
 using BinStash.Server.Services.ChunkStores;
+using BinStash.Core.Traffic;
+using BinStash.Server.Services.Usage;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using ZstdNet;
 
@@ -54,7 +57,12 @@ public static class IngestSessionEndpoints
             .Produces<CreateIngestSessionResponse>(201)
             .Produces(400)
             .Produces(404)
-            .RequireRepoPermission(RepositoryPermission.Write);
+            .Produces(402)
+            .RequireRepoPermission(RepositoryPermission.Write)
+            // Session creation is the admission point for writes, and the quota check below lives
+            // on it. Throttling it is what stops a client from working around a per-session limit
+            // by opening sessions in a loop.
+            .RequireRateLimiting(RateLimitPolicies.IngestSessionCreation);
         
         // Nested session group
         var session = group.MapGroup("/sessions/{sessionId:guid}")
@@ -112,12 +120,14 @@ public static class IngestSessionEndpoints
         return group;
     }
 
-    private static async Task<IResult> CreateIngestSessionAsync(Guid tenantId, Guid repoId, CreateIngestSessionRequest? body, BinStashDbContext db, BillingLimitsCache billingLimitsCache, CancellationToken ct)
+    private static async Task<IResult> CreateIngestSessionAsync(Guid tenantId, Guid repoId, CreateIngestSessionRequest? body, BinStashDbContext db, TenantQuotaGuard quota, CancellationToken ct)
     {
-        // Enforce quota: check billing limits before creating the session.
-        var limits = await billingLimitsCache.GetCachedLimitsAsync(tenantId, ct);
-        if (!limits.IsIngestAllowed)
-            return Results.Problem(statusCode: 402, title: "Quota exceeded", detail: "Your plan does not allow further ingest.");
+        // Enforce quota before admitting the write. Covers ingest, the storage switch, and the
+        // storage ceiling as it stands right now; finalize checks the ceiling again once the
+        // release's real size is known.
+        var admission = await quota.CheckIngestAsync(tenantId, ct);
+        if (!admission.IsAllowed)
+            return admission.ToProblem();
 
         // If we have authentication, we can link the session to a user. We could also enforce per-user limits.
         // For now, we just create a session with a random ID and 30-minute expiry.
@@ -379,7 +389,7 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
 
-    private static async Task<IResult> UploadChunksBatchAsync(Guid repoId, List<ChunkUploadDto> chunks, BinStashDbContext db, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine, HttpRequest request)
+    private static async Task<IResult> UploadChunksBatchAsync(Guid repoId, List<ChunkUploadDto> chunks, BinStashDbContext db, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine, ITrafficRecorder trafficRecorder, HttpRequest request)
     {
         if (!request.Headers.TryGetValue("X-Ingest-Session-Id", out var ingestIdHeaders) ||
             !Guid.TryParse(ingestIdHeaders.First(), out var ingestId))
@@ -426,6 +436,10 @@ public static class IngestSessionEndpoints
 
         ingestSession.ChunksSeenTotal += chunks.Count;
         ingestSession.ChunksSeenUnique += uniqueChunks.Count;
+
+        // The REST upload path carries the same payloads as the gRPC one and has to be counted
+        // too, or an instance whose clients use it would show no ingress at all.
+        trafficRecorder.RecordIngress(repo.TenantId, chunks.Sum(c => (long)(c.Data?.Length ?? 0)));
 
         var checksumArray = uniqueChunks.Select(c => c.Hash).ToArray();
 
@@ -520,7 +534,7 @@ public static class IngestSessionEndpoints
         return Results.Ok();
     }
     
-    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine, IAuditLogWriter audit, HttpRequest request)
+    private static async Task<IResult> FinalizeIngestSessionAsync(Guid repoId, Guid sessionId, BinStashDbContext db, IChunkStoreService chunkStoreService, IGcQuarantineService quarantine, IAuditLogWriter audit, TenantQuotaGuard quota, HttpRequest request)
     {
         var ingestSession = await db.IngestSessions.FindAsync(sessionId);
         var repo = await db.Repositories.FindAsync(repoId);
@@ -637,6 +651,14 @@ public static class IngestSessionEndpoints
         }
 
         ingestSession.TotalLogicalBytes = (long)totalLogicalBytes;
+
+        // The authoritative storage check. Session creation checked the ceiling against usage as
+        // it stood then; this is the first point at which the size of *this* release is known, so
+        // it is the only place the ceiling can actually be held. Checked before the integrity
+        // work below because there is no reason to pay for it on a release that cannot land.
+        var storageAdmission = await quota.CheckStorageCommitAsync(repo.TenantId, (long)totalLogicalBytes);
+        if (!storageAdmission.IsAllowed)
+            return storageAdmission.ToProblem();
 
         var fileDefinitionBytesByChecksum = distinctFileHashes.Count == 0
             ? new Dictionary<string, byte[]>()

@@ -1,0 +1,35 @@
+fragment TrafficSeries on TrafficSeriesGql {
+  grain
+  fromUtc
+  toUtc
+  totalIngressBytes
+  totalEgressBytes
+  totalRequestCount
+  points {
+    bucketStartUtc
+    ingressBytes
+    egressBytes
+    requestCount
+  }
+}
+
+query TenantTraffic($grain: TrafficGrainGql!, $fromUtc: DateTime, $toUtc: DateTime) {
+  tenantTraffic(grain: $grain, fromUtc: $fromUtc, toUtc: $toUtc) {
+    ...TrafficSeries
+  }
+}
+
+query InstanceTraffic($grain: TrafficGrainGql!, $fromUtc: DateTime, $toUtc: DateTime) {
+  instanceTraffic(grain: $grain, fromUtc: $fromUtc, toUtc: $toUtc) {
+    total {
+      ...TrafficSeries
+    }
+    byTenant {
+      tenantId
+      tenantName
+      ingressBytes
+      egressBytes
+      requestCount
+    }
+  }
+}

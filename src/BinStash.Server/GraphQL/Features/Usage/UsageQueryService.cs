@@ -15,27 +15,26 @@
 
 using BinStash.Core.Auth.Tenant;
 using BinStash.Core.Billing;
-using BinStash.Infrastructure.Data;
+using BinStash.Server.Services.Usage;
 using BinStash.Server.GraphQL.Auth;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.EntityFrameworkCore;
 
 namespace BinStash.Server.GraphQL.Features.Usage;
 
 public sealed class UsageQueryService
 {
-    private readonly BinStashDbContext _db;
+    private readonly TenantUsageService _usage;
     private readonly IBillingProvider _billingProvider;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IAuthorizationService _authorizationService;
 
     public UsageQueryService(
-        BinStashDbContext db,
+        TenantUsageService usage,
         IBillingProvider billingProvider,
         IHttpContextAccessor httpContextAccessor,
         IAuthorizationService authorizationService)
     {
-        _db = db;
+        _usage = usage;
         _billingProvider = billingProvider;
         _httpContextAccessor = httpContextAccessor;
         _authorizationService = authorizationService;
@@ -54,36 +53,22 @@ public sealed class UsageQueryService
 
         // Only logical bytes are summed. Stored/compressed footprint is a property of the
         // SHARED chunk store, not of this tenant, so it is neither billable here nor safe to
-        // report back (see TenantUsageGql).
-        var totals = await _db.ReleaseMetrics
-            .AsNoTracking()
-            .Join(_db.Releases.AsNoTracking(), rm => rm.ReleaseId, r => r.Id, (rm, r) => new { rm, r.RepoId })
-            .Join(_db.Repositories.AsNoTracking(), x => x.RepoId, repo => repo.Id, (x, repo) => new { x.rm, repo.TenantId })
-            .Where(x => x.TenantId == tenantId)
-            .GroupBy(_ => 1)
-            .Select(g => new
-            {
-                LogicalBytes = (long)g.Sum(x => (decimal)x.rm.TotalLogicalBytes),
-                ReleaseCount = g.Count()
-            })
-            .FirstOrDefaultAsync(ct);
-
-        var repositoryCount = await _db.Repositories
-            .AsNoTracking()
-            .CountAsync(r => r.TenantId == tenantId, ct);
+        // report back (see TenantUsageGql). TenantUsageService owns that definition so the
+        // number shown here and the number the quota is enforced against cannot diverge.
+        var totals = await _usage.GetTotalsAsync(tenantId, ct);
 
         var limits = await _billingProvider.GetLimitsAsync(tenantId, ct);
 
         // NoOp billing reports long.MaxValue, which is "no plan limit" rather than a real ceiling.
         var isLimited = limits.MaxStorageBytes is > 0 and < long.MaxValue;
-        var logicalBytes = totals?.LogicalBytes ?? 0;
+        var logicalBytes = totals.LogicalBytes;
 
         return new TenantUsageGql
         {
             TenantId = tenantId,
             LogicalBytes = logicalBytes,
-            ReleaseCount = totals?.ReleaseCount ?? 0,
-            RepositoryCount = repositoryCount,
+            ReleaseCount = totals.ReleaseCount,
+            RepositoryCount = totals.RepositoryCount,
             MaxStorageBytes = isLimited ? limits.MaxStorageBytes : null,
             IsLimited = isLimited,
             // Quota is measured against logical bytes, matching how the tenant is billed.

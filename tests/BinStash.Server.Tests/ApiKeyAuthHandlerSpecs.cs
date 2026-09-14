@@ -17,6 +17,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
+using BinStash.Core.Auditing;
 using BinStash.Core.Auth;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
@@ -43,6 +44,7 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
 
     private readonly BinStashDbContext _db;
     private readonly PasswordHasher<ApiKey> _hasher;
+    private readonly RecordingAuditLogWriter _audit = new();
 
     public ApiKeyAuthHandlerSpecs()
     {
@@ -99,7 +101,7 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
         var optionsMonitor = new FakeOptionsMonitor<AuthenticationSchemeOptions>(
             new AuthenticationSchemeOptions());
 
-        var handler = new ApiKeyAuthHandler(optionsMonitor, loggerFactory, UrlEncoder.Default, _db, _hasher);
+        var handler = new ApiKeyAuthHandler(optionsMonitor, loggerFactory, UrlEncoder.Default, _db, _hasher, _audit);
 
         var scheme = new AuthenticationScheme(SchemeName, null, typeof(ApiKeyAuthHandler));
 
@@ -294,6 +296,82 @@ public class ApiKeyAuthHandlerSpecs : IDisposable
         var result = await handler.AuthenticateAsync();
 
         result.Succeeded.Should().BeTrue("scheme prefix matching must be case-insensitive");
+    }
+
+    // -----------------------------------------------------------------------
+    // Audit: refusals involving a real key are recorded, noise is not
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task WrongSecret_IsAudited()
+    {
+        var (key, _) = await SeedApiKeyAsync();
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(key.Id)}.wrongsecret");
+
+        await handler.AuthenticateAsync();
+
+        var entry = _audit.Entries.Should().ContainSingle().Subject;
+        entry.Action.Should().Be(AuditActions.AuthApiKeyRejected);
+        entry.Outcome.Should().Be(AuditOutcome.Denied);
+        entry.TargetId.Should().Be(key.Id.ToString());
+        entry.TargetName.Should().Be(key.DisplayName);
+        entry.Metadata!["reason"].Should().Be("secret_mismatch");
+    }
+
+    [Fact]
+    public async Task RevokedKey_IsAudited()
+    {
+        var (key, rawSecret) = await SeedApiKeyAsync(revokedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(key.Id)}.{rawSecret}");
+
+        await handler.AuthenticateAsync();
+
+        var entry = _audit.Entries.Should().ContainSingle().Subject;
+        entry.Action.Should().Be(AuditActions.AuthApiKeyRejected);
+        entry.Metadata!["reason"].Should().Be("revoked_or_expired");
+    }
+
+    [Fact]
+    public async Task UnknownKeyId_IsNotAudited()
+    {
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(Guid.NewGuid())}.somesecret");
+
+        await handler.AuthenticateAsync();
+
+        _audit.Entries.Should().BeEmpty(
+            "an unknown id touches no real credential, and auditing it would let anyone fill the table");
+    }
+
+    [Fact]
+    public async Task MalformedKey_IsNotAudited()
+    {
+        var (handler, _) = await BuildHandlerAsync("ApiKey not-a-valid-key");
+
+        await handler.AuthenticateAsync();
+
+        _audit.Entries.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ValidKey_IsNotAudited()
+    {
+        var (key, rawSecret) = await SeedApiKeyAsync();
+        var (handler, _) = await BuildHandlerAsync($"ApiKey {EncodeId(key.Id)}.{rawSecret}");
+
+        await handler.AuthenticateAsync();
+
+        _audit.Entries.Should().BeEmpty("successful machine auth happens on every CI request; the trail records what it did, not that it authenticated");
+    }
+
+    private sealed class RecordingAuditLogWriter : IAuditLogWriter
+    {
+        public List<AuditEntryDraft> Entries { get; } = [];
+
+        public Task WriteAsync(AuditEntryDraft entry, CancellationToken ct = default)
+        {
+            Entries.Add(entry);
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>

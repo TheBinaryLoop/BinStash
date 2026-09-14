@@ -22,7 +22,16 @@
   - The project **overview page still shows Plane's default demo template text** — ignore it; the work items are the real content.
   - To use: `retrieve_work_item_by_identifier("BINST-93")` for one ticket; `list_work_items(project_id, …)` with PQL/`order_by`; `childOf("BINST-…")` for epic children. Treat ticket titles as intent, not current truth (e.g. `BINST-97` says "SignalR" but the code uses HotChocolate subscriptions).
 
+## In-Repo Plans
+- **`docs/enterprise-readiness.md`** — the phased plan for making BinStash sellable to enterprises and
+  operable as a hosted service. Phase 1 (auth hardening, quota enforcement, audit coverage, traffic
+  recording) is done; Phases 2–4 (observability and backup, object storage and multi-replica,
+  enterprise gates such as SSO/SMTP/secrets/JWT) are open. It also records **decisions already made**
+  — read that section before re-arguing where traffic storage belongs, what quota is measured
+  against, or why the analysis endpoint requires Write. This is a plan, not a backlog; individual
+  work items still belong in Plane.
+
 ## Secondary / Background Sources (treat as partially stale)
 - **Recovered prior `memory-bank/*`** (deleted from the working tree; read from git for background): predates the SaaS/auth/frontend work, claimed `.rdef` V4 (now V6) and an incomplete CliFx migration (now complete). Useful for history; **not** current truth.
-- **`README.md`**: predates SaaS/auth/frontend; links an aspirational `docs/` directory that does not exist.
+- **`README.md`**: predates SaaS/auth/frontend; links `docs/architecture.md`, `docs/cli-reference.md`, `docs/file-format.md`, `docs/performance.md` and `docs/faq.md`, none of which exist. `docs/` itself now does — it holds `enterprise-readiness.md` and nothing else.
 - **`CLAUDE.md` + `.ai/AGENTS.md`**: authoritative for agent workflow, guardrails, and the project's memory identity (`entityType: project`, `entity: binstash`).

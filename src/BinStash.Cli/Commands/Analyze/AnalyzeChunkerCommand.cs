@@ -18,17 +18,7 @@ using CliFx;
 using CliFx.Binding;
 using CliFx.Infrastructure;
 
-namespace BinStash.Cli.Commands;
-
-[Command("analyze", Description = "Provides tools to tune chunkers and deduplication settings for repositories and chunk stores.")]
-public partial class AnalyzeBaseCommand : ICommand
-{
-    public ValueTask ExecuteAsync(IConsole console)
-    {
-        // TODO: Add subcommands for analyzing chunk stores and repositories
-        throw new CommandException("Please specify a subcommand for 'analyze'. Available subcommands: chunker.", showHelp: true);
-    }
-}
+namespace BinStash.Cli.Commands.Analyze;
 
 [Command("analyze chunker", Description = "Recommends chunker settings based on the target folder's content.")]
 public partial class AnalyzeChunkerCommand : ICommand

@@ -26,6 +26,7 @@ public static class EndpointRouteBuilderExtensions
         app.MapIngestSessionEndpoints();
         app.MapInstanceEndpoints();
         app.MapReleaseEndpoints();
+        app.MapRepositoryAnalysisEndpoints();
         app.MapSetupEndpoints();
         app.MapCliApiEndpoints();
         // The following REST surfaces were migrated to GraphQL and removed:

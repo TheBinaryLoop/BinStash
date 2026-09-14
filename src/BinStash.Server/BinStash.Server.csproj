@@ -35,6 +35,14 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!-- The egress meter's counting stream is an internal implementation detail with an
+             invariant worth testing directly: every byte reported exactly once. -->
+        <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+            <_Parameter1>BinStash.Server.Tests</_Parameter1>
+        </AssemblyAttribute>
+    </ItemGroup>
+
+    <ItemGroup>
       <Content Include="..\..\.dockerignore">
         <Link>.dockerignore</Link>
       </Content>

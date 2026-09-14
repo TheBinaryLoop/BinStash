@@ -20,8 +20,23 @@ using BinStash.Server.Auth.Ingest;
 using BinStash.Server.Auth.Instance;
 using BinStash.Server.Auth.Repository;
 using BinStash.Server.Auth.Tenant;
+using Microsoft.AspNetCore.Http.Metadata;
 
 namespace BinStash.Server.Extensions;
+
+/// <summary>
+/// Caps the request body for one endpoint. Honoured by routing before the endpoint runs, so the
+/// body is refused as it arrives rather than after it has been buffered.
+/// </summary>
+/// <remarks>
+/// Needed because an endpoint otherwise inherits the server-wide ceiling, which has to stay large
+/// enough for batched chunk upload and the multipart finalize. A login handler inheriting that
+/// means an unauthenticated caller can make the server read tens of megabytes per connection.
+/// </remarks>
+internal sealed class SmallRequestBodyMetadata(long maxBytes) : IRequestSizeLimitMetadata
+{
+    public long? MaxRequestBodySize { get; } = maxBytes;
+}
 
 public static class EndpointConventionBuilderExtensions
 {
@@ -38,6 +53,9 @@ public static class EndpointConventionBuilderExtensions
 
         public IEndpointConventionBuilder RequireValidIngestSession()
             => builder.AddEndpointFilter(new IngestSessionBelongsToRepoFilter());
+
+        public IEndpointConventionBuilder RequireSmallRequestBody(long maxBytes)
+            => builder.WithMetadata(new SmallRequestBodyMetadata(maxBytes));
     }
     
     extension(RouteHandlerBuilder builder)
@@ -53,6 +71,9 @@ public static class EndpointConventionBuilderExtensions
 
         public RouteHandlerBuilder RequireValidIngestSession()
             => builder.AddEndpointFilter(new IngestSessionBelongsToRepoFilter());
+
+        public RouteHandlerBuilder RequireSmallRequestBody(long maxBytes)
+            => builder.WithMetadata(new SmallRequestBodyMetadata(maxBytes));
     }
     
     extension(RouteGroupBuilder builder)
@@ -68,5 +89,8 @@ public static class EndpointConventionBuilderExtensions
 
         public RouteGroupBuilder RequireValidIngestSession()
             => builder.AddEndpointFilter(new IngestSessionBelongsToRepoFilter());
+
+        public RouteGroupBuilder RequireSmallRequestBody(long maxBytes)
+            => builder.WithMetadata(new SmallRequestBodyMetadata(maxBytes));
     }
 }

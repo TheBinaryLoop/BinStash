@@ -12,6 +12,13 @@ using BinStash.Infrastructure.Storage.FileDefinition;
 using BinStash.Server.Endpoints;
 using BinStash.Server.Services.ChunkStores;
 using FluentAssertions;
+using BinStash.Core.Traffic;
+using BinStash.Server.Billing;
+using BinStash.Server.Configuration;
+using BinStash.Server.Services.Usage;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -45,29 +52,7 @@ public class EgressMeterTests : IDisposable
     public async Task GetReleaseDownload_CallsRecordEgress_WithActualBytesWritten()
     {
         // Arrange
-        var tenantId = Guid.NewGuid();
-        var releaseId = Guid.NewGuid();
-        var repoId = Guid.NewGuid();
-
-        var store = new ChunkStore("test-store", ChunkStoreType.Local, new LocalFolderBackendSettings { Path = "/tmp/test" });
-        var repo = new Repository { Name = "test-repo", ChunkStore = store, TenantId = tenantId };
-        typeof(Repository).GetProperty("Id")!.SetValue(repo, repoId);
-
-        var release = new Release
-        {
-            Id = releaseId,
-            Version = "1.0.0",
-            RepoId = repoId,
-            Repository = repo,
-            ReleaseDefinitionChecksum = default,
-            CreatedAt = DateTimeOffset.UtcNow,
-            SerializerVersion = 0,
-        };
-
-        _db.ChunkStores.Add(store);
-        _db.Repositories.Add(repo);
-        _db.Releases.Add(release);
-        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        var (tenantId, releaseId) = await SeedReleaseAsync();
 
         var meteringService = new SpyEgressMeteringService();
         var loggerFactory = NullLoggerFactory.Instance;
@@ -95,8 +80,12 @@ public class EgressMeterTests : IDisposable
             _db,
             stubChunkStore,
             meteringService,
+            new BufferedTrafficRecorder(),
+            BuildQuotaGuard(),
+            Options.Create(new BillingSettings()),
             new NoOpAuditLogWriter(),
-            loggerFactory
+            loggerFactory,
+            CancellationToken.None
         ])!;
 
         await task;
@@ -108,9 +97,168 @@ public class EgressMeterTests : IDisposable
             "the tar.zst stream must contain at least the tar header bytes");
     }
 
+    [Fact]
+    public async Task GetReleaseDownload_WhenEgressNotAllowed_Returns402AndMetersNothing()
+    {
+        var (tenantId, releaseId) = await SeedReleaseAsync();
+        var meteringService = new SpyEgressMeteringService();
+
+        var (result, _) = await InvokeDownloadAsync(
+            tenantId, releaseId, meteringService,
+            BuildQuotaGuard(isEgressAllowed: false),
+            new BillingSettings());
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.RequestServices = BuildResultServices();
+        httpContext.Response.Body = new MemoryStream();
+        await result.ExecuteAsync(httpContext);
+
+        httpContext.Response.StatusCode.Should().Be(402);
+        meteringService.Calls.Should().BeEmpty(
+            "a tenant that is out of plan must be refused before it is served a single byte");
+    }
+
+    [Theory]
+    [InlineData(1L)]
+    [InlineData(16L)]
+    [InlineData(0L)]
+    public async Task GetReleaseDownload_MetersExactlyWhatItServed(long checkpointBytes)
+    {
+        var (tenantId, releaseId) = await SeedReleaseAsync();
+        var meteringService = new SpyEgressMeteringService();
+
+        var (_, servedBytes) = await InvokeDownloadAsync(
+            tenantId, releaseId, meteringService, BuildQuotaGuard(),
+            new BillingSettings { EgressMeterCheckpointBytes = checkpointBytes });
+
+        meteringService.Calls.Should().OnlyContain(c => c.TenantId == tenantId);
+        meteringService.Calls.Sum(c => c.Bytes).Should().Be(servedBytes,
+            "however the stream is partitioned into meter events, the tenant is billed for exactly what was written to the response");
+    }
+
+    [Fact]
+    public async Task GetReleaseDownload_WithCheckpointsDisabled_MetersExactlyOnce()
+    {
+        var (tenantId, releaseId) = await SeedReleaseAsync();
+        var meteringService = new SpyEgressMeteringService();
+
+        await InvokeDownloadAsync(
+            tenantId, releaseId, meteringService,
+            BuildQuotaGuard(),
+            new BillingSettings { EgressMeterCheckpointBytes = 0 });
+
+        meteringService.Calls.Should().ContainSingle("0 means report once, when the download ends");
+    }
+
+    [Fact]
+    public async Task GetReleaseDownload_RecordsTheSameBytesAsEgressTraffic()
+    {
+        var (tenantId, releaseId) = await SeedReleaseAsync();
+        var meteringService = new SpyEgressMeteringService();
+        var traffic = new BufferedTrafficRecorder();
+
+        await InvokeDownloadAsync(tenantId, releaseId, meteringService, BuildQuotaGuard(), new BillingSettings(), traffic);
+
+        var delta = traffic.Drain().Should().ContainSingle().Subject;
+        delta.TenantId.Should().Be(tenantId);
+        delta.EgressBytes.Should().Be(meteringService.Calls.Sum(c => c.Bytes),
+            "the operator's chart and the billing meter are fed from the same measurement");
+        delta.IngressBytes.Should().Be(0);
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private async Task<(Guid TenantId, Guid ReleaseId)> SeedReleaseAsync()
+    {
+        var tenantId = Guid.NewGuid();
+        var releaseId = Guid.NewGuid();
+        var repoId = Guid.NewGuid();
+
+        var store = new ChunkStore("test-store", ChunkStoreType.Local, new LocalFolderBackendSettings { Path = "/tmp/test" });
+        var repo = new Repository { Name = "test-repo", ChunkStore = store, TenantId = tenantId };
+        typeof(Repository).GetProperty("Id")!.SetValue(repo, repoId);
+
+        var release = new Release
+        {
+            Id = releaseId,
+            Version = "1.0.0",
+            RepoId = repoId,
+            Repository = repo,
+            ReleaseDefinitionChecksum = default,
+            CreatedAt = DateTimeOffset.UtcNow,
+            SerializerVersion = 0,
+        };
+
+        _db.ChunkStores.Add(store);
+        _db.Repositories.Add(repo);
+        _db.Releases.Add(release);
+        await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        return (tenantId, releaseId);
+    }
+
+    private async Task<(IResult Result, long ServedBytes)> InvokeDownloadAsync(Guid tenantId, Guid releaseId, IUsageMeteringService metering, TenantQuotaGuard quota, BillingSettings billingSettings, BufferedTrafficRecorder? traffic = null)
+    {
+        var method = typeof(ReleaseEndpoints).GetMethod(
+            "GetReleaseDownloadAsync",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        method.Should().NotBeNull("GetReleaseDownloadAsync must exist as a private static method");
+
+        var httpContext = new DefaultHttpContext();
+        var body = new MemoryStream();
+        httpContext.Response.Body = body;
+
+        var result = await (Task<IResult>)method!.Invoke(null, [
+            tenantId,
+            releaseId,
+            null,           // component
+            null,           // file
+            (Guid?)null,    // diffReleaseId
+            httpContext.Response,
+            _db,
+            new StubChunkStoreService(),
+            metering,
+            traffic ?? new BufferedTrafficRecorder(),
+            quota,
+            Options.Create(billingSettings),
+            new NoOpAuditLogWriter(),
+            NullLoggerFactory.Instance,
+            CancellationToken.None
+        ])!;
+
+        return (result, body.Length);
+    }
+
+    private static IServiceProvider BuildResultServices()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddProblemDetails();
+        return services.BuildServiceProvider();
+    }
+
+    private TenantQuotaGuard BuildQuotaGuard(bool isEgressAllowed = true)
+        => new(new BillingLimitsCache(new StubBillingProvider(isEgressAllowed), new MemoryCache(new MemoryCacheOptions())), new TenantUsageService(_db), new NoOpAuditLogWriter());
+
     // -------------------------------------------------------------------------
     // Fakes
     // -------------------------------------------------------------------------
+
+    private sealed class StubBillingProvider(bool isEgressAllowed) : IBillingProvider
+    {
+        public Task<IBillingLimits> GetLimitsAsync(Guid tenantId, CancellationToken ct = default)
+            => Task.FromResult<IBillingLimits>(new StubLimits(isEgressAllowed));
+    }
+
+    private sealed class StubLimits(bool isEgressAllowed) : IBillingLimits
+    {
+        public bool IsStorageAllowed => true;
+        public bool IsIngestAllowed => true;
+        public bool IsEgressAllowed { get; } = isEgressAllowed;
+        public long MaxStorageBytes => long.MaxValue;
+    }
 
     private sealed class SpyEgressMeteringService : IUsageMeteringService
     {

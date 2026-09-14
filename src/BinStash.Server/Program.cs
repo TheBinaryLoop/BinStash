@@ -22,6 +22,7 @@ using BinStash.Core.Auth.Tokens;
 using BinStash.Core.Entities;
 using BinStash.Core.Storage;
 using BinStash.Core.Storage.Gc;
+using BinStash.Core.Traffic;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage;
 using BinStash.Infrastructure.Templates;
@@ -46,6 +47,7 @@ using BinStash.Server.GraphQL.Features.Repositories;
 using BinStash.Server.GraphQL.Features.ServiceAccounts;
 using BinStash.Server.GraphQL.Features.StorageClasses;
 using BinStash.Server.GraphQL.Features.Tenants;
+using BinStash.Server.GraphQL.Features.Traffic;
 using BinStash.Server.GraphQL.Features.Usage;
 using BinStash.Server.GraphQL.Features.Users;
 using BinStash.Core.Auditing;
@@ -58,7 +60,9 @@ using BinStash.Server.HostedServices;
 using BinStash.Server.Middlewares;
 using BinStash.Server.Services.ChunkStores;
 using BinStash.Server.Services.ReleaseUpgrade;
+using BinStash.Server.Services.Usage;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -82,8 +86,8 @@ public static class Program
                 connectionString: builder.Configuration.GetConnectionString("BinStashDb")!,
                 name: "PostgreSQL",
                 failureStatus: HealthStatus.Degraded,
-                tags: ["db", "sql", "postgresql"])
-            .AddCheck<ChunkStoreHealthCheck>("chunkstores_live", tags: ["live"]);
+                tags: ["db", "sql", "postgresql", "ready"])
+            .AddCheck<ChunkStoreHealthCheck>("chunkstores_live", tags: ["live", "ready"]);
 
         // connection string from appsettings/env
         var connectionString = builder.Configuration.GetConnectionString("BinStashDb")
@@ -109,6 +113,27 @@ public static class Program
         builder.Services.AddOptions<StorageSettings>().ValidateOnStart();
         builder.Services.Configure<VersionGateSettings>(builder.Configuration.GetSection("VersionGate"));
         builder.Services.Configure<RequestMetricsSettings>(builder.Configuration.GetSection("RequestMetrics"));
+        builder.Services.Configure<SecurityHeaderSettings>(builder.Configuration.GetSection(SecurityHeaderSettings.SectionName));
+        builder.Services.Configure<RequestLimitSettings>(builder.Configuration.GetSection(RequestLimitSettings.SectionName));
+        builder.Services.Configure<BillingSettings>(builder.Configuration.GetSection(BillingSettings.SectionName));
+        builder.Services.Configure<TrafficSettings>(builder.Configuration.GetSection(TrafficSettings.SectionName));
+
+        var requestLimits = builder.Configuration.GetSection(RequestLimitSettings.SectionName).Get<RequestLimitSettings>() ?? new RequestLimitSettings();
+
+        // Kestrel and gRPC both ship a default here. Setting them explicitly from configuration is
+        // what makes the ingest path's appetite an operator decision rather than an inherited
+        // constant nobody has looked at.
+        builder.WebHost.ConfigureKestrel(kestrel =>
+        {
+            kestrel.Limits.MaxRequestBodySize = requestLimits.MaxRequestBodyBytes;
+        });
+
+        var securityHeaders = builder.Configuration.GetSection(SecurityHeaderSettings.SectionName).Get<SecurityHeaderSettings>() ?? new SecurityHeaderSettings();
+        builder.Services.AddHsts(hsts =>
+        {
+            hsts.MaxAge = TimeSpan.FromDays(securityHeaders.HstsMaxAgeDays);
+            hsts.IncludeSubDomains = securityHeaders.HstsIncludeSubDomains;
+        });
         
         // Add services to the container.
         builder.Services.AddSingleton<IChunkStoreStorageFactory, ChunkStoreStorageFactory>();
@@ -140,11 +165,21 @@ public static class Program
         builder.Services.AddScoped<AuditQueryService>();
         builder.Services.AddScoped<UsageQueryService>();
         builder.Services.AddScoped<IAuditLogWriter, AuditLogWriter>();
+        builder.Services.AddScoped<TenantUsageService>();
+        builder.Services.AddScoped<TenantQuotaGuard>();
+
+        // Traffic recording. The recorder is a singleton because it buffers across requests; the
+        // store is scoped because it writes through the request-scoped DbContext.
+        builder.Services.AddSingleton<BufferedTrafficRecorder>();
+        builder.Services.AddSingleton<ITrafficRecorder>(sp => sp.GetRequiredService<BufferedTrafficRecorder>());
+        builder.Services.AddScoped<ITrafficStore, TrafficStore>();
+        builder.Services.AddScoped<TrafficQueryService>();
         builder.Services.AddNoOpBilling();
         var billingLoader = new BillingPluginLoader();
         billingLoader.LoadAndRegisterServices(builder);
         builder.Services.AddResponseCompression();
         builder.Services.AddProblemDetails();
+        builder.Services.AddBinStashRateLimiting(builder.Configuration);
 
         builder.Services.AddCors(options =>
         {
@@ -167,6 +202,20 @@ public static class Program
         builder.Services.AddScoped<IPasswordHasher<SetupCode>, PasswordHasher<SetupCode>>();
 
         builder.Services.AddDbContext<BinStashDbContext>((_, optionsBuilder) => optionsBuilder.UseNpgsql(connectionString)/*.EnableSensitiveDataLogging()*/);
+
+        // The Data Protection key ring encrypts auth cookies and every Identity-issued token
+        // (email confirmation, password reset, 2FA remember-me). Left at its default it is
+        // generated per process and thrown away on exit, which signs everyone out on restart and
+        // makes a token issued by one replica unverifiable on another. Persisting it to the
+        // database — already a hard dependency — fixes both.
+        //
+        // SetApplicationName pins the isolation key. The default derives it from the content-root
+        // path, so two replicas unpacked to different paths would share a table and still refuse
+        // to read each other's keys. It must not change across deployments: changing it is
+        // equivalent to discarding the key ring.
+        builder.Services.AddDataProtection()
+            .PersistKeysToDbContext<BinStashDbContext>()
+            .SetApplicationName("BinStash");
 
         builder.Services.AddIdentityApiEndpoints<BinStashUser>(options =>
             {
@@ -267,6 +316,7 @@ public static class Program
         builder.Services.AddHostedService<ChunkStoreProbeService>();
         builder.Services.AddHostedService<ChunkStoreStatsHostedService>();
         builder.Services.AddHostedService<TenantStorageStatsHostedService>();
+        builder.Services.AddHostedService<TrafficFlushHostedService>();
         
         // Release upgrade pipeline: Channel queue → BackgroundService → ReleaseUpgradeService
         builder.Services.AddSingleton(Channel.CreateUnbounded<Guid>(new UnboundedChannelOptions
@@ -325,7 +375,10 @@ public static class Program
             .AddSorting()
             .AddProjections();
 
-        builder.Services.AddGrpc();
+        builder.Services.AddGrpc(grpc =>
+        {
+            grpc.MaxReceiveMessageSize = requestLimits.MaxGrpcReceiveBytes;
+        });
         
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
         builder.Services.AddOpenApi();
@@ -360,11 +413,31 @@ public static class Program
                 }));
         }
 
+        // First in the pipeline so the headers reach every response, including static SPA assets
+        // and anything short-circuited by the gates or the rate limiter below.
+        app.UseMiddleware<SecurityHeadersMiddleware>();
+
+        // HSTS is deliberately not applied in Development: the dev instance and the Vite dev
+        // server run on localhost, and teaching a browser to force HTTPS for localhost breaks
+        // every other project on the machine that serves plain HTTP there.
+        if (!app.Environment.IsDevelopment())
+        {
+            var headerSettings = app.Services.GetRequiredService<IOptions<SecurityHeaderSettings>>().Value;
+            if (headerSettings is { Enabled: true, HstsEnabled: true })
+                app.UseHsts();
+        }
+
         app.UseCors();
         app.UseHttpsRedirection();
         app.UseResponseCompression();
         app.UseStatusCodePages();
         app.UseMiddleware<RequestMetricsMiddleware>();
+
+        // Before the setup gate, which queries the database on every request until an instance is
+        // initialized, and before authentication, so a credential-stuffing run is turned away
+        // without the server hashing a password for it.
+        app.UseRateLimiter();
+
         app.UseMiddleware<SetupGateMiddleware>();
         app.UseMiddleware<VersionGateMiddleware>();
         app.UseMiddleware<TenantResolutionMiddleware>();
@@ -372,6 +445,30 @@ public static class Program
         app.UseAuthorization();
         app.UseDefaultFiles();
         app.UseStaticFiles();
+        // Three health endpoints, because they answer to three different callers.
+        //
+        // /health/live and /health/ready are what an orchestrator or load balancer polls, so they
+        // are anonymous — a probe has no credentials to present — and they answer with a bare
+        // status word. Neither reveals anything an unauthenticated caller could not already infer
+        // from whether the server answers at all.
+        //
+        // /health keeps the detailed report (store paths, free space, exception text) and stays
+        // behind instance admin, which is where that detail belongs.
+        app.MapHealthChecks("/health/live", new HealthCheckOptions
+        {
+            // Liveness must not depend on the database or the chunk stores: a dependency being
+            // down is a reason to stop taking traffic, not a reason to have the process killed
+            // and restarted into the same outage.
+            Predicate = _ => false,
+            ResponseWriter = WriteStatusOnlyAsync
+        }).AllowAnonymous();
+
+        app.MapHealthChecks("/health/ready", new HealthCheckOptions
+        {
+            Predicate = check => check.Tags.Contains("ready"),
+            ResponseWriter = WriteStatusOnlyAsync
+        }).AllowAnonymous();
+
         app.MapHealthChecks("/health", new HealthCheckOptions
         {
                 ResponseWriter = async (context, report) =>
@@ -402,6 +499,16 @@ public static class Program
         app.MapFallbackToFile("index.html");
         
         app.Run();
+    }
+
+    /// <summary>
+    /// Writes just the aggregate status word. Used by the anonymous probe endpoints, which need
+    /// the status code and nothing else — the detailed report is admin-only for a reason.
+    /// </summary>
+    private static Task WriteStatusOnlyAsync(HttpContext context, HealthReport report)
+    {
+        context.Response.ContentType = "text/plain";
+        return context.Response.WriteAsync(report.Status.ToString());
     }
 
     /// <summary>

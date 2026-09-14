@@ -1,31 +1,50 @@
 <script setup lang="ts">
-import { ArrowRight, FolderGit2, HardDrive, Package, Plus } from '@lucide/vue'
+import { ArrowRight, Ban, CircleCheck, FolderGit2, HardDrive, Package, Plus } from '@lucide/vue'
 import { computed } from 'vue'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
 import EmptyState from '@/components/app/EmptyState.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
+import QuotaAlert from '@/components/app/QuotaAlert.vue'
+import TrafficChart from '@/components/app/TrafficChart.vue'
 import StatCard from '@/components/app/StatCard.vue'
 import UsageMeter from '@/components/app/UsageMeter.vue'
 import { Button } from '@/components/ui/button'
 import { useQuery } from '@/composables/useGraphql'
-import { RepositoriesDocument, TenantUsageDocument } from '@/graphql/generated'
+import { RepositoriesDocument, TenantTrafficDocument, TenantUsageDocument } from '@/graphql/generated'
 import { formatBytes, formatNumber, formatRelative } from '@/lib/format'
 import { useTenantStore } from '@/stores/tenant'
 
 const tenants = useTenantStore()
 
 const usage = useQuery(TenantUsageDocument, {})
+const traffic = useQuery(TenantTrafficDocument, { grain: 'HOURLY' as const })
 const repositories = useQuery(RepositoriesDocument, () => ({
   first: 5,
   order: [{ createdAt: 'DESC' as const }],
 }))
 
 const stats = computed(() => usage.result.value?.tenantUsage)
+const trafficSeries = computed(() => traffic.result.value?.tenantTraffic)
 const repos = computed(() => repositories.result.value?.repositories?.nodes ?? [])
 const repoTotal = computed(() => repositories.result.value?.repositories?.totalCount ?? 0)
 
 const params = computed(() => ({ tenantId: tenants.activeTenantId }))
+
+/**
+ * The three limits the server actually enforces — an ingest session is refused when uploads are
+ * off, a finalize when storage is, a download when downloads are. Shown here rather than only on
+ * the usage page because this is where someone looks first when a build has started failing.
+ */
+const entitlements = computed(() => {
+  const s = stats.value
+  if (!s) return []
+  return [
+    { label: 'Uploads', allowed: s.isIngestAllowed },
+    { label: 'Downloads', allowed: s.isEgressAllowed },
+    { label: 'Storage growth', allowed: s.isStorageAllowed },
+  ]
+})
 
 </script>
 
@@ -42,6 +61,8 @@ const params = computed(() => ({ tenantId: tenants.activeTenantId }))
         </Button>
       </template>
     </PageHeader>
+
+    <QuotaAlert :usage="stats" :details-to="{ name: 'usage', params }" />
 
     <AsyncSection
       :loading="usage.loading.value"
@@ -73,10 +94,36 @@ const params = computed(() => ({ tenantId: tenants.activeTenantId }))
       </div>
     </AsyncSection>
 
+    <section class="bg-card hairline space-y-4 rounded-lg p-4">
+      <div>
+        <h2 class="text-sm font-medium">Traffic</h2>
+        <p class="text-muted-foreground text-xs">
+          Bytes uploaded and downloaded over the last 7 days. Measured on the wire, so it reads
+          smaller than what the releases logically weigh.
+        </p>
+      </div>
+
+      <AsyncSection
+        :loading="traffic.loading.value"
+        :error="traffic.error.value"
+        :has-data="!!trafficSeries"
+        :skeleton-rows="3"
+        @retry="traffic.refetch()"
+      >
+        <TrafficChart
+          v-if="trafficSeries"
+          :points="trafficSeries.points"
+          :from-utc="trafficSeries.fromUtc"
+          :to-utc="trafficSeries.toUtc"
+          grain="HOURLY"
+        />
+      </AsyncSection>
+    </section>
+
     <div class="grid gap-4 lg:grid-cols-3">
       <section class="bg-card hairline space-y-4 self-start rounded-lg p-4 lg:col-span-1">
         <div class="flex items-baseline justify-between">
-          <h2 class="text-sm font-medium">Storage</h2>
+          <h2 class="text-sm font-medium">Storage &amp; quota</h2>
           <RouterLink
             :to="{ name: 'usage', params }"
             class="text-muted-foreground hover:text-foreground text-xs"
@@ -102,6 +149,23 @@ const params = computed(() => ({ tenantId: tenants.activeTenantId }))
             <dd class="font-mono tabular-nums">{{ formatNumber(stats.releaseCount) }}</dd>
           </div>
         </dl>
+
+        <ul v-if="stats" class="border-hairline space-y-1.5 border-t pt-3 text-xs">
+          <li
+            v-for="entitlement in entitlements"
+            :key="entitlement.label"
+            class="flex items-center justify-between gap-3"
+          >
+            <span class="text-muted-foreground">{{ entitlement.label }}</span>
+            <span
+              class="flex items-center gap-1.5"
+              :class="entitlement.allowed ? 'text-success' : 'text-destructive'"
+            >
+              <component :is="entitlement.allowed ? CircleCheck : Ban" class="size-3.5" />
+              {{ entitlement.allowed ? 'Allowed' : 'Blocked' }}
+            </span>
+          </li>
+        </ul>
       </section>
 
       <section class="space-y-3 lg:col-span-2">

@@ -168,6 +168,12 @@ type Query {
     @authorize
     @cost(weight: "10")
   tenantUsage: TenantUsageGql! @authorize @cost(weight: "10")
+  tenantTraffic(grain: TrafficGrainGql!, fromUtc: DateTime, toUtc: DateTime): TrafficSeriesGql!
+    @authorize
+    @cost(weight: "10")
+  instanceTraffic(grain: TrafficGrainGql!, fromUtc: DateTime, toUtc: DateTime): InstanceTrafficGql!
+    @authorize
+    @cost(weight: "10")
   auditLog(
     "Returns the first _n_ elements from the list."
     first: Int
@@ -594,6 +600,11 @@ type InstanceStatsGql {
   minVolumeFreeChunkStoreName: String
 }
 
+type InstanceTrafficGql {
+  total: TrafficSeriesGql!
+  byTenant: [TenantTrafficTotalGql!]!
+}
+
 "Information about pagination in a connection."
 type PageInfo {
   "Indicates whether more edges exist following the set defined by the clients arguments."
@@ -847,6 +858,14 @@ type TenantStorageClassGql {
   isDefault: Boolean!
 }
 
+type TenantTrafficTotalGql {
+  tenantId: UUID!
+  tenantName: String!
+  ingressBytes: Long!
+  egressBytes: Long!
+  requestCount: Long!
+}
+
 type TenantUsageGql {
   tenantId: UUID!
   logicalBytes: Long!
@@ -858,6 +877,23 @@ type TenantUsageGql {
   isStorageAllowed: Boolean!
   isIngestAllowed: Boolean!
   isEgressAllowed: Boolean!
+}
+
+type TrafficPointGql {
+  bucketStartUtc: DateTime!
+  ingressBytes: Long!
+  egressBytes: Long!
+  requestCount: Long!
+}
+
+type TrafficSeriesGql {
+  grain: TrafficGrainGql!
+  fromUtc: DateTime!
+  toUtc: DateTime!
+  points: [TrafficPointGql!]!
+  totalIngressBytes: Long!
+  totalEgressBytes: Long!
+  totalRequestCount: Long!
 }
 
 type UpgradeJobProgressGql {
@@ -1380,6 +1416,11 @@ enum AuditOutcome {
 enum SortEnumType {
   ASC
   DESC
+}
+
+enum TrafficGrainGql {
+  HOURLY
+  DAILY
 }
 
 "The `DateTime` scalar type represents a date and time with time zone offset information."
