@@ -380,6 +380,9 @@ type BackgroundJobProgressDto {
   failedBuckets: Int!
   gcPhase: String
   markedReleases: Int!
+  resolvedFileDefinitions: Long!
+  processedFileDefinitionGroups: Int!
+  totalFileDefinitionGroups: Int!
   reachableObjects: Long!
   quarantinedObjects: Long!
   quarantinedBytes: Long!
@@ -544,6 +547,9 @@ type GcJobProgressGql {
   processedBuckets: Int!
   totalReleases: Int!
   markedReleases: Int!
+  resolvedFileDefinitions: Long!
+  processedFileDefinitionGroups: Int!
+  totalFileDefinitionGroups: Int!
   reachableObjects: Long!
   quarantinedObjects: Long!
   quarantinedBytes: Long!
@@ -1084,6 +1090,9 @@ input GcJobProgressGqlSortInput {
   processedBuckets: SortEnumType @cost(weight: "10")
   totalReleases: SortEnumType @cost(weight: "10")
   markedReleases: SortEnumType @cost(weight: "10")
+  resolvedFileDefinitions: SortEnumType @cost(weight: "10")
+  processedFileDefinitionGroups: SortEnumType @cost(weight: "10")
+  totalFileDefinitionGroups: SortEnumType @cost(weight: "10")
   reachableObjects: SortEnumType @cost(weight: "10")
   quarantinedObjects: SortEnumType @cost(weight: "10")
   quarantinedBytes: SortEnumType @cost(weight: "10")

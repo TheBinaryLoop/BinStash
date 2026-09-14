@@ -532,6 +532,15 @@ public sealed class GcJobProgressGql
     public int TotalReleases { get; init; }
     public int MarkedReleases { get; init; }
 
+    /// <summary>
+    /// File definitions expanded to their chunks. This is the long half of marking and is not
+    /// proportional to the release count, so it carries its own progress.
+    /// </summary>
+    public long ResolvedFileDefinitions { get; init; }
+
+    public int ProcessedFileDefinitionGroups { get; init; }
+    public int TotalFileDefinitionGroups { get; init; }
+
     /// <summary>Distinct objects found reachable from the releases on this store.</summary>
     public long ReachableObjects { get; init; }
 

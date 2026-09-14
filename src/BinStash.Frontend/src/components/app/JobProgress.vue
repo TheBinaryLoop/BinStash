@@ -6,6 +6,7 @@ import { useSubscription } from '@/composables/useGraphql'
 import { BackgroundJobProgressDocument } from '@/graphql/generated'
 import type { BackgroundJobSummaryFragment } from '@/graphql/generated'
 import { formatBytes, formatNumber } from '@/lib/format'
+import { gcPhaseLabel } from '@/lib/jobs'
 
 const props = defineProps<{ job: BackgroundJobSummaryFragment }>()
 
@@ -43,6 +44,11 @@ const gc = computed(() => {
     processedBuckets: liveData?.processedBuckets ?? stored?.processedBuckets ?? 0,
     totalBuckets: liveData?.totalBuckets ?? stored?.totalBuckets ?? 0,
     reachableObjects: liveData?.reachableObjects ?? stored?.reachableObjects ?? 0,
+    resolvedFileDefinitions: liveData?.resolvedFileDefinitions ?? stored?.resolvedFileDefinitions ?? 0,
+    processedFileDefinitionGroups:
+      liveData?.processedFileDefinitionGroups ?? stored?.processedFileDefinitionGroups ?? 0,
+    totalFileDefinitionGroups:
+      liveData?.totalFileDefinitionGroups ?? stored?.totalFileDefinitionGroups ?? 0,
     quarantinedObjects: liveData?.quarantinedObjects ?? stored?.quarantinedObjects ?? 0,
     quarantinedBytes: liveData?.quarantinedBytes ?? stored?.quarantinedBytes ?? 0,
     reclaimedObjects: liveData?.reclaimedObjects ?? stored?.reclaimedObjects ?? 0,
@@ -62,11 +68,20 @@ const counters = computed(() => {
   const liveData = progress.value
 
   if (isGc.value) {
-    // Mark is release-denominated, everything after it is bucket-denominated.
-    const inMark = gc.value.phase === 'Mark'
-    return inMark
-      ? { unit: 'releases', processed: gc.value.markedReleases, total: gc.value.totalReleases, failed: 0 }
-      : { unit: 'buckets', processed: gc.value.processedBuckets, total: gc.value.totalBuckets, failed: 0 }
+    // Each phase counts a different thing, so the denominator follows the phase rather than the
+    // job. Carrying one counter across all of them would make the bar jump backwards twice.
+    if (gc.value.phase === 'Mark') {
+      return { unit: 'releases', processed: gc.value.markedReleases, total: gc.value.totalReleases, failed: 0 }
+    }
+    if (gc.value.phase === 'Resolve') {
+      return {
+        unit: 'file groups',
+        processed: gc.value.processedFileDefinitionGroups,
+        total: gc.value.totalFileDefinitionGroups,
+        failed: 0,
+      }
+    }
+    return { unit: 'buckets', processed: gc.value.processedBuckets, total: gc.value.totalBuckets, failed: 0 }
   }
 
   const buckets = {
@@ -116,7 +131,7 @@ const tone = computed(() => {
              "Completed Completed" — so it is shown only when it adds something. On a failure it
              still does: it says which phase the run died in. -->
         <span v-if="isGc && gc.phase !== status" class="text-muted-foreground text-xs">
-          {{ gc.phase }}
+          {{ gcPhaseLabel(gc.phase) }}
         </span>
         <Badge v-if="isGc && gc.dryRun" variant="outline" class="text-xs">dry run</Badge>
         <span v-if="live" class="text-muted-foreground text-xs">live</span>
@@ -185,7 +200,14 @@ const tone = computed(() => {
     <!-- The mark phase's coverage, which is what makes the figures above trustworthy: the run
          aborts rather than under-marking, so "all releases walked" is the evidence that nothing
          was called unreachable merely because it could not be resolved. -->
-    <p v-if="isGc && gc.totalReleases > 0" class="text-muted-foreground text-xs">
+    <p v-if="isGc && gc.phase === 'Resolve'" class="text-muted-foreground text-xs">
+      Expanding {{ formatNumber(gc.resolvedFileDefinitions) }} file definition<template
+        v-if="gc.resolvedFileDefinitions !== 1"
+      >s</template>
+      to the chunks they reach — the longest part of a run on a large store.
+    </p>
+
+    <p v-else-if="isGc && gc.totalReleases > 0" class="text-muted-foreground text-xs">
       Walked {{ formatNumber(gc.markedReleases) }} of {{ formatNumber(gc.totalReleases) }}
       release<template v-if="gc.totalReleases !== 1">s</template>
       <template v-if="gc.dryRun"> · nothing was quarantined or destroyed</template>

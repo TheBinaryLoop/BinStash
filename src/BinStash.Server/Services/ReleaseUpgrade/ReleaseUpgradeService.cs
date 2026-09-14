@@ -485,6 +485,9 @@ public sealed class BackgroundJobProgressDto
     public string? GcPhase { get; init; }
 
     public int MarkedReleases { get; init; }
+    public long ResolvedFileDefinitions { get; init; }
+    public int ProcessedFileDefinitionGroups { get; init; }
+    public int TotalFileDefinitionGroups { get; init; }
     public long ReachableObjects { get; init; }
     public long QuarantinedObjects { get; init; }
     public long QuarantinedBytes { get; init; }

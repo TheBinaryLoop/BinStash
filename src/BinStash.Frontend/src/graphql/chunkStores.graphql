@@ -92,6 +92,9 @@ fragment BackgroundJobSummary on BackgroundJobGql {
     processedBuckets
     totalReleases
     markedReleases
+    resolvedFileDefinitions
+    processedFileDefinitionGroups
+    totalFileDefinitionGroups
     reachableObjects
     quarantinedObjects
     quarantinedBytes
@@ -169,6 +172,9 @@ subscription BackgroundJobProgress($jobId: UUID!) {
     failedBuckets
     gcPhase
     markedReleases
+    resolvedFileDefinitions
+    processedFileDefinitionGroups
+    totalFileDefinitionGroups
     reachableObjects
     quarantinedObjects
     quarantinedBytes
