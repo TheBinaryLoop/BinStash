@@ -452,7 +452,25 @@ public static class Program
         app.UseAuthentication();
         app.UseAuthorization();
         app.UseDefaultFiles();
-        app.UseStaticFiles();
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            // Vite fingerprints everything under /assets, so those filenames change whenever their
+            // contents do and can be cached forever. index.html cannot: its name is fixed and it is
+            // the file that names the current fingerprints. Served without a Cache-Control header it
+            // falls to the browser's heuristic caching, which happily reuses an HTML document without
+            // revalidating — so a deploy lands on the server and users keep running the previous
+            // build until they force a reload. That is what happened after the 2026-09-14 deploy.
+            OnPrepareResponse = ctx =>
+            {
+                var headers = ctx.Context.Response.Headers;
+                var path = ctx.Context.Request.Path.Value ?? string.Empty;
+
+                if (path.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase))
+                    headers.CacheControl = "public, max-age=31536000, immutable";
+                else
+                    headers.CacheControl = "no-cache";
+            }
+        });
         // Three health endpoints, because they answer to three different callers.
         //
         // /health/live and /health/ready are what an orchestrator or load balancer polls, so they
@@ -504,7 +522,13 @@ public static class Program
         app.MapGraphQL();
         app.MapAllEndpoints();
         billingLoader.MapPluginEndpoints(app);
-        app.MapFallbackToFile("index.html");
+        // Every SPA route resolves here, so this is how most users actually receive index.html —
+        // it needs the same no-cache treatment as the static-file path above, which it does not
+        // inherit.
+        app.MapFallbackToFile("index.html", new StaticFileOptions
+        {
+            OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache"
+        });
         
         app.Run();
     }
