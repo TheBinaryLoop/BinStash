@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -28,6 +28,10 @@ public sealed class ReleaseType : ObjectType<ReleaseGql>
         descriptor.Field("metrics")
             .Authorize()
             .ResolveWith<Resolvers>(x => x.GetReleaseMetricsAsync(null!, null!, CancellationToken.None!));
+
+        descriptor.Field("variants")
+            .Authorize()
+            .ResolveWith<Resolvers>(x => x.GetVariantsAsync(null!, null!, CancellationToken.None!));
     }
 
     private sealed class Resolvers
@@ -37,5 +41,8 @@ public sealed class ReleaseType : ObjectType<ReleaseGql>
         
         public Task<ReleaseMetricsGql?> GetReleaseMetricsAsync([Parent] ReleaseGql release, [Service] ReleaseQueryService service, CancellationToken ct)
             => service.GetReleaseMetricsForReleaseIdAsync(release.Id, ct);
+
+        public Task<List<ReleaseVariantGql>> GetVariantsAsync([Parent] ReleaseGql release, [Service] ReleaseQueryService service, CancellationToken ct)
+            => service.GetVariantsForReleaseIdAsync(release.Id, ct);
     }
 }

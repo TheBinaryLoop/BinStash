@@ -1,5 +1,5 @@
 pipeline {
-  agent any
+  agent { label 'windows-lts' }
 
   tools {
     dotnetsdk 'dotnet-lts'

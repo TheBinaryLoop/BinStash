@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -460,6 +460,8 @@ public sealed class SvnImportEngine
             RepositoryName: _repository.Name,
             RootFolder: string.Empty,
             ComponentMapFile: null,
+            // An SVN tag is one payload, not a build matrix, so it declares no target.
+            Target: null,
             CustomProperties: customProperties);
 
         var releasePackage = _releasePackageBuilder.Build(

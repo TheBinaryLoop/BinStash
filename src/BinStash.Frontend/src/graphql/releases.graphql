@@ -17,5 +17,13 @@ query Release($id: UUID!) {
       componentsInRelease
       filesInRelease
     }
+    variants {
+      id
+      targetKey
+      isDefault
+      createdAt
+      totalLogicalBytes
+      filesInVariant
+    }
   }
 }

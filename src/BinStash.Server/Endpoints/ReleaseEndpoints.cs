@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -70,7 +70,7 @@ public static class ReleaseEndpoints
         return group;
     }
     
-    private static async Task<IResult> GetReleaseDownloadAsync(Guid tenantId, Guid id, string? component, string? file, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService, IUsageMeteringService meteringService, ITrafficRecorder trafficRecorder, TenantQuotaGuard quota, IOptions<BillingSettings> billingOptions, IAuditLogWriter audit, ILoggerFactory loggerFactory, CancellationToken ct)
+    private static async Task<IResult> GetReleaseDownloadAsync(Guid tenantId, Guid id, string? component, string? file, string? target, Guid? diffReleaseId, HttpResponse response, BinStashDbContext db, IChunkStoreService chunkStoreService, IUsageMeteringService meteringService, ITrafficRecorder trafficRecorder, TenantQuotaGuard quota, IOptions<BillingSettings> billingOptions, IAuditLogWriter audit, ILoggerFactory loggerFactory, CancellationToken ct)
     {
         if (!string.IsNullOrEmpty(file) && string.IsNullOrEmpty(component))
             return Results.BadRequest("Component must be specified when requesting a specific file.");
@@ -99,9 +99,15 @@ public static class ReleaseEndpoints
         if (repo == null)
             return Results.NotFound("Repository not found for the release.");
 
+        var variantResult = await ResolveVariantAsync(db, release.Id, target);
+        if (variantResult.Error is not null)
+            return variantResult.Error;
+
+        var variant = variantResult.Variant!;
+
         var packageData = await chunkStoreService.RetrieveReleasePackageAsync(
             repo.ChunkStore,
-            release.ReleaseDefinitionChecksum.ToHexString());
+            variant.ReleaseDefinitionChecksum.ToHexString());
 
         if (packageData == null)
             return Results.NotFound("Release package not found in the chunk store.");
@@ -229,9 +235,22 @@ public static class ReleaseEndpoints
 
         if (diffRelease is not null)
         {
+            // Always the same target on both sides. A linux-to-windows delta is very nearly the
+            // whole payload, so producing one would be pure waste dressed up as an optimisation.
+            var diffVariant = await db.ReleaseVariants
+                .AsNoTracking()
+                .FirstOrDefaultAsync(v => v.ReleaseId == diffRelease.Id && v.TargetKey == variant.TargetKey);
+
+            if (diffVariant is null)
+            {
+                return Results.BadRequest(
+                    $"Release '{diffRelease.Version}' has no '{variant.TargetKey}' variant, so it cannot be " +
+                    "used as a diff base for this download.");
+            }
+
             var diffPackageData = await chunkStoreService.RetrieveReleasePackageAsync(
                 repo.ChunkStore,
-                diffRelease.ReleaseDefinitionChecksum.ToHexString());
+                diffVariant.ReleaseDefinitionChecksum.ToHexString());
 
             if (diffPackageData == null)
                 return Results.NotFound("Diff release package not found in the chunk store.");
@@ -612,6 +631,49 @@ public static class ReleaseEndpoints
         return chunkData;
     }
     
+    /// <summary>
+    /// Picks the variant a download refers to.
+    /// </summary>
+    /// <remarks>
+    /// A caller that names no target gets the only variant when there is only one — which is every
+    /// release published before targets existed, and every single-target release since. Once a
+    /// release has more than one, there is no defensible default: silently serving the first would
+    /// hand someone a Windows build on Linux. So it asks, and lists what there is to choose from.
+    /// </remarks>
+    private static async Task<(ReleaseVariant? Variant, IResult? Error)> ResolveVariantAsync(BinStashDbContext db, Guid releaseId, string? target)
+    {
+        var variants = await db.ReleaseVariants
+            .AsNoTracking()
+            .Where(v => v.ReleaseId == releaseId)
+            .OrderBy(v => v.TargetKey)
+            .ToListAsync();
+
+        if (variants.Count == 0)
+            return (null, Results.NotFound("Release has no variants."));
+
+        if (!string.IsNullOrWhiteSpace(target))
+        {
+            if (!ReleaseTarget.TryCanonicalize(target, out var canonical, out var error))
+                return (null, Results.BadRequest(error));
+
+            var match = variants.FirstOrDefault(v => v.TargetKey == canonical);
+            if (match is null)
+            {
+                return (null, Results.NotFound(
+                    $"Release has no '{canonical}' variant. Available: {string.Join(", ", variants.Select(v => v.TargetKey))}."));
+            }
+
+            return (match, null);
+        }
+
+        if (variants.Count == 1)
+            return (variants[0], null);
+
+        return (null, Results.BadRequest(
+            $"This release has {variants.Count} variants, so a target must be specified. " +
+            $"Available: {string.Join(", ", variants.Select(v => v.TargetKey))}."));
+    }
+
     private static List<(string ComponentName, string RelativePath, OutputArtifact Artifact)> ResolveDownloadArtifacts(ReleasePackage releasePackage, string? component, string? file)
     {
         var artifacts = releasePackage.OutputArtifacts
