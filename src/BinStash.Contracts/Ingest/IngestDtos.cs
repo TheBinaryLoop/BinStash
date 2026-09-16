@@ -15,6 +15,10 @@
 
 namespace BinStash.Contracts.Ingest;
 
-public record CreateIngestSessionRequest(string ClientVersion, string IntendedRelease);
+/// <param name="TargetKey">
+/// Which build target this session publishes, or null for a release that declares none. Optional
+/// so that a client which has never heard of targets keeps working unchanged.
+/// </param>
+public record CreateIngestSessionRequest(string ClientVersion, string IntendedRelease, string? TargetKey = null);
 public record CreateIngestSessionResponse(Guid SessionId, DateTimeOffset ExpiresAt);
 public record IngestSessionStatsDto(Guid SessionId, short State, DateTimeOffset StartedAt, long UploadedBytes);

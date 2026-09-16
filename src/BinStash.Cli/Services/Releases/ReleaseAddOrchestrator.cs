@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -105,7 +105,7 @@ public sealed class ReleaseAddOrchestrator
                 log?.Invoke($"Output artifact backing breakdown: {string.Join(", ", outputArtifactBreakdown)}");
 
                 ctx.Status("Requesting ingest session...");
-                var ingestSessionId = await restClient.CreateIngestSessionAsync(request.TenantId, repository.Id, request.Version);
+                var ingestSessionId = await restClient.CreateIngestSessionAsync(request.TenantId, repository.Id, request.Version, request.Target);
 
                 log?.Invoke($"Received ingest session ID: {ingestSessionId}");
 
@@ -229,4 +229,5 @@ public sealed record ReleaseAddOrchestrationRequest(
     string RepositoryName,
     string RootFolder,
     string? ComponentMapFile,
+    string? Target,
     Dictionary<string, string> CustomProperties);

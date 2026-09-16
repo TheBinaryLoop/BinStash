@@ -13,7 +13,6 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Contracts.Hashing;
 using BinStash.Core.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -31,18 +30,16 @@ public class ReleaseEntityTypeConfiguration : IEntityTypeConfiguration<Release>
         builder.Property(r => r.Id).HasColumnName("Id").ValueGeneratedNever();
         builder.Property(r => r.Version).IsRequired().HasMaxLength(256);
         builder.Property(r => r.CreatedAt).IsRequired().HasDefaultValueSql("CURRENT_TIMESTAMP");
-        builder.Property(r => r.ReleaseDefinitionChecksum)
-            .HasConversion(
-                v => v.GetBytes(), // to database (byte[])
-                v => new Hash32(v)) // from database (Hash32)
-            .HasColumnType("bytea")
-            .IsRequired();
         builder.Property(r => r.CustomProperties).HasColumnType("jsonb").IsRequired(false);
-        builder.Property(r => r.SerializerVersion).IsRequired().HasDefaultValue(0);
 
         builder.HasOne(r => r.Repository)
             .WithMany(repo => repo.Releases)
             .HasForeignKey(r => r.RepoId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // A version identifies a release within its repository. This used to be enforced only by
+        // an Any() check at finalize time, which a build matrix loses: several agents publishing
+        // targets of one version all see "no such release" and all try to create it.
+        builder.HasIndex(r => new { r.RepoId, r.Version }).IsUnique();
     }
 }

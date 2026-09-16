@@ -1,8 +1,9 @@
-// Copyright (C) Lukas Eßmann — AGPLv3 or later
+﻿// Copyright (C) Lukas Eßmann — AGPLv3 or later
 
 using BinStash.Core.Billing;
 using BinStash.Server.Services.Usage;
 using BinStash.Core.Auditing;
+using BinStash.Contracts.Release;
 using BinStash.Core.Entities;
 using BinStash.Infrastructure.Data;
 using BinStash.Server.Billing;
@@ -282,13 +283,23 @@ public class QuotaEnforcementTests : IDisposable
             _db.IngestSessions.Add(session);
             await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-            var release = new Release { Id = Guid.NewGuid(), Version = "1.0.0", RepoId = repoId, SerializerVersion = 1 };
+            var release = new Release { Id = Guid.NewGuid(), Version = "1.0.0", RepoId = repoId };
             _db.Releases.Add(release);
+
+            var variant = new ReleaseVariant
+            {
+                ReleaseId = release.Id,
+                Release = release,
+                TargetKey = ReleaseTarget.Default,
+                SerializerVersion = 1,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+            _db.ReleaseVariants.Add(variant);
             await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
             _db.ReleaseMetrics.Add(new ReleaseMetrics
             {
-                ReleaseId = release.Id,
+                VariantId = variant.Id,
                 IngestSessionId = session.Id,
                 IngestSession = session,
                 TotalLogicalBytes = (ulong)logicalBytes,

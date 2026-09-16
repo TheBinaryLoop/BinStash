@@ -15,9 +15,18 @@
 
 namespace BinStash.Core.Entities;
 
+/// <summary>
+/// What one ingest produced, recorded against the variant it produced.
+/// </summary>
+/// <remarks>
+/// Keyed on the variant rather than the release because an ingest yields exactly one variant, and
+/// a multi-target release has one ingest per target. Keying on the release allowed only one row
+/// per version, which a second target would have collided with.
+/// </remarks>
 public class ReleaseMetrics
 {
-    public Guid ReleaseId { get; set; }
+    public Guid VariantId { get; set; }
+    public virtual ReleaseVariant Variant { get; set; } = null!;
     public Guid IngestSessionId { get; set; }
     public virtual IngestSession IngestSession { get; set; } = null!;
     public DateTimeOffset CreatedAt { get; set; }

@@ -14,6 +14,7 @@
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 //
 
+using BinStash.Contracts.Release;
 using BinStash.Core.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -27,6 +28,7 @@ public class IngestSessionEntityTypeConfiguration : IEntityTypeConfiguration<Ing
         builder.ToTable("IngestSessions");
         
         builder.HasKey(e => e.Id);
+        builder.Property(x => x.TargetKey).HasMaxLength(ReleaseTarget.MaxLength).IsRequired(false);
         
         builder.Property(e => e.Id).ValueGeneratedNever();
         builder.Property(e => e.RepoId).IsRequired();
