@@ -41,6 +41,7 @@ public class BinStashDbContext(DbContextOptions<BinStashDbContext> options)
     public DbSet<FileDefinition> FileDefinitions { get; set; }
     public DbSet<IngestSession> IngestSessions { get; set; }
     public DbSet<Release> Releases { get; set; }
+    public DbSet<ReleaseVariant> ReleaseVariants { get; set; }
     public DbSet<ReleaseMetrics> ReleaseMetrics { get; set; }
     public DbSet<TenantStorageSnapshot> TenantStorageSnapshots { get; set; }
     public DbSet<Repository> Repositories { get; set; }

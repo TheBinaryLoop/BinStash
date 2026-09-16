@@ -631,6 +631,7 @@ type ReleaseCustomPropertyGql {
 type ReleaseGql {
   repository: RepositoryGql @authorize @cost(weight: "10")
   metrics: ReleaseMetricsGql @authorize @cost(weight: "10")
+  variants: [ReleaseVariantGql!]! @authorize @cost(weight: "10")
   id: UUID!
   version: String!
   createdAt: DateTime!
@@ -665,6 +666,15 @@ type ReleasesEdge {
   cursor: String!
   "The item at the end of the edge."
   node: ReleaseGql
+}
+
+type ReleaseVariantGql {
+  id: UUID!
+  targetKey: String!
+  isDefault: Boolean!
+  createdAt: DateTime!
+  totalLogicalBytes: UnsignedLong
+  filesInVariant: Int
 }
 
 "A connection to a list of items."

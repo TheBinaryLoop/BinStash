@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -216,16 +216,12 @@ public sealed class ChunkStoreStatsCollector
         var chunkStoreId = store.Id;
         var sw = Stopwatch.StartNew();
 
-        _logger.LogDebug("[{StoreName}] Loading releases", store.Name);
-        var releases = await _db.Releases
+        // Every variant carries its own definition, so a five-target release contributes five
+        // roots here. Their shared content still counts once: the hashes below are a set.
+        _logger.LogDebug("[{StoreName}] Loading release variants", store.Name);
+        var releases = await _db.ReleaseVariants
             .AsNoTracking()
-            .Join(
-                _db.Repositories.AsNoTracking(),
-                release => release.RepoId,
-                repo => repo.Id,
-                (release, repo) => new { Release = release, Repo = repo })
-            .Where(x => x.Repo.ChunkStoreId == chunkStoreId)
-            .Select(x => x.Release)
+            .Where(v => v.Release.Repository.ChunkStoreId == chunkStoreId)
             .ToListAsync(cancellationToken);
         _logger.LogDebug("[{StoreName}] Loaded {ReleaseCount} releases in {Elapsed}ms", store.Name, releases.Count, sw.ElapsedMilliseconds);
 

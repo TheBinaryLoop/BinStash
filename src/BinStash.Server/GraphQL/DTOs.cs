@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -76,6 +76,32 @@ public sealed class ReleaseGql
     /// `unknown` — whereas these are a flat string map in practice.
     /// </remarks>
     public List<ReleaseCustomPropertyGql>? CustomProperties { get; init; }
+}
+
+/// <summary>
+/// One build target of a release — what a client actually downloads.
+/// </summary>
+/// <remarks>
+/// Every release has at least one, so a client can render the list unconditionally rather than
+/// branching on whether a release "uses" targets. A release that declares none has exactly one
+/// variant, keyed <c>default</c>.
+/// </remarks>
+public sealed class ReleaseVariantGql
+{
+    public required Guid Id { get; init; }
+
+    /// <summary>The canonical target key, unique within the release.</summary>
+    public required string TargetKey { get; init; }
+
+    /// <summary>True when this is the unnamed target of a release that declares none.</summary>
+    public required bool IsDefault { get; init; }
+
+    public required DateTimeOffset CreatedAt { get; init; }
+
+    /// <summary>Logical size of this target's payload, or null if it was never measured.</summary>
+    public ulong? TotalLogicalBytes { get; init; }
+
+    public int? FilesInVariant { get; init; }
 }
 
 public sealed class ReleaseCustomPropertyGql

@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -13,6 +13,7 @@
 //      You should have received a copy of the GNU Affero General Public License
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using BinStash.Contracts.Release;
 using System.Text.Json;
 using BinStash.Core.Auth.Repository;
 using BinStash.Infrastructure.Data;
@@ -72,6 +73,41 @@ public sealed class ReleaseQueryService
         };
     }
 
+    /// <summary>The build targets a release ships, oldest first.</summary>
+    /// <remarks>
+    /// Not authorized separately: it is reached only through a release the caller has already been
+    /// authorized for, and a target key reveals nothing the release itself does not.
+    /// </remarks>
+    public async Task<List<ReleaseVariantGql>> GetVariantsForReleaseIdAsync(Guid releaseId, CancellationToken ct)
+    {
+        var rows = await _db.ReleaseVariants
+            .AsNoTracking()
+            .Where(v => v.ReleaseId == releaseId)
+            .OrderBy(v => v.CreatedAt)
+            .ThenBy(v => v.TargetKey)
+            .Select(v => new
+            {
+                v.Id,
+                v.TargetKey,
+                v.CreatedAt,
+                Metrics = _db.ReleaseMetrics
+                    .Where(m => m.VariantId == v.Id)
+                    .Select(m => new { m.TotalLogicalBytes, m.FilesInRelease })
+                    .FirstOrDefault()
+            })
+            .ToListAsync(ct);
+
+        return rows.Select(r => new ReleaseVariantGql
+        {
+            Id = r.Id,
+            TargetKey = r.TargetKey,
+            IsDefault = ReleaseTarget.IsDefault(r.TargetKey),
+            CreatedAt = r.CreatedAt,
+            TotalLogicalBytes = r.Metrics?.TotalLogicalBytes,
+            FilesInVariant = r.Metrics?.FilesInRelease
+        }).ToList();
+    }
+
     public async Task<ReleaseMetricsGql?> GetReleaseMetricsForReleaseIdAsync(Guid releaseId, CancellationToken ct)
     {
         var tenantContext = GraphQlAuth.EnsureTenantResolved(_httpContextAccessor);
@@ -93,23 +129,35 @@ public sealed class ReleaseQueryService
         
         await GraphQlAuth.EnsureRepositoryPermissionAsync(user, _authorizationService, tenantContext.TenantId, releaseMeta.RepoId, RepositoryPermission.Read);
 
-        var releaseMetrics = await _db.ReleaseMetrics
+        // One metrics row per variant, so a release-level figure is the sum across its targets.
+        // Chunk and file counts are summed rather than deduplicated: doing it properly would mean
+        // reading every variant's definition, and these are display figures. They therefore read
+        // high for a multi-target release, which is the honest direction for a "what did this
+        // release contain" number and is never used for billing.
+        var perVariant = await _db.ReleaseMetrics
             .AsNoTracking()
-            .Where(r => r.ReleaseId == releaseId)
-            .Select(r => new ReleaseMetricsGql
+            .Where(m => m.Variant.ReleaseId == releaseId)
+            .Select(m => new
             {
-                ChunksInRelease = r.ChunksInRelease,
-                ComponentsInRelease = r.ComponentsInRelease,
-                FilesInRelease = r.FilesInRelease,
-                MetaBytesFull = r.MetaBytesFull,
-                TotalLogicalBytes = r.TotalLogicalBytes
+                m.ChunksInRelease,
+                m.ComponentsInRelease,
+                m.FilesInRelease,
+                m.MetaBytesFull,
+                m.TotalLogicalBytes
             })
-            .FirstOrDefaultAsync(ct);
+            .ToListAsync(ct);
 
-        if (releaseMetrics is null)
+        if (perVariant.Count == 0)
             return null;
-        
-        return releaseMetrics;
+
+        return new ReleaseMetricsGql
+        {
+            ChunksInRelease = perVariant.Sum(x => x.ChunksInRelease),
+            ComponentsInRelease = perVariant.Sum(x => x.ComponentsInRelease),
+            FilesInRelease = perVariant.Sum(x => x.FilesInRelease),
+            MetaBytesFull = perVariant.Sum(x => x.MetaBytesFull),
+            TotalLogicalBytes = (ulong)perVariant.Sum(x => (decimal)x.TotalLogicalBytes)
+        };
     }
 
     /// <summary>

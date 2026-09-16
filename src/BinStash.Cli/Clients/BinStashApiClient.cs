@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -223,11 +223,11 @@ public class BinStashApiClient
     
     #region Ingestion Session
     
-    public async Task<Guid> CreateIngestSessionAsync(Guid tenantId, Guid repoId, string intendedRelease)
+    public async Task<Guid> CreateIngestSessionAsync(Guid tenantId, Guid repoId, string intendedRelease, string? targetKey = null)
     { 
         var response = await PostAsJsonAsync(
             $"tenants/{tenantId}/repositories/{repoId}/ingest/sessions",
-            new CreateIngestSessionRequest($"BinStash.Cli/{Environment.Version}", intendedRelease),
+            new CreateIngestSessionRequest($"BinStash.Cli/{Environment.Version}", intendedRelease, targetKey),
             SourceGenerationContext.Default.CreateIngestSessionRequest,
             SourceGenerationContext.Default.CreateIngestSessionResponse);
         if (response == null)
