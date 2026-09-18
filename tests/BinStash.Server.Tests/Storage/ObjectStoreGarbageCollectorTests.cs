@@ -253,7 +253,14 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
         var doomed = stored.Where(s => s.FileNo < appendPack).Take(1).ToList();
 
         // A ratio no partially-dead pack can reach: rewriting would cost more I/O than it frees.
-        var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions { MinimumPackGarbageRatio = 1.1 }, Ct);
+        // Size-based merging is switched off so this exercises the ratio gate on its own —
+        // these packs are tiny, so consolidation would otherwise rewrite them for its own
+        // reasons and the gate under test would never be the deciding factor.
+        var result = await collector.ReclaimAsync(
+            bucket,
+            doomed,
+            new GarbageCollectionOptions { MinimumPackGarbageRatio = 1.1, MergePacksBelowBytes = 0 },
+            Ct);
 
         result.ReclaimedHashes.Should().BeEmpty();
         result.DeferredObjects.Should().Be(doomed.Count);
@@ -545,6 +552,98 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
         first.PacksSealed.Should().Be(0);
         second.ReclaimedHashes.Should().BeEmpty("without a seal the append target is never collectable");
         second.DeferredObjects.Should().Be(doomed.Count);
+    }
+
+
+    [Fact]
+    public async Task Small_packs_are_merged_so_a_buckets_file_count_comes_back_down()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(24);
+        await using var store = NewStore();
+
+        foreach (var payload in payloads)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        // The tiny pack size leaves this bucket holding many part-full packs — the shape a store
+        // drifts into as compaction rewrites survivors into successor files.
+        var before = CountPackFiles();
+        before.Should().BeGreaterThan(2);
+
+        // One dead object in one pack — far below the garbage ratio, so it buys at most a single
+        // rewrite. Every other pack here is picked up purely because it is small, which is the
+        // behaviour under test.
+        var stored = await StoredObjectsAsync(store, bucket);
+        var doomed = stored.Take(1).ToList();
+
+        var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), Ct);
+        result.PacksCompacted.Should().BeGreaterThan(1, "packs with no garbage of their own were folded in");
+
+        await collector.PurgeObsoletePacksAsync(TimeSpan.Zero, Ct);
+
+        CountPackFiles().Should().BeLessThan(before, "consolidation is the only thing that brings the count down");
+
+        var doomedHashes = doomed.Select(static d => d.Hash).ToHashSet();
+        foreach (var payload in payloads.Where(p => !doomedHashes.Contains(HashOf(p))))
+            (await store.ReadChunkAsync(HashOf(payload).ToHexString())).Should().Equal(payload);
+    }
+
+
+    /// <summary>Highest pack number currently on disk, across the whole store.</summary>
+    private int HighestPackNumber()
+        => Directory.EnumerateFiles(_root, "*.pack", SearchOption.AllDirectories)
+            .Select(static path =>
+            {
+                var name = Path.GetFileNameWithoutExtension(path);
+                var dash = name.LastIndexOf('-');
+                return dash >= 0 && int.TryParse(name[(dash + 1)..], out var n) ? n : -1;
+            })
+            .DefaultIfEmpty(-1)
+            .Max();
+
+    [Fact]
+    public async Task Pack_numbers_are_reused_so_they_do_not_climb_with_every_cycle()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(64);
+        await using var store = NewStore();
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var live = new List<byte[]>();
+        var reclaimed = new HashSet<Hash32>();
+        var next = 0;
+
+        // Eight rounds of the real cycle — write, collect, purge — each of which allocates at
+        // least one output pack. Highest-plus-one numbering would leave the names climbing past
+        // the number of files the bucket actually holds; drawing from the free set must not.
+        for (var cycle = 0; cycle < 8; cycle++)
+        {
+            for (var i = 0; i < 8 && next < payloads.Count; i++, next++)
+            {
+                await store.WriteChunkAsync(payloads[next]);
+                live.Add(payloads[next]);
+            }
+
+            var stored = await StoredObjectsAsync(store, bucket);
+            var doomed = stored.Where(x => !reclaimed.Contains(x.Hash)).Take(4).ToList();
+
+            var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), Ct);
+            foreach (var hash in result.ReclaimedHashes)
+                reclaimed.Add(hash);
+
+            await collector.PurgeObsoletePacksAsync(TimeSpan.Zero, Ct);
+        }
+
+        var packCount = CountPackFiles();
+        HighestPackNumber().Should().BeLessThan(
+            packCount + 4,
+            "numbers freed by a merge are handed out again, so they stay near the pack count rather than tracking how many cycles have run");
+
+        foreach (var payload in live.Where(p => !reclaimed.Contains(HashOf(p))))
+            (await store.ReadChunkAsync(HashOf(payload).ToHexString())).Should().Equal(payload);
     }
 
     private int CountPackFiles()

@@ -83,6 +83,31 @@ public sealed class GarbageCollectionOptions
     public int MaxPacksToCompactPerRun { get; set; } = 512;
 
     /// <summary>
+    /// A pack at or below this size is a candidate for being merged into a larger one, whether
+    /// or not it contains any garbage. Set to 0 to never merge on size alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Compaction rewrites a pack's survivors into a fresh file, so on its own it holds the file
+    /// count level — it never brings it down. Each seal-then-compact cycle therefore leaves
+    /// another part-full survivor pack behind, and a bucket under steady churn accumulates them
+    /// without bound, each costing a file handle and a seek.
+    /// </para>
+    /// <para>
+    /// Folding the small ones into a single output is what bounds that. The merged output is
+    /// still capped by <see cref="MaxMergedPackBytes"/>, so consolidation cannot produce a pack
+    /// larger than the rollover would have allowed.
+    /// </para>
+    /// </remarks>
+    public long MergePacksBelowBytes { get; set; } = 256L * 1024 * 1024;
+
+    /// <summary>
+    /// Ceiling on the combined size of the sources a single merge will read, which bounds both
+    /// the output pack and the I/O one run may spend consolidating a bucket.
+    /// </summary>
+    public long MaxMergedPackBytes { get; set; } = 1024L * 1024 * 1024;
+
+    /// <summary>
     /// Whether a run may seal the pack a bucket is appending to when that pack has accumulated
     /// enough garbage to be worth rewriting.
     /// </summary>
@@ -144,6 +169,12 @@ public sealed class GarbageCollectionOptions
 
         if (MaxPacksToCompactPerRun < 0)
             throw new ArgumentOutOfRangeException(nameof(MaxPacksToCompactPerRun), "Pack compaction cap cannot be negative.");
+
+        if (MergePacksBelowBytes < 0)
+            throw new ArgumentOutOfRangeException(nameof(MergePacksBelowBytes), "Merge threshold cannot be negative.");
+
+        if (MaxMergedPackBytes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(MaxMergedPackBytes), "Merged pack ceiling must be positive.");
 
         if (BucketConcurrency < 1)
             throw new ArgumentOutOfRangeException(nameof(BucketConcurrency), "Bucket concurrency must be at least 1.");
