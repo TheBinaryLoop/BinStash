@@ -750,6 +750,11 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
                 warnings.Add(warning);
             }
 
+            // Deferral is the difference between "nothing to collect" and "blocked", so it is
+            // recorded whether or not the pass also managed to reclaim something.
+            ctx.Progress.DeferredObjects += result.DeferredObjects;
+            ctx.Progress.PacksSealed += result.PacksSealed;
+
             if (result.ReclaimedHashes.Count > 0)
             {
                 ctx.Progress.ReclaimedObjects += result.ReclaimedHashes.Count;
@@ -893,6 +898,8 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
                 QuarantinedBytes = progress.QuarantinedBytes,
                 ReclaimedObjects = progress.ReclaimedObjects,
                 ReclaimedBytes = progress.ReclaimedBytes,
+                DeferredObjects = progress.DeferredObjects,
+                PacksSealed = progress.PacksSealed,
                 PacksCompacted = progress.PacksCompacted,
                 PacksDeleted = progress.PacksDeleted,
                 PackBytesDeleted = progress.PackBytesDeleted,

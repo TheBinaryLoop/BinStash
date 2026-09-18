@@ -865,8 +865,25 @@ internal sealed class IndexedPackFileHandler : IDisposable
         {
             ct.ThrowIfCancellationRequested();
 
-            if (fileNo == appendFileNo || File.Exists(RetiredMarkerPath(fileNo)) || !File.Exists(PackFilePath(fileNo)))
+            if (File.Exists(RetiredMarkerPath(fileNo)) || !File.Exists(PackFilePath(fileNo)))
             {
+                result.DeferredObjects += deadEntries.Count;
+                continue;
+            }
+
+            if (fileNo == appendFileNo)
+            {
+                // Rewriting the append target would race the writer, so this pass cannot reclaim
+                // it. Sealing it is the escape: the pack stops being the append target, and the
+                // ordinary path above collects it on a later run. Without this, a bucket that
+                // never reached the 4 GiB rollover would defer the same objects forever.
+                if (options.SealAppendPackForCompaction &&
+                    IsWorthCompacting(fileNo, deadEntries, options) &&
+                    await TrySealAppendPackAsync(fileNo, ct).ConfigureAwait(false))
+                {
+                    result.PacksSealed++;
+                }
+
                 result.DeferredObjects += deadEntries.Count;
                 continue;
             }
@@ -877,10 +894,7 @@ internal sealed class IndexedPackFileHandler : IDisposable
                 continue;
             }
 
-            var packLength = new FileInfo(PackFilePath(fileNo)).Length;
-            var deadBytes  = deadEntries.Sum(static d => (long)d.Length);
-
-            if (packLength > 0 && (double)deadBytes / packLength < options.MinimumPackGarbageRatio)
+            if (!IsWorthCompacting(fileNo, deadEntries, options))
             {
                 // Not worth the read+write amplification yet. The tombstones stay, and once
                 // more of the same pack dies the ratio will carry it over the line.
@@ -904,6 +918,58 @@ internal sealed class IndexedPackFileHandler : IDisposable
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Whether enough of <paramref name="fileNo"/> is dead to justify rewriting it.
+    /// </summary>
+    private bool IsWorthCompacting(int fileNo, List<GcObjectRef> deadEntries, GarbageCollectionOptions options)
+    {
+        var packLength = new FileInfo(PackFilePath(fileNo)).Length;
+        if (packLength <= 0)
+            return false;
+
+        var deadBytes = deadEntries.Sum(static d => (long)d.Length);
+        return (double)deadBytes / packLength >= options.MinimumPackGarbageRatio;
+    }
+
+    /// <summary>
+    /// Closes the bucket's current pack and starts a new one, so the closed pack becomes an
+    /// ordinary compaction candidate. Returns <see langword="false"/> when the pack is no longer
+    /// the append target, in which case there is nothing to seal.
+    /// </summary>
+    /// <remarks>
+    /// The seal has to survive a restart, or the next process would simply adopt the same pack
+    /// again and the deferral would resume. It does, because opening the successor creates it on
+    /// disk: <see cref="OpenCurrentWritableFileAsync"/> picks the highest non-retired pack, which
+    /// is now the new one. No existing entry is read, moved or rewritten, so a crash anywhere in
+    /// here leaves the bucket exactly as it was, minus at most one empty pack file.
+    /// </remarks>
+    private async Task<bool> TrySealAppendPackAsync(int fileNo, CancellationToken ct)
+    {
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Re-check under the lock: the append target may have rolled over on its own between
+            // the unlocked read at the top of the pass and now.
+            var current = _currentFileNumber != int.MinValue
+                ? _currentFileNumber
+                : EnumeratePackFileNumbers(includeRetired: false).DefaultIfEmpty(int.MinValue).Max();
+
+            if (current != fileNo)
+                return false;
+
+            _currentStream?.Dispose();
+            _currentStream = null;
+
+            _currentFileNumber = AllocatePackFileNumberUnderLock();
+            await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
     }
 
     private sealed record PackCompactionOutcome(List<Hash32> RemovedHashes, long FreedBytes, bool RewroteLiveEntries);

@@ -83,6 +83,27 @@ public sealed class GarbageCollectionOptions
     public int MaxPacksToCompactPerRun { get; set; } = 512;
 
     /// <summary>
+    /// Whether a run may seal the pack a bucket is appending to when that pack has accumulated
+    /// enough garbage to be worth rewriting.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Compaction never rewrites the append target, because doing so would race the writer. On
+    /// a bucket that has only ever needed one pack file, that rule has no escape: the single
+    /// pack is permanently the append target, so its garbage is deferred on every run and the
+    /// space is never returned. Packs roll over at 4 GiB, so a bucket well under that size
+    /// stays in this state indefinitely.
+    /// </para>
+    /// <para>
+    /// Sealing closes the current pack and starts a new one for subsequent appends. It moves no
+    /// bytes and touches no existing entry — the sealed pack simply stops being the append
+    /// target, which is enough for the ordinary copy-forward path to compact it on the next
+    /// run. Turn this off to restore the previous behaviour of deferring indefinitely.
+    /// </para>
+    /// </remarks>
+    public bool SealAppendPackForCompaction { get; set; } = true;
+
+    /// <summary>
     /// How many prefix buckets are marked or swept concurrently. Bounded because each
     /// worker holds an open pack-file handler and a bucket-sized mark set.
     /// </summary>

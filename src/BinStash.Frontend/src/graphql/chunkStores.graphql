@@ -100,6 +100,8 @@ fragment BackgroundJobSummary on BackgroundJobGql {
     quarantinedBytes
     reclaimedObjects
     reclaimedBytes
+    deferredObjects
+    packsSealed
     packsCompacted
     packsDeleted
     packBytesDeleted
@@ -180,6 +182,8 @@ subscription BackgroundJobProgress($jobId: UUID!) {
     quarantinedBytes
     reclaimedObjects
     reclaimedBytes
+    deferredObjects
+    packsSealed
     packsCompacted
     packsDeleted
     packBytesDeleted

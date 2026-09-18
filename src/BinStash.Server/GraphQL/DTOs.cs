@@ -583,6 +583,15 @@ public sealed class GcJobProgressGql
     /// </summary>
     public long ReclaimedBytes { get; init; }
 
+    /// <summary>
+    /// Objects found collectable but left in place this run, because their bytes sit in a pack
+    /// it could not rewrite. Non-zero alongside a zero reclaim count means blocked, not idle.
+    /// </summary>
+    public long DeferredObjects { get; init; }
+
+    /// <summary>Append-target packs sealed this run so a later one can compact them.</summary>
+    public int PacksSealed { get; init; }
+
     public int PacksCompacted { get; init; }
     public int PacksDeleted { get; init; }
 

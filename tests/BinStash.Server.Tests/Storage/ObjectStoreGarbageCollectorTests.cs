@@ -34,11 +34,18 @@ namespace BinStash.Server.Tests.Storage;
 public sealed class ObjectStoreGarbageCollectorTests : IDisposable
 {
     /// <summary>
-    /// Small enough that a handful of chunks spans several pack files, which is what lets these
-    /// tests reach the compaction path at all — the pack currently being appended to is never
-    /// rewritten, so a single-pack store has nothing to collect.
+    /// Small enough that a handful of chunks spans several pack files, which is what lets most
+    /// of these tests reach the compaction path directly rather than by way of a seal — the
+    /// pack currently being appended to is never rewritten in place.
     /// </summary>
     private const long TinyPackSize = 512;
+
+    /// <summary>
+    /// Large enough that everything a test writes lands in one pack, so the bucket's only pack
+    /// is also its append target. That is the shape a real store settles into below the 4 GiB
+    /// rollover, and the shape that used to make its garbage permanently unreclaimable.
+    /// </summary>
+    private const long OnePackSize = 1024 * 1024;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "binstash-gc-tests", Guid.NewGuid().ToString("N"));
 
@@ -402,6 +409,142 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
 
         rewrite.WasNew.Should().BeTrue();
         (await store.ReadChunkAsync(doomed[0].Hash.ToHexString())).Should().Equal(revived);
+    }
+
+
+    // -----------------------------------------------------------------------
+    // Sealing the append target
+
+    /// <summary>
+    /// Collects the bucket's objects as the collector sees them.
+    /// </summary>
+    private static async Task<List<GcObjectRef>> StoredObjectsAsync(ObjectStore store, GcBucketId bucket)
+    {
+        var collector = store.GarbageCollector;
+        var watermark = await collector.SnapshotWatermarkAsync(bucket, Ct);
+
+        var stored = new List<GcObjectRef>();
+        await foreach (var entry in collector.EnumerateBucketAsync(bucket, watermark, Ct))
+            stored.Add(entry);
+
+        return stored;
+    }
+
+    [Fact]
+    public async Task Garbage_in_a_single_pack_bucket_is_sealed_and_then_reclaimed_by_the_next_run()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(8);
+        await using var store = NewStore(OnePackSize);
+
+        foreach (var payload in payloads)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var stored = await StoredObjectsAsync(store, bucket);
+        stored.Should().OnlyContain(s => s.FileNo == 0, "the whole bucket has to fit one pack for this to be the case under test");
+
+        var doomed = stored.Take(4).ToList();
+        var doomedHashes = doomed.Select(static d => d.Hash).ToHashSet();
+
+        // First run: the only pack is the append target, so nothing can be rewritten yet. The
+        // run is not idle though — it seals, which is what makes the next one able to collect.
+        var first = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), Ct);
+
+        first.PacksSealed.Should().Be(1);
+        first.ReclaimedHashes.Should().BeEmpty();
+        first.DeferredObjects.Should().Be(doomed.Count);
+        first.Warnings.Should().BeEmpty("a seal is orderly progress, not a failure to report");
+
+        // Second run: the sealed pack is an ordinary candidate now.
+        var second = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), Ct);
+
+        second.ReclaimedHashes.Should().BeEquivalentTo(doomedHashes);
+        second.ReclaimedBytes.Should().BeGreaterThan(0);
+        second.PacksSealed.Should().Be(0, "the new append target is empty and has no garbage to seal for");
+
+        foreach (var payload in payloads.Where(p => !doomedHashes.Contains(HashOf(p))))
+            (await store.ReadChunkAsync(HashOf(payload).ToHexString())).Should().Equal(payload);
+    }
+
+    [Fact]
+    public async Task A_sealed_bucket_still_accepts_writes_and_serves_them()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(12);
+        await using var store = NewStore(OnePackSize);
+
+        var initial = payloads.Take(8).ToList();
+        foreach (var payload in initial)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var stored = await StoredObjectsAsync(store, bucket);
+        var doomed = stored.Take(4).ToList();
+
+        var sealResult = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), Ct);
+        sealResult.PacksSealed.Should().Be(1);
+
+        // The seal redirects appends to a fresh pack; ingest must not notice.
+        foreach (var payload in payloads.Skip(8))
+            await store.WriteChunkAsync(payload);
+
+        await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), Ct);
+
+        var doomedHashes = doomed.Select(static d => d.Hash).ToHashSet();
+        foreach (var payload in payloads.Where(p => !doomedHashes.Contains(HashOf(p))))
+            (await store.ReadChunkAsync(HashOf(payload).ToHexString())).Should().Equal(payload);
+    }
+
+    [Fact]
+    public async Task A_pack_below_the_garbage_ratio_is_not_sealed()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(16);
+        await using var store = NewStore(OnePackSize);
+
+        foreach (var payload in payloads)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var stored = await StoredObjectsAsync(store, bucket);
+
+        // One object in sixteen is far below the 0.25 default: rewriting would cost more than
+        // it returns, and sealing now would only strand a mostly-live pack.
+        var doomed = stored.Take(1).ToList();
+
+        var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), Ct);
+
+        result.PacksSealed.Should().Be(0);
+        result.ReclaimedHashes.Should().BeEmpty();
+        result.DeferredObjects.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Sealing_can_be_disabled()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(8);
+        await using var store = NewStore(OnePackSize);
+
+        foreach (var payload in payloads)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var stored = await StoredObjectsAsync(store, bucket);
+        var doomed = stored.Take(4).ToList();
+        var options = new GarbageCollectionOptions { SealAppendPackForCompaction = false };
+
+        var first  = await collector.ReclaimAsync(bucket, doomed, options, Ct);
+        var second = await collector.ReclaimAsync(bucket, doomed, options, Ct);
+
+        first.PacksSealed.Should().Be(0);
+        second.ReclaimedHashes.Should().BeEmpty("without a seal the append target is never collectable");
+        second.DeferredObjects.Should().Be(doomed.Count);
     }
 
     private int CountPackFiles()

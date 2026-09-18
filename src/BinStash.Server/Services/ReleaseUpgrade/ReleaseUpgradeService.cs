@@ -496,6 +496,8 @@ public sealed class BackgroundJobProgressDto
     public long QuarantinedBytes { get; init; }
     public long ReclaimedObjects { get; init; }
     public long ReclaimedBytes { get; init; }
+    public long DeferredObjects { get; init; }
+    public int PacksSealed { get; init; }
     public int PacksCompacted { get; init; }
     public int PacksDeleted { get; init; }
     public long PackBytesDeleted { get; init; }
