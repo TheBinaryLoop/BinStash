@@ -23,13 +23,17 @@ using BinStash.Infrastructure.Storage.FileDefinition;
 namespace BinStash.Server.Services.Reachability;
 
 /// <summary>
-/// A release definition that roots a reachability walk.
+/// A release definition that roots a reachability walk — in practice one variant of one release.
 /// </summary>
 /// <remarks>
-/// <see cref="Version"/> carries no meaning for the walk itself; it exists so that a failure can
-/// name the release an operator would recognise rather than only its id.
+/// <see cref="Version"/> and <see cref="TargetKey"/> carry no meaning for the walk itself; they
+/// exist so that a failure can name something an operator would recognise rather than only an id.
 /// </remarks>
-public readonly record struct ReleaseRoot(Guid Id, string Version, Hash32 DefinitionChecksum);
+public readonly record struct ReleaseRoot(Guid Id, string Version, string TargetKey, Hash32 DefinitionChecksum)
+{
+    /// <summary>How this root should be named in an operator-facing message.</summary>
+    public string Describe() => $"'{Version}' ({TargetKey}, variant {Id})";
+}
 
 /// <summary>
 /// Raised when a walk cannot establish the full set of objects a release reaches.
@@ -87,14 +91,14 @@ public sealed class ReleaseReachabilityWalker
         catch (Exception ex)
         {
             throw new ReachabilityAbortedException(
-                $"Release '{release.Version}' ({release.Id}) references release package {packageHash}, " +
+                $"Release {release.Describe()} references release package {packageHash}, " +
                 $"which could not be read ({ex.GetType().Name}: {ex.Message}).");
         }
 
         if (packageBytes is null || packageBytes.Length == 0)
         {
             throw new ReachabilityAbortedException(
-                $"Release '{release.Version}' ({release.Id}) references release package {packageHash}, " +
+                $"Release {release.Describe()} references release package {packageHash}, " +
                 "which is missing from the store.");
         }
 
@@ -106,7 +110,7 @@ public sealed class ReleaseReachabilityWalker
         catch (Exception ex)
         {
             throw new ReachabilityAbortedException(
-                $"Release package {packageHash} for release '{release.Version}' ({release.Id}) could not be " +
+                $"Release package {packageHash} for release {release.Describe()} could not be " +
                 $"deserialized ({ex.GetType().Name}: {ex.Message}).");
         }
 
@@ -115,7 +119,7 @@ public sealed class ReleaseReachabilityWalker
             // V5 addresses file definitions by StorageKey, an identity the store no longer
             // carries. Walking it would look successful and reach nothing.
             throw new ReachabilityAbortedException(
-                $"Release '{release.Version}' ({release.Id}) is stored in the legacy V5 format, whose file " +
+                $"Release {release.Describe()} is stored in the legacy V5 format, whose file " +
                 "references cannot be resolved against the current file-definition index. Run the release " +
                 "upgrade job on this chunk store first.");
         }
@@ -173,7 +177,7 @@ public sealed class ReleaseReachabilityWalker
                 case OpaqueBlobBacking opaque:
                     if (opaque.ContentHash is null)
                         throw new ReachabilityAbortedException(
-                            $"Output artifact '{artifact.Path}' of release '{release.Version}' ({release.Id}) has no content hash.");
+                            $"Output artifact '{artifact.Path}' of release {release.Describe()} has no content hash.");
                     hashes.Add(opaque.ContentHash.Value);
                     break;
 
@@ -183,14 +187,14 @@ public sealed class ReleaseReachabilityWalker
                         if (member.ContentHash is null)
                             throw new ReachabilityAbortedException(
                                 $"Container member '{member.EntryPath}' of '{artifact.Path}' in release " +
-                                $"'{release.Version}' ({release.Id}) has no content hash.");
+                                $"{release.Describe()} has no content hash.");
                         hashes.Add(member.ContentHash.Value);
                     }
                     break;
 
                 default:
                     throw new ReachabilityAbortedException(
-                        $"Output artifact '{artifact.Path}' of release '{release.Version}' ({release.Id}) uses backing type " +
+                        $"Output artifact '{artifact.Path}' of release {release.Describe()} uses backing type " +
                         $"'{artifact.Backing.GetType().Name}', which this server does not know how to walk.");
             }
         }

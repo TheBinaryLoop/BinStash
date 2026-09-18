@@ -13,10 +13,17 @@
 //     You should have received a copy of the GNU Affero General Public License
 //     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using BinStash.Contracts.Hashing;
-
 namespace BinStash.Core.Entities;
 
+/// <summary>
+/// A published version within a repository. What it contains lives on its
+/// <see cref="Variants"/> — one per build target — rather than on the release itself.
+/// </summary>
+/// <remarks>
+/// Variants are append-only: a target can be added to an existing release, but an existing one
+/// is never replaced. A release is therefore never "finished", and nothing has to declare in
+/// advance which targets it will have.
+/// </remarks>
 public class Release
 {
     public Guid Id { get; set; }
@@ -28,8 +35,7 @@ public class Release
     
     public string? Notes { get; set; }
     
-    public Hash32 ReleaseDefinitionChecksum { get; set; }
     public string? CustomProperties { get; set; } = null;
 
-    public required byte SerializerVersion { get; set; }
+    public virtual ICollection<ReleaseVariant> Variants { get; set; } = new List<ReleaseVariant>();
 }

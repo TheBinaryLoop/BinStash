@@ -165,6 +165,8 @@ public sealed class BackgroundJobService(
                     QuarantinedBytes = progress?.QuarantinedBytes ?? 0,
                     ReclaimedObjects = progress?.ReclaimedObjects ?? 0,
                     ReclaimedBytes = progress?.ReclaimedBytes ?? 0,
+                    DeferredObjects = progress?.DeferredObjects ?? 0,
+                    PacksSealed = progress?.PacksSealed ?? 0,
                     PacksCompacted = progress?.PacksCompacted ?? 0,
                     PacksDeleted = progress?.PacksDeleted ?? 0,
                     PackBytesDeleted = progress?.PackBytesDeleted ?? 0,

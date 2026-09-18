@@ -1,4 +1,4 @@
-// Copyright (C) Lukas Eßmann — AGPLv3 or later
+﻿// Copyright (C) Lukas Eßmann — AGPLv3 or later
 
 using System.Reflection;
 using BinStash.Contracts.Hashing;
@@ -75,6 +75,7 @@ public class EgressMeterTests : IDisposable
             releaseId,
             null,           // component
             null,           // file
+            null,           // target — unset, exercising the single-variant default path
             (Guid?)null,    // diffReleaseId
             response,
             _db,
@@ -186,6 +187,14 @@ public class EgressMeterTests : IDisposable
             Version = "1.0.0",
             RepoId = repoId,
             Repository = repo,
+            CreatedAt = DateTimeOffset.UtcNow,
+        };
+
+        var variant = new ReleaseVariant
+        {
+            ReleaseId = releaseId,
+            Release = release,
+            TargetKey = ReleaseTarget.Default,
             ReleaseDefinitionChecksum = default,
             CreatedAt = DateTimeOffset.UtcNow,
             SerializerVersion = 0,
@@ -194,6 +203,7 @@ public class EgressMeterTests : IDisposable
         _db.ChunkStores.Add(store);
         _db.Repositories.Add(repo);
         _db.Releases.Add(release);
+        _db.ReleaseVariants.Add(variant);
         await _db.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         return (tenantId, releaseId);
@@ -215,6 +225,7 @@ public class EgressMeterTests : IDisposable
             releaseId,
             null,           // component
             null,           // file
+            null,           // target — unset, exercising the single-variant default path
             (Guid?)null,    // diffReleaseId
             httpContext.Response,
             _db,

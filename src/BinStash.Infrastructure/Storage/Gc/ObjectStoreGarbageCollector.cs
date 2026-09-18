@@ -106,13 +106,14 @@ internal sealed class ObjectStoreGarbageCollector : IChunkStoreGarbageCollector
         GcBucketId bucket,
         IReadOnlyCollection<GcObjectRef> doomed,
         GarbageCollectionOptions options,
+        GcCompactionBudget budget,
         CancellationToken ct = default)
     {
         if (doomed.Count == 0)
             return new GcReclaimResult();
 
         using var lease = await _store.AcquireGcHandlerAsync(bucket, ct).ConfigureAwait(false);
-        var result = await lease.Handler.ReclaimAsync(doomed, options, ct).ConfigureAwait(false);
+        var result = await lease.Handler.ReclaimAsync(doomed, options, budget, ct).ConfigureAwait(false);
 
         // Prefix the bucket so a warning is actionable on its own; the handler only knows its
         // own directory, not which category/prefix pair the caller was working on.
@@ -121,6 +122,9 @@ internal sealed class ObjectStoreGarbageCollector : IChunkStoreGarbageCollector
 
         return result;
     }
+
+    /// <inheritdoc/>
+    public (long TotalBytes, long FreeBytes) GetVolumeSpace() => _store.GetVolumeSpace();
 
     public IAsyncEnumerable<GcReleasePackageRef> EnumerateReleasePackagesAsync(CancellationToken ct = default)
         => _store.EnumerateReleasePackagesAsync(ct);

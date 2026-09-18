@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //      This program is free software: you can redistribute it and/or modify
 //      it under the terms of the GNU Affero General Public License as published
@@ -14,6 +14,7 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Cli.Converters;
+using BinStash.Contracts.Release;
 using BinStash.Cli.Clients;
 using BinStash.Cli.Services.Releases;
 using CliFx;
@@ -43,6 +44,9 @@ public partial class ReleaseAddCommand : TenantCommandBase
 
     [CommandOption("component-map", 'c', Description = "The path to the component map file.")]
     public string ComponentMapFile { get; set; } = string.Empty;
+
+    [CommandOption("target", Description = "Build target this payload is for, e.g. linux-x64. Omit for a release that ships a single payload.")]
+    public string Target { get; set; } = string.Empty;
     
     [CommandOption("custom-property", 'p', Description = "Custom property to add to the release. Can be specified multiple times.", Converter = typeof(DictionaryConverter))]
     public Dictionary<string, string> CustomProperties { get; set; } = new();
@@ -81,6 +85,7 @@ public partial class ReleaseAddCommand : TenantCommandBase
             RepositoryName: RepositoryName,
             RootFolder: RootFolder,
             ComponentMapFile: string.IsNullOrWhiteSpace(ComponentMapFile) ? null : ComponentMapFile,
+            Target: string.IsNullOrWhiteSpace(Target) ? null : Target,
             CustomProperties: CustomProperties);
 
         var restClient = new BinStashApiClient(GetUrl(), AuthTokenFactory, authScheme: AuthScheme);
@@ -105,5 +110,10 @@ public partial class ReleaseAddCommand : TenantCommandBase
 
         if (!string.IsNullOrWhiteSpace(ComponentMapFile) && !File.Exists(ComponentMapFile))
             throw new CommandException($"The specified component map file '{ComponentMapFile}' does not exist or is not a file.");
+
+        // Rejected here rather than at upload time: a build matrix that mistypes a target should
+        // find out before it spends minutes chunking and pushing the payload.
+        if (!string.IsNullOrWhiteSpace(Target) && !ReleaseTarget.TryCanonicalize(Target, out _, out var targetError))
+            throw new CommandException(targetError!);
     }
 }

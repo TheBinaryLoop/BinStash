@@ -105,7 +105,14 @@ public interface IChunkStoreGarbageCollector
     /// keep their tombstones rather than assume the whole set was handled.
     /// </para>
     /// </summary>
-    Task<GcReclaimResult> ReclaimAsync(GcBucketId bucket, IReadOnlyCollection<GcObjectRef> doomed, GarbageCollectionOptions options, CancellationToken ct = default);
+    /// <param name="budget">
+    /// The run's remaining rewrite allowance, shared across buckets. Packs that do not fit keep
+    /// their tombstones and are reported as deferred.
+    /// </param>
+    Task<GcReclaimResult> ReclaimAsync(GcBucketId bucket, IReadOnlyCollection<GcObjectRef> doomed, GarbageCollectionOptions options, GcCompactionBudget budget, CancellationToken ct = default);
+
+    /// <summary>Total and available bytes of the volume the store sits on.</summary>
+    (long TotalBytes, long FreeBytes) GetVolumeSpace();
 
     /// <summary>
     /// Unlinks pack files superseded by an earlier reclaim whose drain window has elapsed.

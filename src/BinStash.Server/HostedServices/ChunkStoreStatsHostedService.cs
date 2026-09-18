@@ -14,8 +14,10 @@
 //      along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 using BinStash.Infrastructure.Data;
+using BinStash.Server.Configuration;
 using BinStash.Server.Services.ChunkStores;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace BinStash.Server.HostedServices;
 
@@ -23,16 +25,30 @@ public sealed class ChunkStoreStatsHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ChunkStoreStatsHostedService> _logger;
+    private readonly ChunkStoreStatsSettings _settings;
 
-    public ChunkStoreStatsHostedService(IServiceScopeFactory scopeFactory, ILogger<ChunkStoreStatsHostedService> logger)
+    public ChunkStoreStatsHostedService(IServiceScopeFactory scopeFactory, ILogger<ChunkStoreStatsHostedService> logger, IOptions<ChunkStoreStatsSettings> settings)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _settings = settings.Value;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromHours(1));
+        // A non-positive interval would throw out of the PeriodicTimer constructor and take the
+        // whole host down at startup, so a misconfigured value falls back to the default rather
+        // than making stats collection a boot-time hazard.
+        var interval = _settings.Interval > TimeSpan.Zero
+            ? _settings.Interval
+            : new ChunkStoreStatsSettings().Interval;
+
+        if (interval != _settings.Interval)
+            _logger.LogWarning("Configured chunk-store stats interval {Configured} is not positive; falling back to {Interval}", _settings.Interval, interval);
+
+        _logger.LogInformation("Chunk-store stats collection scheduled every {Interval}", interval);
+
+        using var timer = new PeriodicTimer(interval);
 
         while (!stoppingToken.IsCancellationRequested)
         {

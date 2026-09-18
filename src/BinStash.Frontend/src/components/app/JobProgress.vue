@@ -55,6 +55,8 @@ const gc = computed(() => {
     reclaimedBytes: liveData?.reclaimedBytes ?? stored?.reclaimedBytes ?? 0,
     packBytesDeleted: liveData?.packBytesDeleted ?? stored?.packBytesDeleted ?? 0,
     packsCompacted: liveData?.packsCompacted ?? stored?.packsCompacted ?? 0,
+    deferredObjects: liveData?.deferredObjects ?? stored?.deferredObjects ?? 0,
+    packsSealed: liveData?.packsSealed ?? stored?.packsSealed ?? 0,
     resurrectedObjects: liveData?.resurrectedObjects ?? stored?.resurrectedObjects ?? 0,
     dryRun: liveData?.gcDryRun ?? stored?.dryRun ?? false,
   }
@@ -211,6 +213,20 @@ const tone = computed(() => {
       Walked {{ formatNumber(gc.markedReleases) }} of {{ formatNumber(gc.totalReleases) }}
       release<template v-if="gc.totalReleases !== 1">s</template>
       <template v-if="gc.dryRun"> · nothing was quarantined or destroyed</template>
+    </p>
+
+    <!-- Deferral is the difference between a run with nothing to do and a run that cannot do it.
+         Reporting only the reclaim count made those two look identical, which is how a store can
+         sit on garbage indefinitely while every run reports success. -->
+    <p v-if="isGc && gc.deferredObjects > 0" class="text-muted-foreground text-xs">
+      {{ formatNumber(gc.deferredObjects) }} object(s) were found collectable but left in place —
+      their bytes sit in packs this run could not rewrite.
+      <template v-if="gc.packsSealed > 0">
+        {{ formatNumber(gc.packsSealed) }} pack(s) were sealed, so the next run can collect them.
+      </template>
+      <template v-else-if="gc.reclaimedObjects === 0">
+        Nothing was sealed either, so a later run will not get any further on its own.
+      </template>
     </p>
 
     <p v-if="isGc && gc.resurrectedObjects > 0" class="text-warning text-xs">

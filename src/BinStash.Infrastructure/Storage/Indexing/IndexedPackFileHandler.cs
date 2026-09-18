@@ -158,7 +158,12 @@ internal sealed class IndexedPackFileHandler : IDisposable
     /// their writes into one file.
     /// </para>
     /// </summary>
-    private int _highestAllocatedFileNumber = int.MinValue;
+    /// <summary>
+    /// Numbers handed out but whose pack file does not exist yet. Compaction allocates its
+    /// output number, then spends the whole streaming phase writing to a temp file, so without
+    /// this a second allocation in that window would hand out the same number again.
+    /// </summary>
+    private readonly HashSet<int> _reservedFileNumbers = [];
 
     // -----------------------------------------------------------------------
     // Deferred segment disposal
@@ -829,6 +834,7 @@ internal sealed class IndexedPackFileHandler : IDisposable
     public async Task<GcReclaimResult> ReclaimAsync(
         IReadOnlyCollection<GcObjectRef> doomed,
         GarbageCollectionOptions options,
+        GcCompactionBudget budget,
         CancellationToken ct = default)
     {
         ThrowIfDisposed();
@@ -859,69 +865,237 @@ internal sealed class IndexedPackFileHandler : IDisposable
             _writeLock.Release();
         }
 
-        var compactedPacks = 0;
+        // Sources are merged into ONE output rather than rewritten one-for-one. Compacting each
+        // pack into its own successor keeps the file count constant per compaction but never
+        // reduces it, so every seal/compact cycle strands another survivor pack and a bucket
+        // accumulates them without bound. Folding the small ones together is what makes the
+        // count come back down.
+        // Two independent reasons to rewrite a pack, kept apart on purpose: enough of it is dead
+        // (the ratio gate), or it is small enough that carrying it as its own file costs more
+        // than folding it in. Conflating them would let a single pack with sub-threshold garbage
+        // be rewritten on its own, which is exactly what the ratio gate exists to prevent.
+        var garbageSources = new List<int>();
+        var sizeSources = new List<int>();
+        var deferredForCap = 0;
 
         foreach (var (fileNo, deadEntries) in doomedByPack.OrderByDescending(static kv => kv.Value.Sum(static d => (long)d.Length)))
         {
             ct.ThrowIfCancellationRequested();
 
-            if (fileNo == appendFileNo || File.Exists(RetiredMarkerPath(fileNo)) || !File.Exists(PackFilePath(fileNo)))
+            if (File.Exists(RetiredMarkerPath(fileNo)) || !File.Exists(PackFilePath(fileNo)))
             {
                 result.DeferredObjects += deadEntries.Count;
                 continue;
             }
 
-            if (compactedPacks >= options.MaxPacksToCompactPerRun)
+            if (fileNo == appendFileNo)
             {
+                // Rewriting the append target would race the writer, so this pass cannot reclaim
+                // it. Sealing it is the escape: the pack stops being the append target, and the
+                // ordinary path collects it on a later run. Without this, a bucket that never
+                // reached the 4 GiB rollover would defer the same objects forever.
+                if (options.SealAppendPackForCompaction &&
+                    IsWorthCompacting(fileNo, deadEntries, options) &&
+                    await TrySealAppendPackAsync(fileNo, ct).ConfigureAwait(false))
+                {
+                    result.PacksSealed++;
+                }
+
                 result.DeferredObjects += deadEntries.Count;
                 continue;
             }
 
-            var packLength = new FileInfo(PackFilePath(fileNo)).Length;
-            var deadBytes  = deadEntries.Sum(static d => (long)d.Length);
-
-            if (packLength > 0 && (double)deadBytes / packLength < options.MinimumPackGarbageRatio)
+            if (garbageSources.Count >= options.MaxPacksToCompactPerRun || !IsWorthCompacting(fileNo, deadEntries, options))
             {
-                // Not worth the read+write amplification yet. The tombstones stay, and once
-                // more of the same pack dies the ratio will carry it over the line.
-                result.DeferredObjects += deadEntries.Count;
+                // Over the per-bucket cap, or not enough of it is dead to pay for the rewrite on
+                // garbage grounds alone. It may still be folded in below on size.
+                deferredForCap += deadEntries.Count;
                 continue;
             }
 
-            var reclaimed = await CompactPackFileAsync(fileNo, deadEntries, result.Warnings, ct).ConfigureAwait(false);
-            if (reclaimed is null)
+            // The run-wide allowance is what bounds peak disk: the source and its rewritten copy
+            // coexist until the drain window passes, so anything claimed here is space the volume
+            // has to hold twice. Refused packs keep their tombstones for the next run.
+            if (!budget.TryReserve(SafePackLength(fileNo)))
             {
-                result.DeferredObjects += deadEntries.Count;
+                deferredForCap += deadEntries.Count;
                 continue;
             }
 
-            compactedPacks++;
-            result.PacksCompacted += reclaimed.RewroteLiveEntries ? 1 : 0;
-            result.PacksRetired   += reclaimed.RewroteLiveEntries ? 0 : 1;
-            result.ReclaimedBytes += reclaimed.FreedBytes;
-            result.ReclaimedHashes.AddRange(reclaimed.RemovedHashes);
-            result.DeferredObjects += deadEntries.Count - reclaimed.RemovedHashes.Count;
+            garbageSources.Add(fileNo);
         }
+
+        // Fold in packs that are merely small. They may hold no garbage at all — they are here
+        // because a bucket left holding many part-full packs wastes a file handle and a seek
+        // each, and nothing else in the design ever consolidates them.
+        foreach (var fileNo in SmallMergeCandidates(garbageSources, appendFileNo, options))
+        {
+            if (garbageSources.Count + sizeSources.Count >= options.MaxPacksToCompactPerRun)
+                break;
+
+            // Consolidation is a convenience, not a reclaim, so it never overspends: a refused
+            // reservation ends the fold-in rather than deferring anything.
+            if (!budget.TryReserve(SafePackLength(fileNo)))
+                break;
+
+            sizeSources.Add(fileNo);
+        }
+
+        var sources = garbageSources.Concat(sizeSources).ToList();
+
+        // Rewriting one pack into one pack only pays when the ratio gate cleared it. Merging
+        // pays from two sources up, because that is when the file count actually comes down.
+        var worthDoing = garbageSources.Count > 0 || sources.Count > 1;
+
+        if (sources.Count == 0 || !worthDoing)
+        {
+            result.DeferredObjects += deferredForCap;
+            return result;
+        }
+
+        var merged = await CompactPacksAsync(sources, doomedByPack, result.Warnings, ct).ConfigureAwait(false);
+
+        if (merged is null)
+        {
+            result.DeferredObjects += deferredForCap + sources.Sum(fileNo => doomedByPack.TryGetValue(fileNo, out var d) ? d.Count : 0);
+            return result;
+        }
+
+        result.PacksCompacted += merged.PacksRewritten;
+        result.PacksRetired   += merged.PacksDroppedWhole;
+        result.ReclaimedBytes += merged.FreedBytes;
+        result.ReclaimedHashes.AddRange(merged.RemovedHashes);
+        result.DeferredObjects += deferredForCap
+            + sources.Sum(fileNo => doomedByPack.TryGetValue(fileNo, out var d) ? d.Count : 0)
+            - merged.RemovedHashes.Count;
 
         return result;
     }
 
-    private sealed record PackCompactionOutcome(List<Hash32> RemovedHashes, long FreedBytes, bool RewroteLiveEntries);
+    /// <summary>
+    /// Packs worth folding into this run's merge purely because they are small, ordered smallest
+    /// first and stopping once the combined source size would exceed the ceiling.
+    /// </summary>
+    private IEnumerable<int> SmallMergeCandidates(List<int> alreadyChosen, int appendFileNo, GarbageCollectionOptions options)
+    {
+        if (options.MergePacksBelowBytes <= 0)
+            yield break;
+
+        var budget = options.MaxMergedPackBytes;
+        foreach (var chosen in alreadyChosen)
+            budget -= SafePackLength(chosen);
+
+        if (budget <= 0)
+            yield break;
+
+        var candidates = EnumeratePackFileNumbers(includeRetired: false)
+            .Where(n => n != appendFileNo && !alreadyChosen.Contains(n))
+            .Select(n => (FileNo: n, Length: SafePackLength(n)))
+            .Where(c => c.Length > 0 && c.Length <= options.MergePacksBelowBytes)
+            .OrderBy(static c => c.Length);
+
+        foreach (var (fileNo, length) in candidates)
+        {
+            if (length > budget)
+                yield break;
+
+            budget -= length;
+            yield return fileNo;
+        }
+    }
 
     /// <summary>
-    /// Copies the live entries of one pack file forward into a new pack, republishes the
-    /// bucket index, and retires the source. Returns <see langword="null"/> when the pack
-    /// could not be processed and should be retried by a later run.
+    /// Size of a pack file, or 0 when it has gone away underneath us.
     /// </summary>
-    private async Task<PackCompactionOutcome?> CompactPackFileAsync(
-        int fileNo, List<GcObjectRef> deadEntries, List<string> warnings, CancellationToken ct)
+    private long SafePackLength(int fileNo)
     {
-        var sourcePath = PackFilePath(fileNo);
-        var deadSet    = deadEntries.Select(static d => d.Hash).ToHashSet();
-        var deadOffsets= deadEntries.Select(static d => d.Offset).ToHashSet();
+        try
+        {
+            var info = new FileInfo(PackFilePath(fileNo));
+            return info.Exists ? info.Length : 0;
+        }
+        catch (IOException)
+        {
+            return 0;
+        }
+    }
 
-        // Phase A — stream the source into a new pack, outside the write lock. This is the
-        // expensive part and it must not block ingest. Nothing published yet, so a crash here
+    /// <summary>
+    /// Whether enough of <paramref name="fileNo"/> is dead to justify rewriting it.
+    /// </summary>
+    private bool IsWorthCompacting(int fileNo, List<GcObjectRef> deadEntries, GarbageCollectionOptions options)
+    {
+        var packLength = new FileInfo(PackFilePath(fileNo)).Length;
+        if (packLength <= 0)
+            return false;
+
+        var deadBytes = deadEntries.Sum(static d => (long)d.Length);
+        return (double)deadBytes / packLength >= options.MinimumPackGarbageRatio;
+    }
+
+    /// <summary>
+    /// Closes the bucket's current pack and starts a new one, so the closed pack becomes an
+    /// ordinary compaction candidate. Returns <see langword="false"/> when the pack is no longer
+    /// the append target, in which case there is nothing to seal.
+    /// </summary>
+    /// <remarks>
+    /// The seal has to survive a restart, or the next process would simply adopt the same pack
+    /// again and the deferral would resume. It does, because opening the successor creates it on
+    /// disk: <see cref="OpenCurrentWritableFileAsync"/> picks the highest non-retired pack, which
+    /// is now the new one. No existing entry is read, moved or rewritten, so a crash anywhere in
+    /// here leaves the bucket exactly as it was, minus at most one empty pack file.
+    /// </remarks>
+    private async Task<bool> TrySealAppendPackAsync(int fileNo, CancellationToken ct)
+    {
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Re-check under the lock: the append target may have rolled over on its own between
+            // the unlocked read at the top of the pass and now.
+            var current = _currentFileNumber != int.MinValue
+                ? _currentFileNumber
+                : EnumeratePackFileNumbers(includeRetired: false).DefaultIfEmpty(int.MinValue).Max();
+
+            if (current != fileNo)
+                return false;
+
+            _currentStream?.Dispose();
+            _currentStream = null;
+
+            _currentFileNumber = AllocatePackFileNumberUnderLock();
+            await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    private sealed record PackMergeOutcome(
+        List<Hash32> RemovedHashes,
+        long FreedBytes,
+        int PacksRewritten,
+        int PacksDroppedWhole);
+
+    /// <summary>
+    /// Copies the live entries of one or more pack files forward into a single new pack,
+    /// republishes the bucket index, and retires every source. Returns <see langword="null"/>
+    /// when nothing could be processed and a later run should retry.
+    /// </summary>
+    /// <remarks>
+    /// Merging several sources into one output is what keeps a bucket's file count from
+    /// climbing: rewriting each source into its own successor would preserve the count forever,
+    /// so the survivor packs left by successive compactions would only accumulate.
+    /// </remarks>
+    private async Task<PackMergeOutcome?> CompactPacksAsync(
+        IReadOnlyList<int> sourceFileNos,
+        Dictionary<int, List<GcObjectRef>> deadByPack,
+        List<string> warnings,
+        CancellationToken ct)
+    {
+        // Phase A — stream every source into one new pack, outside the write lock. This is the
+        // expensive part and it must not block ingest. Nothing is published yet, so a crash here
         // leaves only an unreferenced temp file.
         int outputFileNo;
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
@@ -934,25 +1108,35 @@ internal sealed class IndexedPackFileHandler : IDisposable
             _writeLock.Release();
         }
 
-        var tempPath   = $"{_dataFilePrefix}-{outputFileNo}{CompactionTempSuffix}";
-        var outputPath = PackFilePath(outputFileNo);
-        var relocations = new List<(Hash32 Hash, IndexEntry Entry)>();
+        var tempPath    = $"{_dataFilePrefix}-{outputFileNo}{CompactionTempSuffix}";
+        var outputPath  = PackFilePath(outputFileNo);
+        var relocations = new List<(Hash32 Hash, int SourceFileNo, IndexEntry Entry)>();
+        var rewritten   = new HashSet<int>();
+        var processed   = new List<int>(sourceFileNos.Count);
         long freedBytes = 0;
 
         try
         {
-            await using (var source = new FileStream(
-                             sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
-                             bufferSize: 256 * 1024,
-                             options: FileOptions.Asynchronous | FileOptions.SequentialScan))
-            await using (var target = new FileStream(
-                             tempPath, FileMode.Create, FileAccess.Write, FileShare.None,
-                             bufferSize: 256 * 1024,
-                             options: FileOptions.Asynchronous))
+            await using var target = new FileStream(
+                tempPath, FileMode.Create, FileAccess.Write, FileShare.None,
+                bufferSize: 256 * 1024,
+                options: FileOptions.Asynchronous);
+
+            foreach (var fileNo in sourceFileNos)
             {
-                // ignoreChecks: a corrupt entry must not abort the whole pass. Entries that
-                // fail to parse are treated as garbage and dropped, which is the only way a
-                // store with historic corruption can ever be cleaned up.
+                ct.ThrowIfCancellationRequested();
+
+                var deadEntries = deadByPack.TryGetValue(fileNo, out var dead) ? dead : [];
+                var deadOffsets = deadEntries.Select(static d => d.Offset).ToHashSet();
+
+                await using var source = new FileStream(
+                    PackFilePath(fileNo), FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
+                    bufferSize: 256 * 1024,
+                    options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+                // ignoreChecks: a corrupt entry must not abort the whole pass. Entries that fail
+                // to parse are treated as garbage and dropped, which is the only way a store with
+                // historic corruption can ever be cleaned up.
                 await foreach (var entry in PackFileEntry.ReadAllEntriesAsync(source, ignoreChecks: true, ct).ConfigureAwait(false))
                 {
                     if (deadOffsets.Contains(entry.Offset))
@@ -974,51 +1158,63 @@ internal sealed class IndexedPackFileHandler : IDisposable
                     }
 
                     var (newOffset, newLength) = await PackFileEntry.WriteAsync(target, entry.Data, ct).ConfigureAwait(false);
-                    relocations.Add((hash, new IndexEntry(outputFileNo, newOffset, newLength)));
+                    relocations.Add((hash, fileNo, new IndexEntry(outputFileNo, newOffset, newLength)));
+                    rewritten.Add(fileNo);
                 }
 
-                await target.FlushAsync(ct).ConfigureAwait(false);
-                target.Flush(flushToDisk: true);
+                processed.Add(fileNo);
             }
+
+            await target.FlushAsync(ct).ConfigureAwait(false);
+            target.Flush(flushToDisk: true);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             TryDeleteFile(tempPath);
-            warnings.Add($"could not rewrite {Path.GetFileName(sourcePath)} ({ex.GetType().Name}: {ex.Message}); its tombstones are kept for a later run");
+            await ReleaseFileNumberAsync(outputFileNo).ConfigureAwait(false);
+            var names = string.Join(", ", sourceFileNos.Select(n => Path.GetFileName(PackFilePath(n))));
+            warnings.Add($"could not rewrite {names} ({ex.GetType().Name}: {ex.Message}); their tombstones are kept for a later run");
             return null;
         }
         catch (OperationCanceledException)
         {
             TryDeleteFile(tempPath);
+            await ReleaseFileNumberAsync(outputFileNo).ConfigureAwait(false);
             throw;
         }
 
         // Phase B — publish. Short and under the write lock: rename the output into place,
-        // rebuild the bucket index around the relocations, then retire the source.
+        // rebuild the bucket index around the relocations, then retire the sources.
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var index = await SnapshotIndexAsync(ct).ConfigureAwait(false);
+            var removed = new List<Hash32>();
 
-            var removed = new List<Hash32>(deadSet.Count);
-            foreach (var dead in deadEntries)
+            foreach (var fileNo in processed)
             {
-                // Only drop the index entry if it still points at the bytes we removed. A
-                // concurrent re-upload of the same content would have written a fresh entry
-                // elsewhere, and that one must survive.
-                if (index.TryGetValue(dead.Hash, out var current) &&
-                    current.FileNo == dead.FileNo && current.Offset == dead.Offset)
+                if (!deadByPack.TryGetValue(fileNo, out var deadEntries))
+                    continue;
+
+                foreach (var dead in deadEntries)
                 {
-                    index.Remove(dead.Hash);
-                    removed.Add(dead.Hash);
+                    // Only drop the index entry if it still points at the bytes we removed. A
+                    // concurrent re-upload of the same content would have written a fresh entry
+                    // elsewhere, and that one must survive.
+                    if (index.TryGetValue(dead.Hash, out var current) &&
+                        current.FileNo == dead.FileNo && current.Offset == dead.Offset)
+                    {
+                        index.Remove(dead.Hash);
+                        removed.Add(dead.Hash);
+                    }
                 }
             }
 
-            foreach (var (hash, entry) in relocations)
+            foreach (var (hash, sourceFileNo, entry) in relocations)
             {
                 // Same rule in the other direction: never move a hash whose live location has
-                // already been superseded by something newer than this pack.
-                if (index.TryGetValue(hash, out var current) && current.FileNo == fileNo)
+                // already been superseded by something newer than the pack it came from.
+                if (index.TryGetValue(hash, out var current) && current.FileNo == sourceFileNo)
                     index[hash] = entry;
                 else if (!index.ContainsKey(hash))
                     index[hash] = entry;
@@ -1029,16 +1225,26 @@ internal sealed class IndexedPackFileHandler : IDisposable
             else
                 TryDeleteFile(tempPath);
 
+            // Either the pack now exists or it never will; the number stands on its own from here.
+            _reservedFileNumbers.Remove(outputFileNo);
+
             await PublishIndexUnderLockAsync(index, ct).ConfigureAwait(false);
 
-            // Retiring after the index no longer references the pack means a crash at any
-            // point above leaves a consistent store — at worst some space stays occupied.
-            await File.WriteAllTextAsync(
-                RetiredMarkerPath(fileNo),
-                DateTimeOffset.UtcNow.ToString("O"),
-                ct).ConfigureAwait(false);
+            // Retiring after the index no longer references the packs means a crash at any point
+            // above leaves a consistent store — at worst some space stays occupied.
+            foreach (var fileNo in processed)
+            {
+                await File.WriteAllTextAsync(
+                    RetiredMarkerPath(fileNo),
+                    DateTimeOffset.UtcNow.ToString("O"),
+                    ct).ConfigureAwait(false);
+            }
 
-            return new PackCompactionOutcome(removed, freedBytes, relocations.Count > 0);
+            return new PackMergeOutcome(
+                removed,
+                freedBytes,
+                PacksRewritten: rewritten.Count,
+                PacksDroppedWhole: processed.Count - rewritten.Count);
         }
         finally
         {
@@ -1389,10 +1595,6 @@ internal sealed class IndexedPackFileHandler : IDisposable
         var highestPath = $"{_dataFilePrefix}-{highest}.pack";
         var highestLen  = new FileInfo(highestPath).Length;
 
-        // Seed the allocator from what is already on disk so a fresh handler cannot hand
-        // out a number that an earlier process already used.
-        _highestAllocatedFileNumber = Math.Max(_highestAllocatedFileNumber, highest);
-
         _currentFileNumber = highestLen < _maxPackFileSize ? highest : AllocatePackFileNumberUnderLock();
         await OpenSpecificWritableFileAsync(_currentFileNumber).ConfigureAwait(false);
     }
@@ -1404,13 +1606,47 @@ internal sealed class IndexedPackFileHandler : IDisposable
     /// </summary>
     private int AllocatePackFileNumberUnderLock()
     {
-        var onDisk = EnumeratePackFileNumbers(includeRetired: true)
-            .DefaultIfEmpty(-1)
-            .Max();
+        // Lowest free rather than highest-plus-one, so the numbers a merge frees are handed out
+        // again and a bucket's file names stay in a range the size of its pack count however
+        // many times it is consolidated. Monotonic numbering would climb for the life of the
+        // store, which is a lot of digits to describe two files.
+        //
+        // A number counts as free only once its pack, its retirement marker and any half-written
+        // compaction output have all gone. For a retired pack that is after the drain window has
+        // elapsed and PurgeObsoletePacksAsync has unlinked it — the same moment the design
+        // already accepts that no reader can still be holding an address into it.
+        var taken = new HashSet<int>(EnumeratePackFileNumbers(includeRetired: true));
 
-        var next = Math.Max(Math.Max(onDisk, _highestAllocatedFileNumber), _currentFileNumber == int.MinValue ? -1 : _currentFileNumber) + 1;
-        _highestAllocatedFileNumber = next;
-        return next;
+        foreach (var temp in Directory.EnumerateFiles(_directory, $"{Path.GetFileName(_dataFilePrefix)}-*{CompactionTempSuffix}"))
+        {
+            var number = ParsePackFileNumber(temp);
+            if (number >= 0)
+                taken.Add(number);
+        }
+
+        var candidate = 0;
+        while (taken.Contains(candidate) || _reservedFileNumbers.Contains(candidate) || candidate == _currentFileNumber)
+            candidate++;
+
+        _reservedFileNumbers.Add(candidate);
+        return candidate;
+    }
+
+    /// <summary>
+    /// Gives an allocated number back when its pack never materialised, so a failed compaction
+    /// does not burn the number until the process restarts.
+    /// </summary>
+    private async Task ReleaseFileNumberAsync(int fileNo)
+    {
+        await _writeLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            _reservedFileNumbers.Remove(fileNo);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
     }
 
     /// <summary>
@@ -1446,6 +1682,11 @@ internal sealed class IndexedPackFileHandler : IDisposable
     private Task OpenSpecificWritableFileAsync(int fileNumber)
     {
         var path = $"{_dataFilePrefix}-{fileNumber}.pack";
+
+        // FileMode.Append creates the file, so from here the number is accounted for on disk and
+        // no longer needs a reservation to keep it out of the allocator's reach.
+        _reservedFileNumbers.Remove(fileNumber);
+
         _currentStream?.Dispose();
         _currentStream = new FileStream(
             path,
