@@ -34,11 +34,18 @@ namespace BinStash.Server.Tests.Storage;
 public sealed class ObjectStoreGarbageCollectorTests : IDisposable
 {
     /// <summary>
-    /// Small enough that a handful of chunks spans several pack files, which is what lets these
-    /// tests reach the compaction path at all — the pack currently being appended to is never
-    /// rewritten, so a single-pack store has nothing to collect.
+    /// Small enough that a handful of chunks spans several pack files, which is what lets most
+    /// of these tests reach the compaction path directly rather than by way of a seal — the
+    /// pack currently being appended to is never rewritten in place.
     /// </summary>
     private const long TinyPackSize = 512;
+
+    /// <summary>
+    /// Large enough that everything a test writes lands in one pack, so the bucket's only pack
+    /// is also its append target. That is the shape a real store settles into below the 4 GiB
+    /// rollover, and the shape that used to make its garbage permanently unreclaimable.
+    /// </summary>
+    private const long OnePackSize = 1024 * 1024;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "binstash-gc-tests", Guid.NewGuid().ToString("N"));
 
@@ -173,7 +180,7 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
         doomed.Should().NotBeEmpty("the tiny pack size should have rotated several sealed packs");
 
         var options = new GarbageCollectionOptions { MinimumPackGarbageRatio = 0 };
-        var result = await collector.ReclaimAsync(bucket, doomed, options, Ct);
+        var result = await collector.ReclaimAsync(bucket, doomed, options, GcCompactionBudget.Unlimited, Ct);
 
         result.ReclaimedHashes.Should().BeEquivalentTo(doomed.Select(static d => d.Hash));
 
@@ -215,7 +222,7 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
         await foreach (var entry in collector.EnumerateBucketAsync(bucket, watermark, Ct))
             stored.Add(entry);
 
-        var result = await collector.ReclaimAsync(bucket, stored, new GarbageCollectionOptions { MinimumPackGarbageRatio = 0 }, Ct);
+        var result = await collector.ReclaimAsync(bucket, stored, new GarbageCollectionOptions { MinimumPackGarbageRatio = 0 }, GcCompactionBudget.Unlimited, Ct);
 
         result.ReclaimedHashes.Should().BeEmpty();
         result.DeferredObjects.Should().Be(stored.Count,
@@ -246,7 +253,15 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
         var doomed = stored.Where(s => s.FileNo < appendPack).Take(1).ToList();
 
         // A ratio no partially-dead pack can reach: rewriting would cost more I/O than it frees.
-        var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions { MinimumPackGarbageRatio = 1.1 }, Ct);
+        // Size-based merging is switched off so this exercises the ratio gate on its own —
+        // these packs are tiny, so consolidation would otherwise rewrite them for its own
+        // reasons and the gate under test would never be the deciding factor.
+        var result = await collector.ReclaimAsync(
+            bucket,
+            doomed,
+            new GarbageCollectionOptions { MinimumPackGarbageRatio = 1.1, MergePacksBelowBytes = 0 },
+            GcCompactionBudget.Unlimited,
+            Ct);
 
         result.ReclaimedHashes.Should().BeEmpty();
         result.DeferredObjects.Should().Be(doomed.Count);
@@ -273,7 +288,7 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
         var doomed = stored.Where(s => s.FileNo < appendPack).ToList();
         doomed.Should().NotBeEmpty();
 
-        await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions { MinimumPackGarbageRatio = 0 }, Ct);
+        await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions { MinimumPackGarbageRatio = 0 }, GcCompactionBudget.Unlimited, Ct);
 
         var packCountAfterReclaim = CountPackFiles();
 
@@ -354,7 +369,7 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
                 await store.WriteChunkAsync(payload);
         }, Ct);
 
-        var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions { MinimumPackGarbageRatio = 0 }, Ct);
+        var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions { MinimumPackGarbageRatio = 0 }, GcCompactionBudget.Unlimited, Ct);
 
         await writer;
         await stop.CancelAsync();
@@ -394,7 +409,7 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
         var doomed = stored.Where(s => s.FileNo < appendPack).Take(1).ToList();
         doomed.Should().NotBeEmpty();
 
-        await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions { MinimumPackGarbageRatio = 0 }, Ct);
+        await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions { MinimumPackGarbageRatio = 0 }, GcCompactionBudget.Unlimited, Ct);
 
         // This is the recovery path a client takes after being told the content is missing.
         var revived = payloads.Single(p => HashOf(p) == doomed[0].Hash);
@@ -402,6 +417,297 @@ public sealed class ObjectStoreGarbageCollectorTests : IDisposable
 
         rewrite.WasNew.Should().BeTrue();
         (await store.ReadChunkAsync(doomed[0].Hash.ToHexString())).Should().Equal(revived);
+    }
+
+
+    // -----------------------------------------------------------------------
+    // Sealing the append target
+
+    /// <summary>
+    /// Collects the bucket's objects as the collector sees them.
+    /// </summary>
+    private static async Task<List<GcObjectRef>> StoredObjectsAsync(ObjectStore store, GcBucketId bucket)
+    {
+        var collector = store.GarbageCollector;
+        var watermark = await collector.SnapshotWatermarkAsync(bucket, Ct);
+
+        var stored = new List<GcObjectRef>();
+        await foreach (var entry in collector.EnumerateBucketAsync(bucket, watermark, Ct))
+            stored.Add(entry);
+
+        return stored;
+    }
+
+    [Fact]
+    public async Task Garbage_in_a_single_pack_bucket_is_sealed_and_then_reclaimed_by_the_next_run()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(8);
+        await using var store = NewStore(OnePackSize);
+
+        foreach (var payload in payloads)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var stored = await StoredObjectsAsync(store, bucket);
+        stored.Should().OnlyContain(s => s.FileNo == 0, "the whole bucket has to fit one pack for this to be the case under test");
+
+        var doomed = stored.Take(4).ToList();
+        var doomedHashes = doomed.Select(static d => d.Hash).ToHashSet();
+
+        // First run: the only pack is the append target, so nothing can be rewritten yet. The
+        // run is not idle though — it seals, which is what makes the next one able to collect.
+        var first = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), GcCompactionBudget.Unlimited, Ct);
+
+        first.PacksSealed.Should().Be(1);
+        first.ReclaimedHashes.Should().BeEmpty();
+        first.DeferredObjects.Should().Be(doomed.Count);
+        first.Warnings.Should().BeEmpty("a seal is orderly progress, not a failure to report");
+
+        // Second run: the sealed pack is an ordinary candidate now.
+        var second = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), GcCompactionBudget.Unlimited, Ct);
+
+        second.ReclaimedHashes.Should().BeEquivalentTo(doomedHashes);
+        second.ReclaimedBytes.Should().BeGreaterThan(0);
+        second.PacksSealed.Should().Be(0, "the new append target is empty and has no garbage to seal for");
+
+        foreach (var payload in payloads.Where(p => !doomedHashes.Contains(HashOf(p))))
+            (await store.ReadChunkAsync(HashOf(payload).ToHexString())).Should().Equal(payload);
+    }
+
+    [Fact]
+    public async Task A_sealed_bucket_still_accepts_writes_and_serves_them()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(12);
+        await using var store = NewStore(OnePackSize);
+
+        var initial = payloads.Take(8).ToList();
+        foreach (var payload in initial)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var stored = await StoredObjectsAsync(store, bucket);
+        var doomed = stored.Take(4).ToList();
+
+        var sealResult = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), GcCompactionBudget.Unlimited, Ct);
+        sealResult.PacksSealed.Should().Be(1);
+
+        // The seal redirects appends to a fresh pack; ingest must not notice.
+        foreach (var payload in payloads.Skip(8))
+            await store.WriteChunkAsync(payload);
+
+        await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), GcCompactionBudget.Unlimited, Ct);
+
+        var doomedHashes = doomed.Select(static d => d.Hash).ToHashSet();
+        foreach (var payload in payloads.Where(p => !doomedHashes.Contains(HashOf(p))))
+            (await store.ReadChunkAsync(HashOf(payload).ToHexString())).Should().Equal(payload);
+    }
+
+    [Fact]
+    public async Task A_pack_below_the_garbage_ratio_is_not_sealed()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(16);
+        await using var store = NewStore(OnePackSize);
+
+        foreach (var payload in payloads)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var stored = await StoredObjectsAsync(store, bucket);
+
+        // One object in sixteen is far below the 0.25 default: rewriting would cost more than
+        // it returns, and sealing now would only strand a mostly-live pack.
+        var doomed = stored.Take(1).ToList();
+
+        var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), GcCompactionBudget.Unlimited, Ct);
+
+        result.PacksSealed.Should().Be(0);
+        result.ReclaimedHashes.Should().BeEmpty();
+        result.DeferredObjects.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Sealing_can_be_disabled()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(8);
+        await using var store = NewStore(OnePackSize);
+
+        foreach (var payload in payloads)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var stored = await StoredObjectsAsync(store, bucket);
+        var doomed = stored.Take(4).ToList();
+        var options = new GarbageCollectionOptions { SealAppendPackForCompaction = false };
+
+        var first  = await collector.ReclaimAsync(bucket, doomed, options, GcCompactionBudget.Unlimited, Ct);
+        var second = await collector.ReclaimAsync(bucket, doomed, options, GcCompactionBudget.Unlimited, Ct);
+
+        first.PacksSealed.Should().Be(0);
+        second.ReclaimedHashes.Should().BeEmpty("without a seal the append target is never collectable");
+        second.DeferredObjects.Should().Be(doomed.Count);
+    }
+
+
+    [Fact]
+    public async Task Small_packs_are_merged_so_a_buckets_file_count_comes_back_down()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(24);
+        await using var store = NewStore();
+
+        foreach (var payload in payloads)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        // The tiny pack size leaves this bucket holding many part-full packs — the shape a store
+        // drifts into as compaction rewrites survivors into successor files.
+        var before = CountPackFiles();
+        before.Should().BeGreaterThan(2);
+
+        // One dead object in one pack — far below the garbage ratio, so it buys at most a single
+        // rewrite. Every other pack here is picked up purely because it is small, which is the
+        // behaviour under test.
+        var stored = await StoredObjectsAsync(store, bucket);
+        var doomed = stored.Take(1).ToList();
+
+        var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), GcCompactionBudget.Unlimited, Ct);
+        result.PacksCompacted.Should().BeGreaterThan(1, "packs with no garbage of their own were folded in");
+
+        await collector.PurgeObsoletePacksAsync(TimeSpan.Zero, Ct);
+
+        CountPackFiles().Should().BeLessThan(before, "consolidation is the only thing that brings the count down");
+
+        var doomedHashes = doomed.Select(static d => d.Hash).ToHashSet();
+        foreach (var payload in payloads.Where(p => !doomedHashes.Contains(HashOf(p))))
+            (await store.ReadChunkAsync(HashOf(payload).ToHexString())).Should().Equal(payload);
+    }
+
+
+    /// <summary>Highest pack number currently on disk, across the whole store.</summary>
+    private int HighestPackNumber()
+        => Directory.EnumerateFiles(_root, "*.pack", SearchOption.AllDirectories)
+            .Select(static path =>
+            {
+                var name = Path.GetFileNameWithoutExtension(path);
+                var dash = name.LastIndexOf('-');
+                return dash >= 0 && int.TryParse(name[(dash + 1)..], out var n) ? n : -1;
+            })
+            .DefaultIfEmpty(-1)
+            .Max();
+
+    [Fact]
+    public async Task Pack_numbers_are_reused_so_they_do_not_climb_with_every_cycle()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(64);
+        await using var store = NewStore();
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var live = new List<byte[]>();
+        var reclaimed = new HashSet<Hash32>();
+        var next = 0;
+
+        // Eight rounds of the real cycle — write, collect, purge — each of which allocates at
+        // least one output pack. Highest-plus-one numbering would leave the names climbing past
+        // the number of files the bucket actually holds; drawing from the free set must not.
+        for (var cycle = 0; cycle < 8; cycle++)
+        {
+            for (var i = 0; i < 8 && next < payloads.Count; i++, next++)
+            {
+                await store.WriteChunkAsync(payloads[next]);
+                live.Add(payloads[next]);
+            }
+
+            var stored = await StoredObjectsAsync(store, bucket);
+            var doomed = stored.Where(x => !reclaimed.Contains(x.Hash)).Take(4).ToList();
+
+            var result = await collector.ReclaimAsync(bucket, doomed, new GarbageCollectionOptions(), GcCompactionBudget.Unlimited, Ct);
+            foreach (var hash in result.ReclaimedHashes)
+                reclaimed.Add(hash);
+
+            await collector.PurgeObsoletePacksAsync(TimeSpan.Zero, Ct);
+        }
+
+        var packCount = CountPackFiles();
+        HighestPackNumber().Should().BeLessThan(
+            packCount + 4,
+            "numbers freed by a merge are handed out again, so they stay near the pack count rather than tracking how many cycles have run");
+
+        foreach (var payload in live.Where(p => !reclaimed.Contains(HashOf(p))))
+            (await store.ReadChunkAsync(HashOf(payload).ToHexString())).Should().Equal(payload);
+    }
+
+
+    // -----------------------------------------------------------------------
+    // The run-wide compaction budget
+
+    [Fact]
+    public async Task A_spent_budget_defers_the_rest_instead_of_rewriting_it()
+    {
+        var (prefix, payloads) = PayloadsInOneBucket(24);
+        await using var store = NewStore();
+
+        foreach (var payload in payloads)
+            await store.WriteChunkAsync(payload);
+
+        var collector = store.GarbageCollector;
+        var bucket = new GcBucketId(GcObjectCategory.Chunk, prefix);
+
+        var stored = await StoredObjectsAsync(store, bucket);
+        var appendPack = stored.Max(static s => s.FileNo);
+        var doomed = stored.Where(s => s.FileNo < appendPack).ToList();
+        doomed.Should().NotBeEmpty();
+
+        // Room for one pack only. Compaction has to stop after it rather than working through
+        // the bucket, because every source it takes on is space the volume carries twice.
+        var budget = new GcCompactionBudget(bytes: 1, packs: 1);
+        var options = new GarbageCollectionOptions { MinimumPackGarbageRatio = 0, MergePacksBelowBytes = 0 };
+
+        var result = await collector.ReclaimAsync(bucket, doomed, options, budget, Ct);
+
+        result.PacksCompacted.Should().BeLessThanOrEqualTo(1);
+        result.DeferredObjects.Should().BeGreaterThan(0, "what the budget refused keeps its tombstones");
+        budget.IsExhausted.Should().BeTrue();
+
+        // Deferring is not losing: a later run with room finishes the job.
+        var second = await collector.ReclaimAsync(bucket, doomed, options, GcCompactionBudget.Unlimited, Ct);
+        second.ReclaimedHashes.Count.Should().BeGreaterThan(0);
+
+        var reclaimed = result.ReclaimedHashes.Concat(second.ReclaimedHashes).ToHashSet();
+        foreach (var payload in payloads.Where(p => !reclaimed.Contains(HashOf(p))))
+            (await store.ReadChunkAsync(HashOf(payload).ToHexString())).Should().Equal(payload);
+    }
+
+    [Fact]
+    public void A_pack_larger_than_the_whole_budget_is_still_collectable()
+    {
+        var budget = new GcCompactionBudget(bytes: 100, packs: 8);
+
+        // Refusing outright would make an oversized pack permanently uncollectable, which is the
+        // same class of bug as never rewriting the append target.
+        budget.TryReserve(1_000_000).Should().BeTrue("the first reservation of a run always goes through");
+        budget.TryReserve(1).Should().BeFalse("but it has spent the run");
+    }
+
+    [Fact]
+    public void The_budget_stops_handing_out_packs_once_its_count_runs_out()
+    {
+        var budget = new GcCompactionBudget(bytes: long.MaxValue, packs: 2);
+
+        budget.TryReserve(10).Should().BeTrue();
+        budget.TryReserve(10).Should().BeTrue();
+        budget.TryReserve(10).Should().BeFalse();
+        budget.IsExhausted.Should().BeTrue();
     }
 
     private int CountPackFiles()

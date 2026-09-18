@@ -165,6 +165,23 @@ public sealed class ChunkStoreGcProgressData
     /// </summary>
     public long ReclaimedBytes { get; set; }
 
+    /// <summary>
+    /// Objects this run identified as collectable but did not reclaim, because their bytes sit
+    /// in a pack it was not allowed to rewrite. Their tombstones survive for a later run.
+    /// </summary>
+    /// <remarks>
+    /// A run that reclaims nothing and defers nothing genuinely found no garbage. A run that
+    /// reclaims nothing while deferring a great deal is not idle — it is blocked, and without
+    /// this counter the two are indistinguishable from the outside.
+    /// </remarks>
+    public long DeferredObjects { get; set; }
+
+    /// <summary>
+    /// Append-target packs this run sealed, so that a later run may compact them. Sealing frees
+    /// no space itself; it is what makes the space reclaimable at all.
+    /// </summary>
+    public int PacksSealed { get; set; }
+
     /// <summary>Pack files rewritten to drop dead entries.</summary>
     public int PacksCompacted { get; set; }
 
