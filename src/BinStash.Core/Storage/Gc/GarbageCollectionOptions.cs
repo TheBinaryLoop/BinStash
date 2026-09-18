@@ -83,6 +83,39 @@ public sealed class GarbageCollectionOptions
     public int MaxPacksToCompactPerRun { get; set; } = 512;
 
     /// <summary>
+    /// Ceiling on the total size of the pack files one run may rewrite, across every bucket.
+    /// Set to 0 for no limit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the knob that bounds how much extra disk a run needs. Compaction writes the
+    /// survivors of a pack to a new file and only unlinks the original after its drain window,
+    /// so the two coexist and a run's peak overhead is the size of everything it rewrites.
+    /// <see cref="MaxPacksToCompactPerRun"/> does not bound that on its own: it is applied per
+    /// bucket, and a store has thousands of buckets holding a handful of packs each.
+    /// </para>
+    /// <para>
+    /// Whatever does not fit keeps its tombstones and is collected by a later run, so the effect
+    /// of a smaller budget is that reclaiming a large backlog takes more runs — not that any of
+    /// it is lost. The default is deliberately modest so that the first run on a store that has
+    /// never been collected cannot ask for more room than the volume has.
+    /// </para>
+    /// </remarks>
+    public long MaxBytesToCompactPerRun { get; set; } = 8L * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// Fraction of the store volume that compaction will not eat into, whatever
+    /// <see cref="MaxBytesToCompactPerRun"/> allows. Set to 0 to disable the check.
+    /// </summary>
+    /// <remarks>
+    /// The budget is the smaller of the two, so a nearly full volume throttles itself rather
+    /// than relying on the operator having picked a byte figure that suits it. Compaction is the
+    /// one part of collection that needs space *before* it returns any, which is exactly when
+    /// running out is least recoverable.
+    /// </remarks>
+    public double CompactionFreeSpaceReserveFraction { get; set; } = 0.10;
+
+    /// <summary>
     /// A pack at or below this size is a candidate for being merged into a larger one, whether
     /// or not it contains any garbage. Set to 0 to never merge on size alone.
     /// </summary>
@@ -169,6 +202,12 @@ public sealed class GarbageCollectionOptions
 
         if (MaxPacksToCompactPerRun < 0)
             throw new ArgumentOutOfRangeException(nameof(MaxPacksToCompactPerRun), "Pack compaction cap cannot be negative.");
+
+        if (MaxBytesToCompactPerRun < 0)
+            throw new ArgumentOutOfRangeException(nameof(MaxBytesToCompactPerRun), "Compaction byte budget cannot be negative.");
+
+        if (CompactionFreeSpaceReserveFraction is < 0 or >= 1)
+            throw new ArgumentOutOfRangeException(nameof(CompactionFreeSpaceReserveFraction), "Free space reserve must be in [0, 1).");
 
         if (MergePacksBelowBytes < 0)
             throw new ArgumentOutOfRangeException(nameof(MergePacksBelowBytes), "Merge threshold cannot be negative.");

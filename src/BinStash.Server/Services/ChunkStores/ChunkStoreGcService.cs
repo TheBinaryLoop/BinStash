@@ -683,6 +683,7 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
         var warnings = new List<string>();
         var now = DateTimeOffset.UtcNow;
         var barrier = await ComputeReclaimBarrierAsync(ctx, now, ct);
+        var budget = CreateCompactionBudget(ctx);
 
         var buckets = await ctx.Db.ChunkStoreGcTombstones
             .Where(t => t.ChunkStoreId == ctx.ChunkStoreId && t.EligibleAt <= now && t.QuarantinedAt < barrier)
@@ -742,7 +743,7 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             if (doomed.Count == 0)
                 continue;
 
-            var result = await ctx.Collector.ReclaimAsync(bucket, doomed, ctx.Options, ct);
+            var result = await ctx.Collector.ReclaimAsync(bucket, doomed, ctx.Options, budget, ct);
 
             foreach (var warning in result.Warnings)
             {
@@ -779,6 +780,16 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
             await PersistProgressAsync(ctx, ct);
         }
 
+        if (budget.IsExhausted)
+        {
+            // Not a failure: the run rewrote as much as its allowance permitted and the rest kept
+            // its tombstones. Worth saying out loud, because "reclaimed less than there was
+            // garbage" otherwise looks like the deferral bug this budget sits next to.
+            _logger.LogInformation(
+                "GC job {JobId}: compaction budget of {BudgetBytes} bytes spent; the remaining garbage keeps its tombstones for the next run",
+                ctx.Job.Id, budget.TotalBytes);
+        }
+
         // Superseded pack files become deletable once no reader can still be holding an address
         // into them. This also cleans up after any run that died mid-compaction.
         var purge = await ctx.Collector.PurgeObsoletePacksAsync(ctx.Options.ObsoletePackDrainWindow, ct);
@@ -795,6 +806,35 @@ public sealed class ChunkStoreGcService : IChunkStoreGcService
         }
 
         await PersistProgressAsync(ctx, ct);
+    }
+
+    /// <summary>
+    /// How much rewriting this run may do, being the smaller of the configured ceiling and what
+    /// the store volume can spare.
+    /// </summary>
+    /// <remarks>
+    /// Compaction needs the space before it returns any, so the volume has to hold a pack and its
+    /// rewritten copy at once. Sizing the run against free space is what stops a large backlog
+    /// from trying to reclaim itself into a full disk.
+    /// </remarks>
+    private GcCompactionBudget CreateCompactionBudget(GcRunContext ctx)
+    {
+        var options = ctx.Options;
+        var ceiling = options.MaxBytesToCompactPerRun > 0 ? options.MaxBytesToCompactPerRun : long.MaxValue;
+
+        var (totalBytes, freeBytes) = ctx.Collector.GetVolumeSpace();
+
+        if (totalBytes > 0 && options.CompactionFreeSpaceReserveFraction > 0)
+        {
+            var reserve = (long)(totalBytes * options.CompactionFreeSpaceReserveFraction);
+            ceiling = Math.Min(ceiling, Math.Max(0, freeBytes - reserve));
+        }
+
+        _logger.LogInformation(
+            "GC job {JobId}: compaction budget {BudgetBytes} bytes (volume {FreeBytes} free of {TotalBytes})",
+            ctx.Job.Id, ceiling, freeBytes, totalBytes);
+
+        return new GcCompactionBudget(ceiling, options.MaxPacksToCompactPerRun);
     }
 
     /// <summary>

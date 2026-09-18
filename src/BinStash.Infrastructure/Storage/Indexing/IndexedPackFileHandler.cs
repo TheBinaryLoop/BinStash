@@ -834,6 +834,7 @@ internal sealed class IndexedPackFileHandler : IDisposable
     public async Task<GcReclaimResult> ReclaimAsync(
         IReadOnlyCollection<GcObjectRef> doomed,
         GarbageCollectionOptions options,
+        GcCompactionBudget budget,
         CancellationToken ct = default)
     {
         ThrowIfDisposed();
@@ -906,8 +907,17 @@ internal sealed class IndexedPackFileHandler : IDisposable
 
             if (garbageSources.Count >= options.MaxPacksToCompactPerRun || !IsWorthCompacting(fileNo, deadEntries, options))
             {
-                // Over the per-run budget, or not enough of it is dead to pay for the rewrite on
+                // Over the per-bucket cap, or not enough of it is dead to pay for the rewrite on
                 // garbage grounds alone. It may still be folded in below on size.
+                deferredForCap += deadEntries.Count;
+                continue;
+            }
+
+            // The run-wide allowance is what bounds peak disk: the source and its rewritten copy
+            // coexist until the drain window passes, so anything claimed here is space the volume
+            // has to hold twice. Refused packs keep their tombstones for the next run.
+            if (!budget.TryReserve(SafePackLength(fileNo)))
+            {
                 deferredForCap += deadEntries.Count;
                 continue;
             }
@@ -921,6 +931,11 @@ internal sealed class IndexedPackFileHandler : IDisposable
         foreach (var fileNo in SmallMergeCandidates(garbageSources, appendFileNo, options))
         {
             if (garbageSources.Count + sizeSources.Count >= options.MaxPacksToCompactPerRun)
+                break;
+
+            // Consolidation is a convenience, not a reclaim, so it never overspends: a refused
+            // reservation ends the fold-in rather than deferring anything.
+            if (!budget.TryReserve(SafePackLength(fileNo)))
                 break;
 
             sizeSources.Add(fileNo);
