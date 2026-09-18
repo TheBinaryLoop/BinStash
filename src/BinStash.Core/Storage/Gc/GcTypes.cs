@@ -92,6 +92,18 @@ public sealed class GcReclaimResult
     /// tombstones stay in place for a later run.
     /// </summary>
     public int DeferredObjects { get; set; }
+
+    /// <summary>
+    /// Append-target packs this pass sealed so that a later run may compact them.
+    ///
+    /// <para>
+    /// Sealing frees nothing by itself. It is reported separately precisely because it is the
+    /// step that turns a permanently deferred pack into an ordinary one: a run that seals and
+    /// reclaims nothing is making progress, and looks identical to one that is stuck without
+    /// this counter.
+    /// </para>
+    /// </summary>
+    public int PacksSealed { get; set; }
 }
 
 /// <summary>

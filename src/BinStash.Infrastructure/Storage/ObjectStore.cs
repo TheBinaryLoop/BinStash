@@ -562,19 +562,7 @@ public class ObjectStore : IDisposable, IAsyncDisposable
             }
         }
 
-        var root = Path.GetPathRoot(Path.GetFullPath(_basePath));
-        long volumeTotalBytes = 0;
-        long volumeFreeBytes = 0;
-
-        if (!string.IsNullOrWhiteSpace(root))
-        {
-            var drive = new DriveInfo(root);
-            if (drive.IsReady)
-            {
-                volumeTotalBytes = drive.TotalSize;
-                volumeFreeBytes = drive.AvailableFreeSpace;
-            }
-        }
+        var (volumeTotalBytes, volumeFreeBytes) = GetVolumeSpace();
 
         var result = new ChunkStorePhysicalStats
         {
@@ -596,6 +584,75 @@ public class ObjectStore : IDisposable, IAsyncDisposable
         return Task.FromResult(result);
     }
     
+    /// <summary>
+    /// Total and available bytes of the volume the store actually sits on.
+    /// </summary>
+    /// <remarks>
+    /// Resolved by longest matching mount point rather than by path root. A store is very often
+    /// on its own mount — the live instance keeps it on a separate 24 GB volume while the root
+    /// filesystem is 16 GB — and <see cref="Path.GetPathRoot"/> answers "/" on Unix for every
+    /// path, so rooting the lookup there reports an unrelated filesystem. Anything deciding how
+    /// much room it has to work in would then be reading the wrong number entirely.
+    /// </remarks>
+    internal (long TotalBytes, long FreeBytes) GetVolumeSpace()
+    {
+        var full = Path.GetFullPath(_basePath);
+
+        DriveInfo? best = null;
+        var bestLength = -1;
+
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            string mount;
+            try
+            {
+                if (!drive.IsReady)
+                    continue;
+
+                mount = drive.RootDirectory.FullName;
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            // Compare on a path boundary, or a mount at /opt/bin would claim a store in
+            // /opt/binstash and report the wrong filesystem's free space.
+            if (!IsUnder(full, mount) || mount.Length <= bestLength)
+                continue;
+
+            best = drive;
+            bestLength = mount.Length;
+        }
+
+        try
+        {
+            return best is null ? (0, 0) : (best.TotalSize, best.AvailableFreeSpace);
+        }
+        catch (IOException)
+        {
+            return (0, 0);
+        }
+    }
+
+    /// <summary>Whether <paramref name="path"/> is <paramref name="mount"/> or sits beneath it.</summary>
+    private static bool IsUnder(string path, string mount)
+    {
+        if (!path.StartsWith(mount, StringComparison.Ordinal))
+            return false;
+
+        if (path.Length == mount.Length)
+            return true;
+
+        // A mount point that already ends in a separator (a drive root, "/") needs no further
+        // boundary; anything else must be followed by one.
+        return mount.EndsWith(Path.DirectorySeparatorChar) || path[mount.Length] == Path.DirectorySeparatorChar;
+    }
+
     private const int StatsConcurrency = 32;
 
     /// <summary>

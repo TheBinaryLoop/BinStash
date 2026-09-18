@@ -25,6 +25,18 @@ bld/
 [Bb]in/
 [Oo]bj/
 
+# ...but those two rules match *any* folder with that name, not just build output, and this
+# solution has source folders called Release (src/BinStash.Contracts/Release,
+# src/BinStash.Cli/Commands/Release). A new source file there was silently skipped by `git add`
+# and only surfaced as a CI-only compile error. Real build output is already covered by bin/ and
+# obj/ above, which git never descends into, so re-including the source trees is safe.
+!src/**/[Rr]elease/
+!src/**/[Dd]ebug/
+!tests/**/[Rr]elease/
+!tests/**/[Dd]ebug/
+!tooling/**/[Rr]elease/
+!tooling/**/[Dd]ebug/
+
 # Roslyn cache directories
 *.ide/
 
