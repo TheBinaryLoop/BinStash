@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Download, Package } from '@lucide/vue'
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AsyncSection from '@/components/app/AsyncSection.vue'
@@ -27,26 +27,54 @@ const { result, loading, error, refetch } = useQuery(ReleaseDocument, () => ({
 const release = computed(() => result.value?.release)
 const metrics = computed(() => release.value?.metrics)
 
+const variants = computed(() => release.value?.variants ?? [])
+
+/**
+ * A release that declares no target still has exactly one variant, keyed `default`. Showing a
+ * one-item switcher for it would invent a choice the publisher never made, so the target UI only
+ * appears once there is something to choose between.
+ */
+const hasTargets = computed(() => variants.value.length > 1)
+
+const selectedTarget = ref<string | null>(null)
+
+// Reset when navigating between releases, and default to the first target published.
+watch(variants, (list) => {
+  selectedTarget.value = list.length > 1 ? (list[0]?.targetKey ?? null) : null
+}, { immediate: true })
+
+const selectedVariant = computed(
+  () => variants.value.find((v) => v.targetKey === selectedTarget.value) ?? variants.value[0],
+)
+
 /**
  * The package download is binary and stays on REST — it is not a GraphQL-shaped
  * operation. The route is tenant-prefixed on the server.
  */
-const downloadUrl = computed(
-  () =>
-    `/api/tenants/${tenants.activeTenantId}/repositories/${repoId.value}/releases/${releaseId.value}/download`,
-)
+const downloadUrl = computed(() => {
+  const base = `/api/tenants/${tenants.activeTenantId}/repositories/${repoId.value}/releases/${releaseId.value}/download`
+  // The server refuses an unqualified download once a release has several targets, rather than
+  // guessing — so the target has to travel with the request.
+  return hasTargets.value && selectedTarget.value
+    ? `${base}?target=${encodeURIComponent(selectedTarget.value)}`
+    : base
+})
 
-const cliCommand = computed(() =>
-  release.value?.repository
-    ? `binstash release get --repo ${release.value.repository.name} --version ${release.value.version}`
-    : '',
-)
+const cliCommand = computed(() => {
+  const repo = release.value?.repository
+  if (!repo) return ''
+  const target = hasTargets.value && selectedTarget.value ? ` --target ${selectedTarget.value}` : ''
+  return `binstash release get --repo ${repo.name} --version ${release.value!.version}${target}`
+})
 
 const details = computed(() => {
   const stats = metrics.value
+  // With several targets the release totals are sums across all of them, which is not what
+  // someone looking at one target wants to read. Show the selected target's own figures.
+  const variant = hasTargets.value ? selectedVariant.value : undefined
   return [
-    { label: 'Size', value: formatBytes(stats?.totalLogicalBytes ?? null) },
-    { label: 'Files', value: formatNumber(stats?.filesInRelease ?? null) },
+    { label: 'Size', value: formatBytes(variant?.totalLogicalBytes ?? stats?.totalLogicalBytes ?? null) },
+    { label: 'Files', value: formatNumber(variant?.filesInVariant ?? stats?.filesInRelease ?? null) },
     { label: 'Components', value: formatNumber(stats?.componentsInRelease ?? null) },
     { label: 'Chunks', value: formatNumber(stats?.chunksInRelease ?? null) },
     { label: 'Metadata', value: formatBytes(stats?.metaBytesFull ?? null) },
@@ -95,10 +123,34 @@ const customProperties = computed(() => release.value?.customProperties ?? [])
             </div>
           </template>
           <template #actions>
-            <Button as="a" :href="downloadUrl" download class="gap-2">
-              <Download class="size-4" />
-              Download
-            </Button>
+            <div class="flex flex-wrap items-center gap-2">
+              <div
+                v-if="hasTargets"
+                class="bg-muted/50 hairline flex items-center gap-0.5 rounded-lg p-0.5"
+                role="group"
+                aria-label="Build target"
+              >
+                <button
+                  v-for="variant in variants"
+                  :key="variant.id"
+                  type="button"
+                  class="rounded-md px-2.5 py-1 font-mono text-xs transition-colors"
+                  :class="
+                    variant.targetKey === selectedTarget
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  "
+                  :aria-pressed="variant.targetKey === selectedTarget"
+                  @click="selectedTarget = variant.targetKey"
+                >
+                  {{ variant.targetKey }}
+                </button>
+              </div>
+              <Button as="a" :href="downloadUrl" download class="gap-2">
+                <Download class="size-4" />
+                Download
+              </Button>
+            </div>
           </template>
         </PageHeader>
 

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using BinStash.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace BinStash.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(BinStashDbContext))]
-    partial class BinStashDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260914081713_AddReleaseVariants")]
+    partial class AddReleaseVariants
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1182,33 +1185,6 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.ToTable("TenantStorageSnapshots", (string)null);
                 });
 
-            modelBuilder.Entity("BinStash.Core.Entities.TenantTrafficSample", b =>
-                {
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("BucketStartUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Grain")
-                        .HasColumnType("integer");
-
-                    b.Property<long>("EgressBytes")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("IngressBytes")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("RequestCount")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("TenantId", "BucketStartUtc", "Grain");
-
-                    b.HasIndex("Grain", "BucketStartUtc");
-
-                    b.ToTable("TenantTrafficSamples", (string)null);
-                });
-
             modelBuilder.Entity("BinStash.Core.Entities.UserGroup", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1285,25 +1261,6 @@ namespace BinStash.Infrastructure.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("AspNetUserRefreshTokens", (string)null);
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("FriendlyName")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Xml")
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("DataProtectionKeys");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole<System.Guid>", b =>

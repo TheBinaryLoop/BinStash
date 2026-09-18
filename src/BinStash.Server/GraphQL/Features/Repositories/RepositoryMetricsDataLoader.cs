@@ -1,4 +1,4 @@
-// Copyright (C) 2025-2026  Lukas Eßmann
+﻿// Copyright (C) 2025-2026  Lukas Eßmann
 // 
 //     This program is free software: you can redistribute it and/or modify
 //     it under the terms of the GNU Affero General Public License as published
@@ -67,11 +67,8 @@ public sealed class RepositoryMetricsDataLoader : BatchDataLoader<Guid, Reposito
 
         var sizes = await _db.ReleaseMetrics
             .AsNoTracking()
-            .Join(
-                _db.Releases.AsNoTracking().Where(r => keys.Contains(r.RepoId)),
-                m => m.ReleaseId,
-                r => r.Id,
-                (m, r) => new { r.RepoId, m.TotalLogicalBytes })
+            .Where(m => keys.Contains(m.Variant.Release.RepoId))
+            .Select(m => new { m.Variant.Release.RepoId, m.TotalLogicalBytes })
             .GroupBy(x => x.RepoId)
             .Select(g => new
             {

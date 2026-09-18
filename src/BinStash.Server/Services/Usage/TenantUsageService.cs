@@ -45,11 +45,12 @@ namespace BinStash.Server.Services.Usage;
 /// </para>
 ///
 /// <para>
-/// The join is spelled out in each method rather than factored into a shared <c>IQueryable</c>.
-/// Projecting joined rows into a named intermediate type defeats the Npgsql translator — the
-/// query cannot be translated at all and throws at runtime, which EF Core's in-memory provider
-/// does not reproduce. Anonymous types all the way through is what translates, so the repetition
-/// is load-bearing; the sharing that matters — one class owning the definition — is intact.
+/// Metrics now hang off the release variant, so these reach the tenant by navigation
+/// (<c>m.Variant.Release.Repository.TenantId</c>) rather than by explicit joins. That sidesteps
+/// the trap the joins had: projecting joined rows into a named intermediate type defeats the
+/// Npgsql translator, and the query then throws at runtime in a way EF Core's in-memory provider
+/// does not reproduce. Navigation plus anonymous types translates, and was verified against a
+/// real PostgreSQL rather than only against the in-memory provider.
 /// </para>
 /// </remarks>
 public sealed class TenantUsageService(BinStashDbContext db)
@@ -78,8 +79,7 @@ public sealed class TenantUsageService(BinStashDbContext db)
     {
         var rows = await db.ReleaseMetrics
             .AsNoTracking()
-            .Join(db.Releases.AsNoTracking(), rm => rm.ReleaseId, r => r.Id, (rm, r) => new { rm.TotalLogicalBytes, r.RepoId })
-            .Join(db.Repositories.AsNoTracking(), x => x.RepoId, repo => repo.Id, (x, repo) => new { x.TotalLogicalBytes, repo.TenantId })
+            .Select(m => new { m.TotalLogicalBytes, m.Variant.Release.Repository.TenantId })
             .GroupBy(x => x.TenantId)
             .Select(g => new { TenantId = g.Key, TotalBytes = (long)g.Sum(x => (decimal)x.TotalLogicalBytes) })
             .ToListAsync(ct);
@@ -92,12 +92,16 @@ public sealed class TenantUsageService(BinStashDbContext db)
     {
         var totals = await db.ReleaseMetrics
             .AsNoTracking()
-            .Join(db.Releases.AsNoTracking(), rm => rm.ReleaseId, r => r.Id, (rm, r) => new { rm, r.RepoId })
-            .Join(db.Repositories.AsNoTracking(), x => x.RepoId, repo => repo.Id, (x, repo) => new { x.rm, repo.TenantId })
-            .Where(x => x.TenantId == tenantId)
+            .Where(m => m.Variant.Release.Repository.TenantId == tenantId)
             .GroupBy(_ => 1)
-            .Select(g => new { LogicalBytes = (long)g.Sum(x => (decimal)x.rm.TotalLogicalBytes), ReleaseCount = g.Count() })
+            .Select(g => new { LogicalBytes = (long)g.Sum(x => (decimal)x.TotalLogicalBytes) })
             .FirstOrDefaultAsync(ct);
+
+        // Releases, not variants: a version published for five platforms is one release. Counting
+        // the metrics rows would count it five times.
+        var releaseCount = await db.Releases
+            .AsNoTracking()
+            .CountAsync(r => r.Repository.TenantId == tenantId, ct);
 
         var repositoryCount = await db.Repositories
             .AsNoTracking()
@@ -116,7 +120,7 @@ public sealed class TenantUsageService(BinStashDbContext db)
             logicalBytes,
             snapshot?.UniqueLogicalBytes ?? logicalBytes,
             snapshot?.ComputedAt,
-            totals?.ReleaseCount ?? 0,
+            releaseCount,
             repositoryCount);
     }
 }

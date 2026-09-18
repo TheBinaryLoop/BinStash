@@ -30,7 +30,8 @@ public readonly record struct ScopedReleaseRoot(Guid ChunkStoreId, ReleaseRoot R
 /// Garbage collection asks per chunk store; usage accounting asks per tenant. Both must see the
 /// same set, and a release definition that either query forgets is a release definition whose
 /// chunks one subsystem collects and the other bills for. Keeping both projections here means a
-/// change to how releases carry their definitions is made once.
+/// change to how releases carry their definitions is made once — as when definitions moved from
+/// the release to its per-target variants, which is a change entirely contained by this file.
 /// </para>
 /// </summary>
 public static class ReleaseRootQueries
@@ -39,10 +40,10 @@ public static class ReleaseRootQueries
     /// Every release definition stored in the given chunk store, across all tenants.
     /// </summary>
     public static IQueryable<ReleaseRoot> ForChunkStore(BinStashDbContext db, Guid chunkStoreId) =>
-        db.Releases
+        db.ReleaseVariants
             .AsNoTracking()
-            .Where(r => r.Repository.ChunkStoreId == chunkStoreId)
-            .Select(r => new ReleaseRoot(r.Id, r.Version, r.ReleaseDefinitionChecksum));
+            .Where(v => v.Release.Repository.ChunkStoreId == chunkStoreId)
+            .Select(v => new ReleaseRoot(v.Id, v.Release.Version, v.TargetKey, v.ReleaseDefinitionChecksum));
 
     /// <summary>
     /// Every release definition owned by the given tenant, tagged with the chunk store holding it.
@@ -52,10 +53,10 @@ public static class ReleaseRootQueries
     /// storage per chunk store rather than once per tenant.
     /// </remarks>
     public static IQueryable<ScopedReleaseRoot> ForTenant(BinStashDbContext db, Guid tenantId) =>
-        db.Releases
+        db.ReleaseVariants
             .AsNoTracking()
-            .Where(r => r.Repository.TenantId == tenantId)
-            .Select(r => new ScopedReleaseRoot(
-                r.Repository.ChunkStoreId,
-                new ReleaseRoot(r.Id, r.Version, r.ReleaseDefinitionChecksum)));
+            .Where(v => v.Release.Repository.TenantId == tenantId)
+            .Select(v => new ScopedReleaseRoot(
+                v.Release.Repository.ChunkStoreId,
+                new ReleaseRoot(v.Id, v.Release.Version, v.TargetKey, v.ReleaseDefinitionChecksum)));
 }
