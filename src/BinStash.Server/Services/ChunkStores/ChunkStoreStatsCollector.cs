@@ -20,7 +20,9 @@ using BinStash.Core.Entities;
 using BinStash.Core.Serialization;
 using BinStash.Infrastructure.Data;
 using BinStash.Infrastructure.Storage.FileDefinition;
+using BinStash.Server.Configuration;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace BinStash.Server.Services.ChunkStores;
 
@@ -29,12 +31,14 @@ public sealed class ChunkStoreStatsCollector
     private readonly BinStashDbContext _db;
     private readonly IChunkStoreService _chunkStoreService;
     private readonly ILogger<ChunkStoreStatsCollector> _logger;
+    private readonly ChunkStoreStatsSettings _settings;
 
-    public ChunkStoreStatsCollector(BinStashDbContext db, IChunkStoreService chunkStoreService, ILogger<ChunkStoreStatsCollector> logger)
+    public ChunkStoreStatsCollector(BinStashDbContext db, IChunkStoreService chunkStoreService, ILogger<ChunkStoreStatsCollector> logger, IOptions<ChunkStoreStatsSettings> settings)
     {
         _db = db;
         _chunkStoreService = chunkStoreService;
         _logger = logger;
+        _settings = settings.Value;
     }
 
     public async Task<ChunkStoreStatsSnapshot> CollectAndStoreAsync(Guid chunkStoreId, CancellationToken cancellationToken = default)
@@ -149,10 +153,21 @@ public sealed class ChunkStoreStatsCollector
         var physicalStats = await _chunkStoreService.GetPhysicalStatsAsync(store);
         _logger.LogDebug("[{StoreName}] Physical stats done in {Elapsed}ms — {PhysicalMB:F1} MB total", store.Name, sw.ElapsedMilliseconds, physicalStats.PhysicalBytesTotal / 1_048_576.0);
 
+        var chunkCount = chunkDbStats?.Count ?? 0;
+
         sw.Restart();
-        _logger.LogInformation("[{StoreName}] Collecting logical stats (may take a while for large stores)", store.Name);
-        var logicalStats = await CollectLogicalStatsAsync(store, cancellationToken);
-        _logger.LogInformation("[{StoreName}] Logical stats done in {Elapsed}ms", store.Name, sw.ElapsedMilliseconds);
+        var logicalStats = await ReusePreviousLogicalStatsAsync(store, chunkCount, fileDefinitionCount, releaseCount, physicalStats.PhysicalBytesTotal, cancellationToken);
+
+        if (logicalStats != null)
+        {
+            _logger.LogInformation("[{StoreName}] Store unchanged since the last snapshot — reusing its logical stats, skipping the walk", store.Name);
+        }
+        else
+        {
+            _logger.LogInformation("[{StoreName}] Collecting logical stats (may take a while for large stores)", store.Name);
+            logicalStats = await CollectLogicalStatsAsync(store, cancellationToken);
+            _logger.LogInformation("[{StoreName}] Logical stats done in {Elapsed}ms", store.Name, sw.ElapsedMilliseconds);
+        }
 
         var uniqueLogicalChunkBytes = chunkDbStats?.LogicalBytes ?? 0;
         var uniqueCompressedChunkBytes = chunkDbStats?.CompressedBytes ?? 0;
@@ -175,7 +190,7 @@ public sealed class ChunkStoreStatsCollector
 
         return new ChunkStoreStatsResult
         {
-            ChunkCount = chunkDbStats?.Count ?? 0,
+            ChunkCount = chunkCount,
             FileDefinitionCount = fileDefinitionCount,
             ReleaseCount = releaseCount,
 
@@ -208,6 +223,72 @@ public sealed class ChunkStoreStatsCollector
 
             AvgChunkSize = chunkDbStats?.AvgLength ?? 0,
             AvgCompressedChunkSize = chunkDbStats?.AvgCompressedLength ?? 0
+        };
+    }
+
+    /// <summary>
+    /// The previous snapshot's logical figures, when this store is provably unchanged since it
+    /// was taken; <c>null</c> when the walk has to run.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deriving the logical figures means loading every release definition and resolving its
+    /// hashes against the catalogue in batches — minutes of continuous database work on a store
+    /// with a few thousand releases, repeated every interval whether or not anything happened.
+    /// An idle store therefore pays the full cost forever to rewrite the same numbers.
+    /// </para>
+    /// <para>
+    /// The four counters compared here are the cheap ones already in hand, and between them
+    /// they cover every way the logical figures can move: content arrives as chunks and file
+    /// definitions, releases reference it, and all of it lands in the store directory. An
+    /// ingest that changed the logical totals without moving any of the four is not reachable —
+    /// it would have to add no chunk, no file definition and no release, and leave the
+    /// directory byte-for-byte identical.
+    /// </para>
+    /// </remarks>
+    private async Task<LogicalStats?> ReusePreviousLogicalStatsAsync(
+        ChunkStore store,
+        long chunkCount,
+        long fileDefinitionCount,
+        long releaseCount,
+        long physicalBytesTotal,
+        CancellationToken cancellationToken)
+    {
+        if (!_settings.ReuseUnchangedLogicalStats)
+            return null;
+
+        var previous = await _db.ChunkStoreStatsSnapshots
+            .AsNoTracking()
+            .Where(x => x.ChunkStoreId == store.Id)
+            .OrderByDescending(x => x.CollectedAt)
+            .Select(x => new
+            {
+                x.ChunkCount,
+                x.FileDefinitionCount,
+                x.ReleaseCount,
+                x.PhysicalBytesTotal,
+                x.TotalLogicalBytes,
+                x.UniqueFileBytes,
+                x.ReferencedUniqueChunkBytes
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (previous == null)
+            return null;
+
+        if (previous.ChunkCount != chunkCount ||
+            previous.FileDefinitionCount != fileDefinitionCount ||
+            previous.ReleaseCount != releaseCount ||
+            previous.PhysicalBytesTotal != physicalBytesTotal)
+        {
+            return null;
+        }
+
+        return new LogicalStats
+        {
+            TotalLogicalBytes = previous.TotalLogicalBytes,
+            UniqueFileBytes = previous.UniqueFileBytes,
+            ReferencedUniqueChunkBytes = previous.ReferencedUniqueChunkBytes
         };
     }
 

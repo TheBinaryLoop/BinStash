@@ -118,6 +118,7 @@ public static class Program
         builder.Services.Configure<RequestLimitSettings>(builder.Configuration.GetSection(RequestLimitSettings.SectionName));
         builder.Services.Configure<BillingSettings>(builder.Configuration.GetSection(BillingSettings.SectionName));
         builder.Services.Configure<TrafficSettings>(builder.Configuration.GetSection(TrafficSettings.SectionName));
+        builder.Services.Configure<ChunkStoreStatsSettings>(builder.Configuration.GetSection(ChunkStoreStatsSettings.SectionName));
 
         var requestLimits = builder.Configuration.GetSection(RequestLimitSettings.SectionName).Get<RequestLimitSettings>() ?? new RequestLimitSettings();
 
